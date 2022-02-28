@@ -26,11 +26,14 @@ impl SaftCallbacks {
             let def = rustc_middle::ty::InstanceDef::Item(id);
             let mir = tcx.instance_mir(def);
 
-            let mut stdout = std::io::stdout();
+            /*let mut stdout = std::io::stdout();
             stdout.write_fmt(format_args!("{:?}", def_id)).unwrap();
             rustc_middle::mir::write_mir_pretty(tcx, Some(def_id), &mut stdout).unwrap();
-            let _ = stdout.flush();
+            let _ = stdout.flush();*/
+        }
 
+        for crate_num in tcx.crates(()) {
+            println!("{}", tcx.crate_name(*crate_num));
         }
 
     }
@@ -60,7 +63,7 @@ impl rustc_driver::Callbacks for SaftCallbacks {
     ) -> Compilation {
         compiler.session().abort_if_errors();
 
-        //queries.global_ctxt().unwrap().peek_mut().enter(|tcx| self.print(tcx));
+        queries.global_ctxt().unwrap().peek_mut().enter(|tcx| self.print(tcx));
 
         Compilation::Continue
     }

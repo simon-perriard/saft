@@ -160,7 +160,7 @@ fn call_cargo_on_target(target: &Target, kind: &str) {
 
         let mut wasm32_toolchain = Command::new(OsString::from("rustup"));
         wasm32_toolchain.arg("target").arg("add").arg("wasm32-unknown-unknown").arg("--toolchain").arg(toolchain);
-        wasm32_toolchain.spawn().expect("COMMAND ERROR");
+        wasm32_toolchain.spawn().expect("failed to set");
     }
 
     // Execute cmd
