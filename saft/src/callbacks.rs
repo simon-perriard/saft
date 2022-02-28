@@ -60,7 +60,7 @@ impl rustc_driver::Callbacks for SaftCallbacks {
     ) -> Compilation {
         compiler.session().abort_if_errors();
 
-        queries.global_ctxt().unwrap().peek_mut().enter(|tcx| self.print(tcx));
+        //queries.global_ctxt().unwrap().peek_mut().enter(|tcx| self.print(tcx));
 
         Compilation::Continue
     }

@@ -34,6 +34,7 @@ pub fn main() {
     }
 
     match std::env::args().nth(1).as_ref().map(AsRef::as_ref) {
+
         Some("saft") => {
             // Get here for the top level cargo execution, i.e. "cargo saft".
             call_cargo();
@@ -156,6 +157,10 @@ fn call_cargo_on_target(target: &Target, kind: &str) {
     // Set the tool chain to be compatible with saft
     if let Some(toolchain) = option_env!("RUSTUP_TOOLCHAIN") {
         cmd.env("RUSTUP_TOOLCHAIN", toolchain);
+
+        let mut wasm32_toolchain = Command::new(OsString::from("rustup"));
+        wasm32_toolchain.arg("target").arg("add").arg("wasm32-unknown-unknown").arg("--toolchain").arg(toolchain);
+        wasm32_toolchain.spawn().expect("COMMAND ERROR");
     }
 
     // Execute cmd
