@@ -9,5 +9,14 @@ jobs:
           command: |
             ./setup.sh
             cargo install --path ./meta
-      #- run:
-          #name: Init substrate node template
+      - run:
+          name: Init substrate node template
+          command: |
+            cd ..
+            git clone https://github.com/substrate-developer-hub/substrate-node-template
+            cd substrate-node-template
+          
+      - run:
+          name: Run on substrate-node-template
+          command: |
+            pwd
