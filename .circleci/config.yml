@@ -4,4 +4,10 @@ jobs:
       - image: cimg/rust:1.45.0
     steps:
       - checkout
-      - run: cargo --version
+      - run:
+          name: Compile, build and install
+          command: |
+            ./setup.sh
+            cargo install --path ./meta
+      #- run:
+          #name: Init substrate node template
