@@ -7,12 +7,13 @@ jobs:
       - run:
           name: Compile, build and install
           command: |
+            pwd
             ./setup.sh
             cargo install --path ./meta
       - run:
           name: Init substrate node template
           command: |
-            cd ..
+            pwd
             git clone https://github.com/substrate-developer-hub/substrate-node-template
             cd substrate-node-template
           
