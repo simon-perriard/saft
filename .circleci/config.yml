@@ -7,7 +7,7 @@ jobs:
       - run:
           name: Install essentials
           command: |
-            sudo apt install build-essential -y
+            sudo apt update
             sudo apt install libclang-dev -y
       - run:
           name: Compile, build and install
