@@ -24,3 +24,5 @@ rustup "+$TOOLCHAIN" component add rustc-dev llvm-tools-preview
 # override tool chain
 rustup override set $TOOLCHAIN
 cd ..
+
+rustup default $TOOLCHAIN
