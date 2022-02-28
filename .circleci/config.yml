@@ -5,6 +5,11 @@ jobs:
     steps:
       - checkout
       - run:
+          name: Install essentials
+          command: |
+            apt install build-essential
+            apt install libclang-dev
+      - run:
           name: Compile, build and install
           command: |
             pwd
