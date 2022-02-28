@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
 
-set -e
-
-echo "*** Initializing WASM build environment"
-
-rustup update nightly
-rustup update stable
-
-TOOLCHAIN="nightly"
+TOOLCHAIN="nightly-2022-02-21"
 
 rustup "+$TOOLCHAIN" component add rustc-dev llvm-tools-preview
 # override tool chain
