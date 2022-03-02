@@ -3,6 +3,7 @@ use rustc_interface::{interface, Queries};
 use std::{fmt::{Debug, Formatter, Result}, io::Write};
 use rustc_middle::ty::TyCtxt;
 use rustc_hir::def_id::{DefId, DefIndex};
+use crate::{analysis_utils, extrinsic_visitor::ExtrinsicVisitor};
 
 pub struct SaftCallbacks {
 
@@ -15,6 +16,10 @@ impl SaftCallbacks {
 
     fn analyze<'tcx>(&mut self, compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
 
+        // analyze public functions from the pallet
+        let ids = analysis_utils::get_call_enum_variants_hir_ids(tcx);
+        println!("The following extrinsics will be analyzed :");
+        analysis_utils::print_extrinsics_names(tcx, Some(ids));
     }
 
     fn print<'tcx>(&mut self, tcx: TyCtxt<'tcx>) {
@@ -36,6 +41,23 @@ impl SaftCallbacks {
             println!("{}", tcx.crate_name(*crate_num));
         }
 
+    }
+
+    fn print_pallets<'tcx>(&mut self, tcx: TyCtxt<'tcx>) {
+
+        let hir = tcx.hir();
+
+        for local_def_id in hir.body_owners() {
+            let def_id = local_def_id.to_def_id();
+
+            let full_name = analysis_utils::get_fn_name_with_path(tcx, def_id);
+
+            if full_name.contains("do_something") {
+                println!("{}", full_name);
+            }
+
+            
+        }
     }
 }
 
@@ -63,7 +85,7 @@ impl rustc_driver::Callbacks for SaftCallbacks {
     ) -> Compilation {
         compiler.session().abort_if_errors();
 
-        queries.global_ctxt().unwrap().peek_mut().enter(|tcx| self.print(tcx));
+        queries.global_ctxt().unwrap().peek_mut().enter(|tcx| self.analyze(compiler, tcx));
 
         Compilation::Continue
     }

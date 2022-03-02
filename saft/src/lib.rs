@@ -7,3 +7,5 @@ extern crate rustc_hir;
 extern crate rustc_session;
 
 pub mod callbacks;
+pub mod analysis_utils;
+pub mod extrinsic_visitor;
