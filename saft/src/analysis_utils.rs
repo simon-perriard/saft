@@ -5,21 +5,13 @@ use rustc_hir::hir_id::HirId;
 pub fn get_fn_name(tcx: TyCtxt, def_id: DefId) -> String {
     
     let full_name = get_fn_name_with_path(tcx, def_id);
-
     let split = full_name.split_terminator("::").collect::<Vec<_>>();
     let splat = *split.last().unwrap_or_else(|| &"");
-
-    if  splat == "" ||
-        splat == "_" ||
-        splat.starts_with("{") && splat.ends_with('}') {
-            return String::new();
-    }
 
     splat.to_string()
 }
 
 pub fn get_fn_name_with_path(tcx: TyCtxt, def_id: DefId) -> String {
-
     tcx.def_path_str(def_id)
 }
 
@@ -57,7 +49,7 @@ pub fn get_call_enum_variants_hir_ids(tcx: TyCtxt) -> Vec<&HirId> {
 
 pub fn print_extrinsics_names(tcx: TyCtxt, ids: Option<Vec<&HirId>>) {
 
-    let mut ids_lst: Vec<&HirId> = Vec::new();
+    let ids_lst: Vec<&HirId>;
 
     if let Some(ids) = ids {
         ids_lst = ids;
@@ -76,15 +68,14 @@ pub fn print_extrinsics_names(tcx: TyCtxt, ids: Option<Vec<&HirId>>) {
 pub fn get_dispatch_bypass_filter_local_def_id(tcx: TyCtxt) -> Option<LocalDefId> {
 
     for local_def_id in tcx.hir().body_owners() {
-        let def_id = local_def_id.to_def_id();
 
+        let def_id = local_def_id.to_def_id();
         let pallet_call_dispatch = "<pallet::Call<T> as frame_support::dispatch::UnfilteredDispatchable>::dispatch_bypass_filter";
 
         if get_fn_name_with_path(tcx, def_id) == pallet_call_dispatch {
             return Some(local_def_id)
         }
     }
-
     None
 }
 
@@ -92,29 +83,24 @@ pub fn get_dispatch_bypass_filter_local_def_id(tcx: TyCtxt) -> Option<LocalDefId
 pub fn get_extrinsics_fn_ids(tcx: TyCtxt, dispatch_local_def_id: LocalDefId, variant_ids: &Vec<&HirId>) -> Vec<DefId>{
 
     let mut extrinsics_fn_ids = Vec::new();
-
     let dispatch_def_hir_id = tcx.hir().local_def_id_to_hir_id(dispatch_local_def_id);
 
     for variant_id in variant_ids {
 
         let body_owner = tcx.hir().body_owned_by(dispatch_def_hir_id);
         let body = tcx.hir().body(body_owner);
-        
         let match_target = tcx.hir().get(**variant_id).ident().unwrap();
 
         match body {
             rustc_hir::Body{ value, ..} => {
                 let called_fn_path = go_down_dispatch_bypass_filter(&value.kind, match_target.as_str());
                 if let Some((hir_id, qpath)) = called_fn_path {
-
                     let typeck_results = tcx.typeck(tcx.hir().local_def_id(dispatch_def_hir_id));
-
                     if let Some(def_id) = typeck_results.qpath_res(qpath, *hir_id).opt_def_id() {
                         extrinsics_fn_ids.push(def_id);
                     } else {
                         println!("function '{}' not found", match_target.as_str());
                     }
-                    
                 } else {
                     println!("function '{}' not found", match_target.as_str());
                 }
@@ -125,7 +111,7 @@ pub fn get_extrinsics_fn_ids(tcx: TyCtxt, dispatch_local_def_id: LocalDefId, var
     extrinsics_fn_ids
 }
 
-pub fn go_down_dispatch_bypass_filter<'a>(current_node: &'a  rustc_hir::ExprKind, match_target: &'a  str) -> Option<(&'a HirId, &'a rustc_hir::QPath<'a>)>{
+fn go_down_dispatch_bypass_filter<'a>(current_node: &'a  rustc_hir::ExprKind, match_target: &'a  str) -> Option<(&'a HirId, &'a rustc_hir::QPath<'a>)>{
 
     match current_node {
         rustc_hir::ExprKind::Block(block, _) => {
@@ -170,7 +156,7 @@ pub fn go_down_dispatch_bypass_filter<'a>(current_node: &'a  rustc_hir::ExprKind
     }
 }
 
-pub fn is_matching(pattern: &rustc_hir::PatKind, match_target: &str) -> bool {
+fn is_matching(pattern: &rustc_hir::PatKind, match_target: &str) -> bool {
     match pattern {
         rustc_hir::PatKind::Struct(qpath, _, _) => {
             match qpath {
