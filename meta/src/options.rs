@@ -33,7 +33,7 @@ impl Options {
             rustc_args_start = p + 1;
         }
         let saft_args = &args[0..saft_args_end];
-        let matches = if rustc_args_start == 0 {
+        let _matches = if rustc_args_start == 0 {
             // The arguments may not be intended for SAFT and may get here
             // via some tool, so do not report errors here, but just assume
             // that the arguments were not meant for SAFT.

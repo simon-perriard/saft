@@ -3,7 +3,7 @@ use rustc_interface::{interface, Queries};
 use std::{fmt::{Debug, Formatter, Result}, io::Write};
 use rustc_middle::ty::TyCtxt;
 use rustc_hir::def_id::DefId;
-use crate::{analysis_utils, extrinsic_visitor::ExtrinsicVisitor};
+use crate::{analysis_utils};
 
 pub struct SaftCallbacks {
 
@@ -14,9 +14,9 @@ impl SaftCallbacks {
         SaftCallbacks {}
     }
 
-    fn analyze<'tcx>(&mut self, compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
+    fn analyze<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
 
-        let mut extrinsics_def_id: Vec<DefId>;
+        let mut _extrinsics_def_id: Vec<DefId>;
 
         // analyze public functions from the pallet
         let variant_ids = analysis_utils::get_call_enum_variants_hir_ids(tcx);

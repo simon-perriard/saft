@@ -6,7 +6,7 @@ pub fn get_fn_name(tcx: TyCtxt, def_id: DefId) -> String {
     
     let full_name = get_fn_name_with_path(tcx, def_id);
     let split = full_name.split_terminator("::").collect::<Vec<_>>();
-    let splat = *split.last().unwrap_or_else(|| &"");
+    let splat = *split.last().unwrap_or(&"");
 
     splat.to_string()
 }
@@ -20,42 +20,31 @@ pub fn get_call_enum_variants_hir_ids(tcx: TyCtxt) -> Vec<&HirId> {
     let mut ids: Vec<&HirId> = Vec::new();
 
     for item in tcx.hir().items() {
-        match item {
-            rustc_hir::Item { ident, kind, vis, .. } => {
-                if vis.node.is_pub() {
-                    match kind {
-                        rustc_hir::ItemKind::Enum(enum_def, _) => {
-                            if ident.as_str() == "Call" {
-                                for variant in enum_def.variants.iter() {
-                                   match variant {
-                                       rustc_hir::Variant { ident, id, .. } => {
-                                            if ident.as_str() != "__Ignore" {
-                                                ids.push(id);
-                                            }
-                                       }
-                                   }
-                                }
+        let rustc_hir::Item { ident, kind, vis, .. } = item;
+        if vis.node.is_pub() {
+            if let rustc_hir::ItemKind::Enum(enum_def, _) = kind {
+                if ident.as_str() == "Call" {
+                    for variant in enum_def.variants.iter() {
+                        let rustc_hir::Variant { ident, id, .. } = variant;
+                            if ident.as_str() != "__Ignore" {
+                                ids.push(id);
                             }
-                        }
-                        _ => ()
                     }
                 }
             }
         }
+        
     }
-
     ids
 }
 
 pub fn print_extrinsics_names(tcx: TyCtxt, ids: Option<Vec<&HirId>>) {
 
-    let ids_lst: Vec<&HirId>;
-
-    if let Some(ids) = ids {
-        ids_lst = ids;
+    let ids_lst = if let Some(ids) = ids {
+        ids
     } else {
-        ids_lst = get_call_enum_variants_hir_ids(tcx);
-    }
+        get_call_enum_variants_hir_ids(tcx)
+    };
 
     for id in ids_lst {
         if let Some(ident) = tcx.hir().get(*id).ident() {
@@ -91,19 +80,17 @@ pub fn get_extrinsics_fn_ids(tcx: TyCtxt, dispatch_local_def_id: LocalDefId, var
         let body = tcx.hir().body(body_owner);
         let match_target = tcx.hir().get(**variant_id).ident().unwrap();
 
-        match body {
-            rustc_hir::Body{ value, ..} => {
-                let called_fn_path = go_down_dispatch_bypass_filter(&value.kind, match_target.as_str());
-                if let Some((hir_id, qpath)) = called_fn_path {
-                    let typeck_results = tcx.typeck(tcx.hir().local_def_id(dispatch_def_hir_id));
-                    if let Some(def_id) = typeck_results.qpath_res(qpath, *hir_id).opt_def_id() {
-                        extrinsics_fn_ids.push(def_id);
-                    } else {
-                        println!("function '{}' not found", match_target.as_str());
-                    }
+            let rustc_hir::Body{ value, ..} = body; {
+            let called_fn_path = go_down_dispatch_bypass_filter(&value.kind, match_target.as_str());
+            if let Some((hir_id, qpath)) = called_fn_path {
+                let typeck_results = tcx.typeck(tcx.hir().local_def_id(dispatch_def_hir_id));
+                if let Some(def_id) = typeck_results.qpath_res(qpath, *hir_id).opt_def_id() {
+                    extrinsics_fn_ids.push(def_id);
                 } else {
                     println!("function '{}' not found", match_target.as_str());
                 }
+            } else {
+                println!("function '{}' not found", match_target.as_str());
             }
         }
 
@@ -124,14 +111,11 @@ fn go_down_dispatch_bypass_filter<'a>(current_node: &'a  rustc_hir::ExprKind, ma
 
         rustc_hir::ExprKind::Match(_, arms,_) => {
             for arm in *arms {
-                match arm {
-                    rustc_hir::Arm { pat, body, .. } => {
-                        if is_matching(&pat.kind, match_target) {
-                            return go_down_dispatch_bypass_filter(&body.kind, match_target);
-                        } else {
-                            continue
-                        }
-                    }
+                let rustc_hir::Arm { pat, body, .. } = arm;
+                if is_matching(&pat.kind, match_target) {
+                    return go_down_dispatch_bypass_filter(&body.kind, match_target);
+                } else {
+                    continue
                 }
             }
             None
@@ -142,7 +126,7 @@ fn go_down_dispatch_bypass_filter<'a>(current_node: &'a  rustc_hir::ExprKind, ma
                 rustc_hir::ExprKind::Call(expr, _) => {
                     match &expr.kind {
                         rustc_hir::ExprKind::Path(qpath) => {
-                            Some((&expr.hir_id, &qpath))
+                            Some((&expr.hir_id, qpath))
                         },
                         _ => None
                     }
@@ -158,13 +142,8 @@ fn go_down_dispatch_bypass_filter<'a>(current_node: &'a  rustc_hir::ExprKind, ma
 
 fn is_matching(pattern: &rustc_hir::PatKind, match_target: &str) -> bool {
     match pattern {
-        rustc_hir::PatKind::Struct(qpath, _, _) => {
-            match qpath {
-                rustc_hir::QPath::TypeRelative(_, path_segment) => {
-                   path_segment.ident.as_str() == match_target
-                }
-                _ => false
-            }
+        rustc_hir::PatKind::Struct(rustc_hir::QPath::TypeRelative(_, path_segment), _, _) => {
+            path_segment.ident.as_str() == match_target
         }
         _ => false
     }
