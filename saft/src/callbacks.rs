@@ -17,47 +17,29 @@ impl SaftCallbacks {
     fn analyze<'tcx>(&mut self, compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
 
         // analyze public functions from the pallet
-        let ids = analysis_utils::get_call_enum_variants_hir_ids(tcx);
-        println!("The following extrinsics will be analyzed :");
-        analysis_utils::print_extrinsics_names(tcx, Some(ids));
-    }
+        let variant_ids = analysis_utils::get_call_enum_variants_hir_ids(tcx);
 
-    fn print<'tcx>(&mut self, tcx: TyCtxt<'tcx>) {
+        let dispatch_local_def_id = analysis_utils::get_dispatch_bypass_filter_local_def_id(tcx);
 
-        for local_def_id in tcx.hir().body_owners() {
-            let def_id = local_def_id.to_def_id();
-            
-            let id = rustc_middle::ty::WithOptConstParam::unknown(def_id);
-            let def = rustc_middle::ty::InstanceDef::Item(id);
-            let mir = tcx.instance_mir(def);
+        if let Some(dispatch_local_def_id) = dispatch_local_def_id {
+            //analysis_utils::get_extrinsics_fn_ids(tcx, dispatch_local_def_id, &variant_ids);
+            let fn_local_def_ids = analysis_utils::get_extrinsics_ids_WEAK(tcx, &variant_ids);
 
-            /*let mut stdout = std::io::stdout();
-            stdout.write_fmt(format_args!("{:?}", def_id)).unwrap();
-            rustc_middle::mir::write_mir_pretty(tcx, Some(def_id), &mut stdout).unwrap();
-            let _ = stdout.flush();*/
-        }
-
-        for crate_num in tcx.crates(()) {
-            println!("{}", tcx.crate_name(*crate_num));
-        }
-
-    }
-
-    fn print_pallets<'tcx>(&mut self, tcx: TyCtxt<'tcx>) {
-
-        let hir = tcx.hir();
-
-        for local_def_id in hir.body_owners() {
-            let def_id = local_def_id.to_def_id();
-
-            let full_name = analysis_utils::get_fn_name_with_path(tcx, def_id);
-
-            if full_name.contains("do_something") {
-                println!("{}", full_name);
+            for id in fn_local_def_ids {
+                let def_id = id.to_def_id();
+                let mut stdout = std::io::stdout();
+                stdout.write_fmt(format_args!("{:?}", def_id)).unwrap();
+                rustc_middle::mir::write_mir_pretty(tcx, Some(def_id), &mut stdout).unwrap();
+                let _ = stdout.flush();
             }
 
-            
+        } else {
+            println!("Pallet level dispatch function not found.\nFunction 'dispatch_bypass_filter' not found, are you running SAFT on the pallet level?");
+            std::process::exit(1);
         }
+
+        println!("The following extrinsics will be analyzed :");
+        analysis_utils::print_extrinsics_names(tcx, Some(variant_ids));
     }
 }
 
