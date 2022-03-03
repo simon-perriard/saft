@@ -73,29 +73,6 @@ pub fn print_extrinsics_names(tcx: TyCtxt, ids: Option<Vec<&HirId>>) {
     }
 }
 
-pub fn get_extrinsics_ids_WEAK(tcx: TyCtxt, ids: &Vec<&HirId>) -> Vec<LocalDefId>{
-
-    let mut res = Vec::new();
-
-    for local_def_id in tcx.hir().body_owners() {
-        let def_id = local_def_id.to_def_id();
-
-        for id in ids {
-            let fn_name = get_fn_name(tcx, def_id);
-            if let Some(ident) = tcx.hir().get(**id).ident() {
-                if ident.as_str() == fn_name {
-                    res.push(local_def_id);
-                    if res.len() == ids.len() {
-                        return res;
-                    }
-                }
-            }
-        }
-    }
-
-    res
-}
-
 pub fn get_dispatch_bypass_filter_local_def_id(tcx: TyCtxt) -> Option<LocalDefId> {
 
     for local_def_id in tcx.hir().body_owners() {
@@ -112,7 +89,9 @@ pub fn get_dispatch_bypass_filter_local_def_id(tcx: TyCtxt) -> Option<LocalDefId
 }
 
 // path resolution qpath_res is tricky, this function does not work
-pub fn get_extrinsics_fn_ids(tcx: TyCtxt, dispatch_local_def_id: LocalDefId, variant_ids: &Vec<&HirId>) {
+pub fn get_extrinsics_fn_ids(tcx: TyCtxt, dispatch_local_def_id: LocalDefId, variant_ids: &Vec<&HirId>) -> Vec<DefId>{
+
+    let mut extrinsics_fn_ids = Vec::new();
 
     let dispatch_def_hir_id = tcx.hir().local_def_id_to_hir_id(dispatch_local_def_id);
 
@@ -120,7 +99,7 @@ pub fn get_extrinsics_fn_ids(tcx: TyCtxt, dispatch_local_def_id: LocalDefId, var
 
         let body_owner = tcx.hir().body_owned_by(dispatch_def_hir_id);
         let body = tcx.hir().body(body_owner);
-
+        
         let match_target = tcx.hir().get(**variant_id).ident().unwrap();
 
         match body {
@@ -128,24 +107,14 @@ pub fn get_extrinsics_fn_ids(tcx: TyCtxt, dispatch_local_def_id: LocalDefId, var
                 let called_fn_path = go_down_dispatch_bypass_filter(&value.kind, match_target.as_str());
                 if let Some((hir_id, qpath)) = called_fn_path {
 
-                    for parent in tcx.hir().parent_owner_iter(dispatch_def_hir_id) {
-                        println!("HEY");
-                        let body_id = tcx.hir().body_owned_by(tcx.hir().local_def_id_to_hir_id(parent.0));
-                        let typeck_results = tcx.typeck_body(body_id);
-                        let def_id_one = typeck_results.type_dependent_def_id(*hir_id);
-                        let res = typeck_results.qpath_res(qpath, *hir_id);
+                    let typeck_results = tcx.typeck(tcx.hir().local_def_id(dispatch_def_hir_id));
 
-                        match res {
-                            rustc_hir::def::Res::Def(def_kind, def_id) => {
-                                println!("{:?}, {:?}", def_id_one, def_id);
-                                break
-                            },
-
-                            _ => (
-                                println!("{:?}, {:?}", res, def_id_one)
-                            )
-                        }
+                    if let Some(def_id) = typeck_results.qpath_res(qpath, *hir_id).opt_def_id() {
+                        extrinsics_fn_ids.push(def_id);
+                    } else {
+                        println!("function '{}' not found", match_target.as_str());
                     }
+                    
                 } else {
                     println!("function '{}' not found", match_target.as_str());
                 }
@@ -153,6 +122,7 @@ pub fn get_extrinsics_fn_ids(tcx: TyCtxt, dispatch_local_def_id: LocalDefId, var
         }
 
     }
+    extrinsics_fn_ids
 }
 
 pub fn go_down_dispatch_bypass_filter<'a>(current_node: &'a  rustc_hir::ExprKind, match_target: &'a  str) -> Option<(&'a HirId, &'a rustc_hir::QPath<'a>)>{
@@ -170,7 +140,6 @@ pub fn go_down_dispatch_bypass_filter<'a>(current_node: &'a  rustc_hir::ExprKind
             for arm in *arms {
                 match arm {
                     rustc_hir::Arm { pat, body, .. } => {
-
                         if is_matching(&pat.kind, match_target) {
                             return go_down_dispatch_bypass_filter(&body.kind, match_target);
                         } else {
@@ -183,24 +152,18 @@ pub fn go_down_dispatch_bypass_filter<'a>(current_node: &'a  rustc_hir::ExprKind
         }
 
         rustc_hir::ExprKind::MethodCall(_, exprs, _) => {
-
             match exprs[0].kind {
-
                 rustc_hir::ExprKind::Call(expr, _) => {
                     match &expr.kind {
                         rustc_hir::ExprKind::Path(qpath) => {
-                            Some((&exprs[0].hir_id, &qpath))
+                            Some((&expr.hir_id, &qpath))
                         },
-
                         _ => None
                     }
-                    
                 }
-
                 _ => go_down_dispatch_bypass_filter(&exprs[0].kind, match_target)
             }
         }
-
         _ => {
             None
         }

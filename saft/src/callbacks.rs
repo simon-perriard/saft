@@ -22,11 +22,10 @@ impl SaftCallbacks {
         let dispatch_local_def_id = analysis_utils::get_dispatch_bypass_filter_local_def_id(tcx);
 
         if let Some(dispatch_local_def_id) = dispatch_local_def_id {
-            //analysis_utils::get_extrinsics_fn_ids(tcx, dispatch_local_def_id, &variant_ids);
-            let fn_local_def_ids = analysis_utils::get_extrinsics_ids_WEAK(tcx, &variant_ids);
+            
+            let fn_def_ids = analysis_utils::get_extrinsics_fn_ids(tcx, dispatch_local_def_id, &variant_ids);
 
-            for id in fn_local_def_ids {
-                let def_id = id.to_def_id();
+            for def_id in fn_def_ids {
                 let mut stdout = std::io::stdout();
                 stdout.write_fmt(format_args!("{:?}", def_id)).unwrap();
                 rustc_middle::mir::write_mir_pretty(tcx, Some(def_id), &mut stdout).unwrap();
