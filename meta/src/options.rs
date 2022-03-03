@@ -1,7 +1,8 @@
-use clap::{Command, ErrorKind, Error};
+use clap::{Command, ErrorKind};
 use rustc_session::early_error;
 use itertools::Itertools;
 use rustc_session::config::ErrorOutputType;
+extern crate clap;
 
 #[derive(Debug, Default)]
 pub struct Options {
@@ -44,27 +45,25 @@ impl Options {
                     rustc_args_start = args.len();
                     matches
                 }
-                Err(Error {
-                    kind: ErrorKind::DisplayHelp,
-                    info,
-                    ..
-                }) => {
-                    // help is ambiguous, so display both SAFT and rustc help.
-                    println!("{:?}\n", info);
-                    return args.to_vec();
-                }
-                Err(Error {
-                    kind: ErrorKind::UnknownArgument,
-                    ..
-                }) => {
-                    // Just send all of the arguments to rustc.
-                    // Note that this means that SAFT options and rustc options must always
-                    // be separated by --. I.e. any  SAFT options present in arguments list
-                    // will stay unknown to SAFT and will make rustc unhappy.
-                    return args.to_vec();
-                }
-                Err(e) => {
-                    e.exit();
+                Err(err) => {
+                    let clap::Error { .. } = err;
+                    match err.kind() {
+                        ErrorKind::DisplayHelp => {
+                            // help is ambiguous, so display both SAFT and rustc help.
+                            println!("{:?}\n", err.context().collect_vec());
+                            return args.to_vec();
+                        },
+                        ErrorKind::UnknownArgument => {
+                            // Just send all of the arguments to rustc.
+                            // Note that this means that SAFT options and rustc options must always
+                            // be separated by --. I.e. any  SAFT options present in arguments list
+                            // will stay unknown to SAFT and will make rustc unhappy.
+                            return args.to_vec();
+                        },
+                        _ => {
+                            err.exit();
+                        }
+                    }
                 }
             }
         } else {
