@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
-TOOLCHAIN="nightly-2022-02-21"
+TOOLCHAIN="nightly"
+
+rustup update stable
+rustup update nightly
 
 rustup "+$TOOLCHAIN" component add rustc-dev llvm-tools-preview
 # override tool chain
