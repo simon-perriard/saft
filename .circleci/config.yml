@@ -23,5 +23,5 @@ jobs:
       - run:
           name: Run on substrate-node-template
           command: |
-            cd ../substrate-node-template
+            cd ../substrate-node-template/pallets/template
             cargo saft
