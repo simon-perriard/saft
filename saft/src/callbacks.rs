@@ -1,9 +1,8 @@
 use rustc_driver::Compilation;
 use rustc_interface::{interface, Queries};
-use std::{fmt::{Debug, Formatter, Result}, io::Write};
+use std::fmt::{Debug, Formatter, Result};
 use rustc_middle::ty::TyCtxt;
-use rustc_hir::def_id::DefId;
-use crate::{analysis_utils};
+use crate::{analysis_utils, extrinsic_visitor::ExtrinsicVisitor};
 
 pub struct SaftCallbacks {
 
@@ -14,33 +13,31 @@ impl SaftCallbacks {
         SaftCallbacks {}
     }
 
-    fn analyze<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
+    fn extract_juice<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
 
-        let mut _extrinsics_def_id: Vec<DefId>;
-
-        // analyze public functions from the pallet
+        // Retrieve the variants of the Call enum, aka names of extrinsics
         let variant_ids = analysis_utils::get_call_enum_variants_hir_ids(tcx);
-
+        // Retrieve local def id of the 'dispatch_bypass_filter' function, aka the function that 
+        // dispatches the calls at the pallet level
         let dispatch_local_def_id = analysis_utils::get_dispatch_bypass_filter_local_def_id(tcx);
 
-        if let Some(dispatch_local_def_id) = dispatch_local_def_id {
+        let extrinsics_def_ids = if let Some(dispatch_local_def_id) = dispatch_local_def_id {
             
-            let fn_def_ids = analysis_utils::get_extrinsics_fn_ids(tcx, dispatch_local_def_id, &variant_ids);
-
-            for def_id in fn_def_ids {
-                let mut stdout = std::io::stdout();
-                stdout.write_fmt(format_args!("{:?}", def_id)).unwrap();
-                rustc_middle::mir::write_mir_pretty(tcx, Some(def_id), &mut stdout).unwrap();
-                let _ = stdout.flush();
-            }
+            analysis_utils::get_extrinsics_fn_ids(tcx, dispatch_local_def_id, &variant_ids)
 
         } else {
             println!("Pallet level dispatch function not found.\nFunction 'dispatch_bypass_filter' not found, are you running SAFT on the pallet level?");
             std::process::exit(1);
-        }
+        };
 
         println!("The following extrinsics will be analyzed :");
         analysis_utils::print_extrinsics_names(tcx, Some(variant_ids));
+
+        for extrinsics_def_id in extrinsics_def_ids {
+            let mut extrinsic_visitor = ExtrinsicVisitor::new(tcx, extrinsics_def_id);
+            println!("Analyzing {}...", extrinsic_visitor.get_fn_name());
+            extrinsic_visitor.visit_body();
+        }
     }
 }
 
@@ -68,7 +65,7 @@ impl rustc_driver::Callbacks for SaftCallbacks {
     ) -> Compilation {
         compiler.session().abort_if_errors();
 
-        queries.global_ctxt().unwrap().peek_mut().enter(|tcx| self.analyze(compiler, tcx));
+        queries.global_ctxt().unwrap().peek_mut().enter(|tcx| self.extract_juice(compiler, tcx));
 
         Compilation::Continue
     }

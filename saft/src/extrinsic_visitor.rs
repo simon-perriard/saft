@@ -3,29 +3,29 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use std::io::Write;
 
-use crate::analysis_utils;
+use crate::{analysis_utils, mir_visitor::MirBodyVisitor};
 
-pub struct ExtrinsicVisitor<'tcx> {
+pub struct ExtrinsicVisitor<'tcx, 'analysis> {
     pub name: String,
     pub full_path: String,
     pub def_id: DefId,
     pub tcx: TyCtxt<'tcx>,
-    pub mir_body: &'tcx Body<'tcx>
+    pub mir: &'analysis Body<'tcx>
 }
 
-impl<'tcx> ExtrinsicVisitor<'tcx> {
+impl<'tcx, 'analysis> ExtrinsicVisitor<'tcx, 'analysis> {
     pub fn new(tcx: TyCtxt<'tcx>, def_id: DefId,) -> Self {
 
         let id = rustc_middle::ty::WithOptConstParam::unknown(def_id);
         let def = rustc_middle::ty::InstanceDef::Item(id);
-        let mir_body = tcx.instance_mir(def);
+        let mir = tcx.instance_mir(def);
 
         ExtrinsicVisitor {
             name: analysis_utils::get_fn_name(tcx, def_id),
             full_path: analysis_utils::get_fn_name_with_path(tcx, def_id),
             def_id,
             tcx,
-            mir_body
+            mir
         }
     }
 
@@ -42,5 +42,11 @@ impl<'tcx> ExtrinsicVisitor<'tcx> {
 
     pub fn get_fn_name_with_path(&self) -> String {
         self.full_path.clone()
+    }
+
+    pub fn visit_body(&mut self) {
+        // At this point we have a rustc_middle::mir::Body
+        let mut mir_visitor = MirBodyVisitor::new(self);
+        mir_visitor.start_analysis();
     }
 }
