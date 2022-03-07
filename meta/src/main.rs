@@ -36,17 +36,17 @@ fn main() {
     if env::var("RUST_LOG").is_ok() {
         rustc_driver::init_rustc_env_logger();
     }
-    if env::var("MIRAI_LOG").is_ok() {
+    if env::var("SAFT_LOG").is_ok() {
         let e = env_logger::Env::new()
-            .filter("MIRAI_LOG")
-            .write_style("MIRAI_LOG_STYLE");
+            .filter("SAFT_LOG")
+            .write_style("SAFT_LOG_STYLE");
         env_logger::init_from_env(e);
     }
 
-    // Get any options specified via the MIRAI_FLAGS environment variable
+    // Get any options specified via the SAFT_FLAGS environment variable
     let mut options = Options::default();
-    let rustc_args = options.parse_from_str(&env::var("MIRAI_FLAGS").unwrap_or_default());
-    info!("MIRAI options from environment: {:?}", options);
+    let rustc_args = options.parse_from_str(&env::var("SAFT_FLAGS").unwrap_or_default());
+    info!("SAFT options from environment: {:?}", options);
 
     // Let arguments supplied on the command line override the environment variable.
     let mut args = env::args_os()
@@ -69,7 +69,7 @@ fn main() {
     }
 
     let mut rustc_command_line_arguments = options.parse(&args[1..]);
-    info!("MIRAI options modified by command line: {:?}", options);
+    info!("SAFT options modified by command line: {:?}", options);
 
     rustc_driver::install_ice_hook();
     let result = rustc_driver::catch_fatal_errors(|| {
@@ -82,11 +82,11 @@ fn main() {
             .any(|arg| arg.starts_with(&print))
         {
             // If a --print option is given on the command line we wont get called to analyze
-            // anything. We also don't want to the caller to know that MIRAI adds configuration
+            // anything. We also don't want to the caller to know that SAFT adds configuration
             // parameters to the command line, lest the caller be cargo and it panics because
             // the output from --print=cfg is not what it expects.
         } else {
-            // Add rustc arguments supplied via the MIRAI_FLAGS environment variable
+            // Add rustc arguments supplied via the SAFT_FLAGS environment variable
             rustc_command_line_arguments.extend(rustc_args);
 
             let sysroot: String = "--sysroot".into();
