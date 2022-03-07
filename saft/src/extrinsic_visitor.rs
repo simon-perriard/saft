@@ -3,7 +3,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use std::io::Write;
 
-use crate::{analysis_utils, mir_visitor::MirBodyVisitor};
+use crate::{analysis_utils, mir_visitor::MirVisitor};
 
 pub struct ExtrinsicVisitor<'tcx, 'analysis> {
     pub name: String,
@@ -46,7 +46,7 @@ impl<'tcx, 'analysis> ExtrinsicVisitor<'tcx, 'analysis> {
 
     pub fn visit_body(&mut self) {
         // At this point we have a rustc_middle::mir::Body
-        let mut mir_visitor = MirBodyVisitor::new(self);
-        mir_visitor.start_analysis();
+        let mut mir_visitor = MirVisitor::new(self);
+        mir_visitor.start_visit();
     }
 }
