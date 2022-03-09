@@ -5,15 +5,15 @@ use std::io::Write;
 
 use crate::{analysis_utils, mir_visitor::MirVisitor};
 
-pub struct ExtrinsicVisitor<'tcx, 'analysis> {
+pub struct ExtrinsicVisitor<'tcx, 'extrinsic> {
     pub name: String,
     pub full_path: String,
     pub def_id: DefId,
     pub tcx: TyCtxt<'tcx>,
-    pub mir: &'analysis Body<'tcx>
+    pub mir: &'extrinsic Body<'tcx>
 }
 
-impl<'tcx, 'analysis> ExtrinsicVisitor<'tcx, 'analysis> {
+impl<'tcx, 'extrinsic> ExtrinsicVisitor<'tcx, 'extrinsic> {
     pub fn new(tcx: TyCtxt<'tcx>, def_id: DefId,) -> Self {
 
         let id = rustc_middle::ty::WithOptConstParam::unknown(def_id);
