@@ -1,0 +1,196 @@
+use rustc_middle::ty::TyCtxt;
+use rustc_hir::def_id::DefId;
+// https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html
+// https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageMap.html
+
+use crate::{analysis_utils::get_fn_name_with_path, mir_visitor::Context};
+
+pub enum StorageValueActions {
+    Exists,
+    Get,
+    TryGet,
+    Translate,
+    Put,
+    Set,
+    Mutate,
+    TryMutate,
+    Kill,
+    Take,
+    Append,
+    DecodeLen,
+    TryAppend
+}
+
+impl StorageValueActions {
+
+    pub fn is_storage_value_action(action: &str) -> bool {
+        StorageValueActions::storage_value_actions().contains(&action.to_owned())
+    }
+
+    pub fn storage_value_actions() -> Vec<String> {
+        let storage_value_actions = vec![ "exists", "get", "try_get", "translate",
+                                                    "put", "set", "mutate", "try_mutate", "kill",
+                                                    "take", "append", "decode_len", "try_append"
+                                                ];
+        
+    
+        let storage_value_actions_full = storage_value_actions.iter().map(|e| "frame_support::StorageValue::".to_owned() + e).collect::<Vec<_>>();
+        storage_value_actions_full
+    }
+
+    pub fn from(action: &str) -> StorageValueActions {
+        match action {
+            "exists" => StorageValueActions::Exists,
+            "get" => StorageValueActions::Get, 
+            "try_get" => StorageValueActions::TryGet,
+            "translate" => StorageValueActions::Translate,
+            "put" => StorageValueActions::Put,
+            "set" => StorageValueActions::Set,
+            "mutate" => StorageValueActions::Mutate,
+            "try_mutate" => StorageValueActions::TryMutate,
+            "kill" => StorageValueActions::Kill,
+            "take" => StorageValueActions::Take,
+            "append" => StorageValueActions::Append,
+            "decode_len" => StorageValueActions::DecodeLen,
+            "try_append" => StorageValueActions::TryAppend,
+            _ => panic!("Invalid StorageValue action")
+        }
+    }
+
+    pub fn get_weights(&self) -> (u32, u32) {
+        match self {
+            StorageValueActions::Exists => (1, 0),
+            StorageValueActions::Get => (1, 0),
+            StorageValueActions::TryGet => todo!(),
+            StorageValueActions::Translate => todo!(),
+            StorageValueActions::Put => (0, 1),
+            StorageValueActions::Set => (0, 1),
+            StorageValueActions::Mutate => todo!(),
+            StorageValueActions::TryMutate => todo!(),
+            StorageValueActions::Kill => todo!(),
+            StorageValueActions::Take => todo!(),
+            StorageValueActions::Append => todo!(),
+            StorageValueActions::DecodeLen => todo!(),
+            StorageValueActions::TryAppend => todo!(),
+        }
+    }
+}
+
+pub enum StorageMapActions {
+    ContainsKey,
+    Get,
+    TryGet,
+    Swap,
+    Insert,
+    Remove,
+    Mutate,
+    TryMutate,
+    MutateExists,
+    TryMutateExists,
+    Take,
+    Append,
+    DecodeLen,
+    MigrateKey,
+    RemoveAll,
+    IterValues,
+    TranslateValues,
+    TryAppend,
+    Iter,
+    IterFrom,
+    IterKeys,
+    IterKeysFrom,
+    Drain,
+    Translate
+}
+
+impl StorageMapActions {
+
+    pub fn is_storage_map_action(action: &str) -> bool {
+        StorageMapActions::storage_map_actions().contains(&action.to_owned())
+    }
+
+    pub fn storage_map_actions() -> Vec<String> {
+        let storage_map_actions = vec![ "contains_key", "get", "try_get", "swap",
+                                                  "insert", "remove", "mutate", "try_mutate",
+                                                  "mutate_exists", "try_mutate_exists", "take",
+                                                  "append", "decode_len", "migrate_key", "remove_all",
+                                                  "iter_values", "translate_values", "try_append",
+                                                  "iter", "iter_from", "iter_keys", "iter_keys_from",
+                                                  "drain", "translate"
+                                                ];
+        let storage_map_actions_full = storage_map_actions.iter().map(|e| "frame_support::StorageMap::".to_owned() + e).collect::<Vec<_>>();
+        storage_map_actions_full
+    }
+
+    pub fn from(action: &str) -> StorageMapActions {
+        match action {
+            "contains_key" => StorageMapActions::ContainsKey,
+            "get" => StorageMapActions::Get,
+            "try_get" => StorageMapActions::TryGet,
+            "swap" => StorageMapActions::Swap,
+            "insert" => StorageMapActions::Insert,
+            "remove" => StorageMapActions::Remove,
+            "mutate" => StorageMapActions::Mutate,
+            "try_mutate" => StorageMapActions::TryMutate,
+            "mutate_exists" => StorageMapActions::MutateExists,
+            "try_mutate_exists" => StorageMapActions::TryMutateExists,
+            "take" => StorageMapActions::Take,
+            "append" => StorageMapActions::Append,
+            "decode_len" => StorageMapActions::DecodeLen,
+            "migrate_key" => StorageMapActions::MigrateKey,
+            "remove_all" => StorageMapActions::RemoveAll,
+            "iter_values" => StorageMapActions::IterValues,
+            "translate_values" => StorageMapActions::TranslateValues,
+            "try_append" => StorageMapActions::TryAppend,
+            "iter" => StorageMapActions::Iter,
+            "iter_from" => StorageMapActions::IterFrom,
+            "iter_keys" => StorageMapActions::IterKeys,
+            "iter_keys_from" => StorageMapActions::IterKeysFrom,
+            "drain" => StorageMapActions::Drain,
+            "translate" => StorageMapActions::Translate
+        }
+    }
+
+    pub fn get_weights(&self) -> (u32, u32) {
+        match self {
+            StorageMapActions::ContainsKey => todo!(),
+            StorageMapActions::Get => (1, 0),
+            StorageMapActions::TryGet => todo!(),
+            StorageMapActions::Swap => todo!(),
+            StorageMapActions::Insert => todo!(),
+            StorageMapActions::Remove => todo!(),
+            StorageMapActions::Mutate => todo!(),
+            StorageMapActions::TryMutate => todo!(),
+            StorageMapActions::MutateExists => todo!(),
+            StorageMapActions::TryMutateExists => todo!(),
+            StorageMapActions::Take => todo!(),
+            StorageMapActions::Append => todo!(),
+            StorageMapActions::DecodeLen => todo!(),
+            StorageMapActions::MigrateKey => todo!(),
+            StorageMapActions::RemoveAll => todo!(),
+            StorageMapActions::IterValues => todo!(),
+            StorageMapActions::TranslateValues => todo!(),
+            StorageMapActions::TryAppend => todo!(),
+            StorageMapActions::Iter => todo!(),
+            StorageMapActions::IterFrom => todo!(),
+            StorageMapActions::IterKeys => todo!(),
+            StorageMapActions::IterKeysFrom => todo!(),
+            StorageMapActions::Drain => todo!(),
+            StorageMapActions::Translate => todo!(),
+        }
+    }
+}
+
+
+pub fn apply_r_w(tcx: TyCtxt, def_id: DefId, context: &mut Context) {
+
+    let fn_full_name = get_fn_name_with_path(tcx, def_id);
+
+    let (r, w): (u32, u32);
+
+    if StorageValueActions::is_storage_value_action(&fn_full_name) {
+        (r, w) = StorageValueActions::from(&fn_full_name).get_weights();
+    } else if StorageMapActions::is_storage_map_action(&fn_full_name) {
+        (r, w) = StorageMapActions::from(&fn_full_name).get_weights();
+    }
+}
