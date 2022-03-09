@@ -109,7 +109,6 @@ fn main() {
                 rustc_command_line_arguments.push("-Z".into());
                 rustc_command_line_arguments.push(always_encode_mir);
             }
-
         }
 
         let mut callbacks = callbacks::SaftCallbacks::new();

@@ -336,6 +336,7 @@ dependencies = [
  "clap",
  "itertools",
  "log",
+ "regex",
  "rpds",
  "rustc_tools_util",
  "serde",

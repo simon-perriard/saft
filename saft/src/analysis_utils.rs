@@ -1,6 +1,7 @@
 use rustc_middle::ty::TyCtxt;
 use rustc_hir::def_id::{DefId,LocalDefId};
 use rustc_hir::hir_id::HirId;
+use regex::Regex;
 
 pub fn get_fn_name(tcx: TyCtxt, def_id: DefId) -> String {
     
@@ -59,9 +60,9 @@ pub fn get_dispatch_bypass_filter_local_def_id(tcx: TyCtxt) -> Option<LocalDefId
     for local_def_id in tcx.hir().body_owners() {
 
         let def_id = local_def_id.to_def_id();
-        let pallet_call_dispatch = "<pallet::Call<T> as frame_support::dispatch::UnfilteredDispatchable>::dispatch_bypass_filter";
+        let pallet_call_dispatch_regex = Regex::new(r"<pallet::Call<.*\s*(,.*)*> as frame_support::dispatch::UnfilteredDispatchable>::dispatch_bypass_filter").unwrap();
 
-        if get_fn_name_with_path(tcx, def_id) == pallet_call_dispatch {
+        if pallet_call_dispatch_regex.is_match(&get_fn_name_with_path(tcx, def_id))  {
             return Some(local_def_id)
         }
     }
