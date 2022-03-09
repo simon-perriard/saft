@@ -13,3 +13,4 @@ pub mod callbacks;
 pub mod analysis_utils;
 pub mod extrinsic_visitor;
 pub mod mir_visitor;
+pub mod storage_actions;

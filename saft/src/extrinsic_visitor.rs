@@ -3,7 +3,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use std::io::Write;
 
-use crate::{analysis_utils, mir_visitor::MirVisitor};
+use crate::{analysis_utils::{self, get_fn_name_with_path}, mir_visitor::MirVisitor};
 
 pub struct ExtrinsicVisitor<'tcx, 'extrinsic> {
     pub name: String,
@@ -48,5 +48,18 @@ impl<'tcx, 'extrinsic> ExtrinsicVisitor<'tcx, 'extrinsic> {
         // At this point we have a rustc_middle::mir::Body
         let mut mir_visitor = MirVisitor::new(self);
         mir_visitor.start_visit();
+
+        for func_def_id in mir_visitor.basic_blocks_weights.keys() {
+            let fn_name = get_fn_name_with_path(self.tcx, *func_def_id);
+
+            println!("{}", fn_name);
+
+            let weights = mir_visitor.basic_blocks_weights.get(func_def_id).unwrap();
+
+            for bb in weights.keys() {
+                let (r, w) = weights.get(bb).unwrap();
+                println!("{:?} - R: {}, W: {}", bb, r, w);
+            }
+        }
     }
 }

@@ -3,7 +3,7 @@ use rustc_hir::def_id::DefId;
 // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html
 // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageMap.html
 
-use crate::{analysis_utils::get_fn_name_with_path, mir_visitor::Context};
+use crate::{analysis_utils::{get_fn_name_with_path, get_fn_name}, mir_visitor::Context};
 
 pub enum StorageValueActions {
     Exists,
@@ -58,20 +58,21 @@ impl StorageValueActions {
     }
 
     pub fn get_weights(&self) -> (u32, u32) {
+        let default = (0, 0);
         match self {
             StorageValueActions::Exists => (1, 0),
             StorageValueActions::Get => (1, 0),
-            StorageValueActions::TryGet => todo!(),
-            StorageValueActions::Translate => todo!(),
+            StorageValueActions::TryGet => (1, 0),
+            StorageValueActions::Translate => default,
             StorageValueActions::Put => (0, 1),
             StorageValueActions::Set => (0, 1),
-            StorageValueActions::Mutate => todo!(),
-            StorageValueActions::TryMutate => todo!(),
-            StorageValueActions::Kill => todo!(),
-            StorageValueActions::Take => todo!(),
-            StorageValueActions::Append => todo!(),
-            StorageValueActions::DecodeLen => todo!(),
-            StorageValueActions::TryAppend => todo!(),
+            StorageValueActions::Mutate => (0, 0),
+            StorageValueActions::TryMutate => default,
+            StorageValueActions::Kill => default,
+            StorageValueActions::Take => default,
+            StorageValueActions::Append => default,
+            StorageValueActions::DecodeLen => default,
+            StorageValueActions::TryAppend => default,
         }
     }
 }
@@ -147,36 +148,38 @@ impl StorageMapActions {
             "iter_keys" => StorageMapActions::IterKeys,
             "iter_keys_from" => StorageMapActions::IterKeysFrom,
             "drain" => StorageMapActions::Drain,
-            "translate" => StorageMapActions::Translate
+            "translate" => StorageMapActions::Translate,
+            _ => panic!("Invalid StorageMap action")
         }
     }
 
     pub fn get_weights(&self) -> (u32, u32) {
+        let default = (0, 0);
         match self {
-            StorageMapActions::ContainsKey => todo!(),
+            StorageMapActions::ContainsKey => default,
             StorageMapActions::Get => (1, 0),
-            StorageMapActions::TryGet => todo!(),
-            StorageMapActions::Swap => todo!(),
-            StorageMapActions::Insert => todo!(),
-            StorageMapActions::Remove => todo!(),
-            StorageMapActions::Mutate => todo!(),
-            StorageMapActions::TryMutate => todo!(),
-            StorageMapActions::MutateExists => todo!(),
-            StorageMapActions::TryMutateExists => todo!(),
-            StorageMapActions::Take => todo!(),
-            StorageMapActions::Append => todo!(),
-            StorageMapActions::DecodeLen => todo!(),
-            StorageMapActions::MigrateKey => todo!(),
-            StorageMapActions::RemoveAll => todo!(),
-            StorageMapActions::IterValues => todo!(),
-            StorageMapActions::TranslateValues => todo!(),
-            StorageMapActions::TryAppend => todo!(),
-            StorageMapActions::Iter => todo!(),
-            StorageMapActions::IterFrom => todo!(),
-            StorageMapActions::IterKeys => todo!(),
-            StorageMapActions::IterKeysFrom => todo!(),
-            StorageMapActions::Drain => todo!(),
-            StorageMapActions::Translate => todo!(),
+            StorageMapActions::TryGet => default,
+            StorageMapActions::Swap => default,
+            StorageMapActions::Insert => default,
+            StorageMapActions::Remove => default,
+            StorageMapActions::Mutate => default,
+            StorageMapActions::TryMutate => default,
+            StorageMapActions::MutateExists => default,
+            StorageMapActions::TryMutateExists => default,
+            StorageMapActions::Take => default,
+            StorageMapActions::Append => default,
+            StorageMapActions::DecodeLen => default,
+            StorageMapActions::MigrateKey => default,
+            StorageMapActions::RemoveAll => default,
+            StorageMapActions::IterValues => default,
+            StorageMapActions::TranslateValues => default,
+            StorageMapActions::TryAppend => default,
+            StorageMapActions::Iter => default,
+            StorageMapActions::IterFrom => default,
+            StorageMapActions::IterKeys => default,
+            StorageMapActions::IterKeysFrom => default,
+            StorageMapActions::Drain => default,
+            StorageMapActions::Translate => default,
         }
     }
 }
@@ -185,12 +188,16 @@ impl StorageMapActions {
 pub fn apply_r_w(tcx: TyCtxt, def_id: DefId, context: &mut Context) {
 
     let fn_full_name = get_fn_name_with_path(tcx, def_id);
+    let fn_short_name = get_fn_name(tcx, def_id);
 
-    let (r, w): (u32, u32);
+    let (mut r, mut w) = (0, 0);
 
     if StorageValueActions::is_storage_value_action(&fn_full_name) {
-        (r, w) = StorageValueActions::from(&fn_full_name).get_weights();
+        (r, w) = StorageValueActions::from(&fn_short_name).get_weights();
     } else if StorageMapActions::is_storage_map_action(&fn_full_name) {
-        (r, w) = StorageMapActions::from(&fn_full_name).get_weights();
+        (r, w) = StorageMapActions::from(&fn_short_name).get_weights();
     }
+
+    context.reads += r;
+    context.writes += w;
 }
