@@ -18,4 +18,4 @@ jobs:
           name: Clone and run on FRAME pallets
           command: |
             cd ..
-            ./scripts/run_on_frame.sh
+            ./saft/scripts/run_on_frame.sh
