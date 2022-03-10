@@ -5,7 +5,7 @@ git clone git@github.com:paritytech/substrate.git
 cd substrate/frame/
 
 no_extract=("benchmarking" "examples" "election-provider-support" "executive" "staking" "try-runtime" "whitelist")
-# ne_extract contains folders that are not pallets
+# no_extract contains folders that are not pallets
 # whitelist is a pallet but does not even build on Substrate repo
 
 for pallet in *
