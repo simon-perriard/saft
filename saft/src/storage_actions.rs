@@ -1,9 +1,12 @@
-use rustc_middle::ty::TyCtxt;
 use rustc_hir::def_id::DefId;
+use rustc_middle::ty::TyCtxt;
 // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html
 // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageMap.html
 
-use crate::{analysis_utils::{get_fn_name_with_path, get_fn_name}, mir_visitor::Context};
+use crate::{
+    analysis_utils::{get_fn_name, get_fn_name_with_path},
+    mir_visitor::Context,
+};
 
 pub enum StorageValueActions {
     Exists,
@@ -18,30 +21,42 @@ pub enum StorageValueActions {
     Take,
     Append,
     DecodeLen,
-    TryAppend
+    TryAppend,
 }
 
 impl StorageValueActions {
-
     pub fn is_storage_value_action(action: &str) -> bool {
         StorageValueActions::storage_value_actions().contains(&action.to_owned())
     }
 
     pub fn storage_value_actions() -> Vec<String> {
-        let storage_value_actions = vec![ "exists", "get", "try_get", "translate",
-                                                    "put", "set", "mutate", "try_mutate", "kill",
-                                                    "take", "append", "decode_len", "try_append"
-                                                ];
-        
-    
-        let storage_value_actions_full = storage_value_actions.iter().map(|e| "frame_support::StorageValue::".to_owned() + e).collect::<Vec<_>>();
+        let storage_value_actions = vec![
+            "exists",
+            "get",
+            "try_get",
+            "translate",
+            "put",
+            "set",
+            "mutate",
+            "try_mutate",
+            "kill",
+            "take",
+            "append",
+            "decode_len",
+            "try_append",
+        ];
+
+        let storage_value_actions_full = storage_value_actions
+            .iter()
+            .map(|e| "frame_support::StorageValue::".to_owned() + e)
+            .collect::<Vec<_>>();
         storage_value_actions_full
     }
 
     pub fn from(action: &str) -> StorageValueActions {
         match action {
             "exists" => StorageValueActions::Exists,
-            "get" => StorageValueActions::Get, 
+            "get" => StorageValueActions::Get,
             "try_get" => StorageValueActions::TryGet,
             "translate" => StorageValueActions::Translate,
             "put" => StorageValueActions::Put,
@@ -53,7 +68,7 @@ impl StorageValueActions {
             "append" => StorageValueActions::Append,
             "decode_len" => StorageValueActions::DecodeLen,
             "try_append" => StorageValueActions::TryAppend,
-            _ => panic!("Invalid StorageValue action")
+            _ => panic!("Invalid StorageValue action"),
         }
     }
 
@@ -101,25 +116,45 @@ pub enum StorageMapActions {
     IterKeys,
     IterKeysFrom,
     Drain,
-    Translate
+    Translate,
 }
 
 impl StorageMapActions {
-
     pub fn is_storage_map_action(action: &str) -> bool {
         StorageMapActions::storage_map_actions().contains(&action.to_owned())
     }
 
     pub fn storage_map_actions() -> Vec<String> {
-        let storage_map_actions = vec![ "contains_key", "get", "try_get", "swap",
-                                                  "insert", "remove", "mutate", "try_mutate",
-                                                  "mutate_exists", "try_mutate_exists", "take",
-                                                  "append", "decode_len", "migrate_key", "remove_all",
-                                                  "iter_values", "translate_values", "try_append",
-                                                  "iter", "iter_from", "iter_keys", "iter_keys_from",
-                                                  "drain", "translate"
-                                                ];
-        let storage_map_actions_full = storage_map_actions.iter().map(|e| "frame_support::StorageMap::".to_owned() + e).collect::<Vec<_>>();
+        let storage_map_actions = vec![
+            "contains_key",
+            "get",
+            "try_get",
+            "swap",
+            "insert",
+            "remove",
+            "mutate",
+            "try_mutate",
+            "mutate_exists",
+            "try_mutate_exists",
+            "take",
+            "append",
+            "decode_len",
+            "migrate_key",
+            "remove_all",
+            "iter_values",
+            "translate_values",
+            "try_append",
+            "iter",
+            "iter_from",
+            "iter_keys",
+            "iter_keys_from",
+            "drain",
+            "translate",
+        ];
+        let storage_map_actions_full = storage_map_actions
+            .iter()
+            .map(|e| "frame_support::StorageMap::".to_owned() + e)
+            .collect::<Vec<_>>();
         storage_map_actions_full
     }
 
@@ -149,7 +184,7 @@ impl StorageMapActions {
             "iter_keys_from" => StorageMapActions::IterKeysFrom,
             "drain" => StorageMapActions::Drain,
             "translate" => StorageMapActions::Translate,
-            _ => panic!("Invalid StorageMap action")
+            _ => panic!("Invalid StorageMap action"),
         }
     }
 
@@ -184,9 +219,7 @@ impl StorageMapActions {
     }
 }
 
-
 pub fn apply_r_w(tcx: TyCtxt, def_id: DefId, context: &mut Context) {
-
     let fn_full_name = get_fn_name_with_path(tcx, def_id);
     let fn_short_name = get_fn_name(tcx, def_id);
 

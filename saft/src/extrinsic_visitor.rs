@@ -1,5 +1,5 @@
-use rustc_middle::mir::Body;
 use rustc_hir::def_id::DefId;
+use rustc_middle::mir::Body;
 use rustc_middle::ty::TyCtxt;
 use std::io::Write;
 
@@ -10,12 +10,11 @@ pub struct ExtrinsicVisitor<'tcx, 'extrinsic> {
     pub full_path: String,
     pub def_id: DefId,
     pub tcx: TyCtxt<'tcx>,
-    pub mir: &'extrinsic Body<'tcx>
+    pub mir: &'extrinsic Body<'tcx>,
 }
 
 impl<'tcx, 'extrinsic> ExtrinsicVisitor<'tcx, 'extrinsic> {
-    pub fn new(tcx: TyCtxt<'tcx>, def_id: DefId,) -> Self {
-
+    pub fn new(tcx: TyCtxt<'tcx>, def_id: DefId) -> Self {
         let id = rustc_middle::ty::WithOptConstParam::unknown(def_id);
         let def = rustc_middle::ty::InstanceDef::Item(id);
         let mir = tcx.instance_mir(def);
@@ -25,7 +24,7 @@ impl<'tcx, 'extrinsic> ExtrinsicVisitor<'tcx, 'extrinsic> {
             full_path: get_fn_name_with_path(tcx, def_id),
             def_id,
             tcx,
-            mir
+            mir,
         }
     }
 

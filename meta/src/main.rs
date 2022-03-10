@@ -18,13 +18,13 @@
 extern crate env_logger;
 extern crate rustc_driver;
 extern crate rustc_interface;
-extern crate rustc_session;
 extern crate rustc_middle;
+extern crate rustc_session;
 
 use log::*;
-use saft::callbacks;
 use meta::options::Options;
 use meta::utils;
+use saft::callbacks;
 //use mirai_annotations::*;
 use rustc_session::config::ErrorOutputType;
 use rustc_session::early_error;
