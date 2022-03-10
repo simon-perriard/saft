@@ -196,15 +196,7 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
                     self.current_bb_context.reads += reads;
                     self.current_bb_context.writes += writes;
                 } else {
-                    println!(
-                        "{:?}",
-                        crate::analysis_utils::get_fn_name_with_path(self.mv.ev.tcx, *self.def_id)
-                    );
-                    println!(
-                        "{:?}",
-                        crate::analysis_utils::get_fn_name_with_path(self.mv.ev.tcx, *def_id)
-                    );
-                    panic!();
+                    println!("RECURSION DETECTED, RESULT WILL PROBABLY BE WRONG");
                 }
             } else {
                 apply_r_w(tcx, *def_id, &mut self.current_bb_context);
