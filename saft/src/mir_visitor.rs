@@ -2,13 +2,14 @@ use crate::extrinsic_visitor::ExtrinsicVisitor;
 use crate::storage_actions::apply_r_w;
 use rpds::{HashTrieMap, HashTrieSet};
 use rustc_hir::def_id::DefId;
+use rustc_index::bit_set::BitSet;
 use rustc_middle::mir::visit::*;
 use rustc_middle::mir::*;
 use rustc_middle::ty::{Const, TyKind};
 
 pub struct Context {
     pub reads: u32,
-    pub writes: u32, //pub environment
+    pub writes: u32,
 }
 
 impl Context {
@@ -52,12 +53,16 @@ impl<'tcx, 'extrinsic, 'analysis> MirVisitor<'tcx, 'extrinsic, 'analysis> {
     pub fn start_visit(&mut self) {
         let ev = self.ev;
 
+        let body = ev.mir;
+        let bitset_domain = body.basic_blocks().len();
+
         let mut top_body = MirBodyVisitor {
             mv: self,
             def_id: &ev.def_id,
-            body: ev.mir,
+            body,
             current_basic_block: None,
             current_bb_context: Context::new(),
+            is_bb_being_recursively_visited: BitSet::new_empty(bitset_domain),
         };
 
         top_body.start_visit();
@@ -70,6 +75,7 @@ pub struct MirBodyVisitor<'tcx, 'extrinsic, 'analysis, 'body> {
     pub body: &'body Body<'extrinsic>,
     current_basic_block: Option<BasicBlock>,
     pub current_bb_context: Context,
+    pub is_bb_being_recursively_visited: BitSet<BasicBlock>,
 }
 
 impl<'tcx, 'extrinsic, 'analysis, 'body> MirBodyVisitor<'tcx, 'extrinsic, 'analysis, 'body> {
@@ -91,28 +97,11 @@ impl<'tcx, 'extrinsic, 'analysis, 'body> MirBodyVisitor<'tcx, 'extrinsic, 'analy
     }
 
     fn close_body_analysis(&mut self) {
-        // Aggregate context returned by the analyzed body (function)
-        // for now only adding read and writes in a dumb way
-        // and assuming no loop or recursion
-        let mut total_reads = 0;
-        let mut total_writes = 0;
-
-        for bb in self.body.basic_blocks().indices() {
-            let (r, w) = self
-                .mv
-                .basic_blocks_weights
-                .get(self.def_id)
-                .unwrap()
-                .get(&bb)
-                .unwrap()
-                .to_owned();
-            total_reads += r;
-            total_writes += w;
-        }
+        let (max_reads, max_writes) = self.traverse_and_aggregate_weights();
 
         self.mv
             .bodies_weights
-            .insert_mut(*self.def_id, (total_reads, total_writes));
+            .insert_mut(*self.def_id, (max_reads, max_writes));
     }
 }
 
@@ -178,6 +167,8 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
             } else if tcx.is_mir_available(def_id) {
                 let called_fn_mir = tcx.optimized_mir(def_id);
 
+                let bitset_domain = called_fn_mir.basic_blocks().len();
+
                 // Continue analysis on called functions
                 let mut callee_body = MirBodyVisitor {
                     mv: self.mv,
@@ -185,6 +176,7 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
                     body: called_fn_mir,
                     current_basic_block: None,
                     current_bb_context: Context::default(),
+                    is_bb_being_recursively_visited: BitSet::new_empty(bitset_domain),
                 };
 
                 callee_body.start_visit();
@@ -207,5 +199,101 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
     fn visit_terminator(&mut self, terminator: &Terminator<'body>, location: Location) {
         self.super_terminator(terminator, location);
         self.close_bb_analysis();
+    }
+}
+
+impl<'tcx, 'extrinsic, 'analysis, 'body> MirBodyVisitor<'tcx, 'extrinsic, 'analysis, 'body> {
+    fn traverse_and_aggregate_weights(&mut self) -> (u32, u32) {
+        self.visit_basic_block_data_recursive(&START_BLOCK)
+    }
+
+    fn visit_basic_block_data_recursive(&mut self, block: &BasicBlock) -> (u32, u32) {
+        let data = &self.body.basic_blocks()[*block];
+        let BasicBlockData { terminator, .. } = data;
+
+        //Retrieve weights from successors through the terminator and add them to the current bb weights
+        let (bb_reads, bb_writes) = self
+            .mv
+            .basic_blocks_weights
+            .get(self.def_id)
+            .unwrap()
+            .get(block)
+            .unwrap()
+            .to_owned();
+
+        if let Some(terminator) = terminator {
+            if self.is_bb_being_recursively_visited.contains(*block) {
+                println!("LOOP DETECTED, RESULT WILL PROBABLY BE WRONG");
+                (bb_reads, bb_writes)
+            } else {
+                self.is_bb_being_recursively_visited.insert(*block);
+                let (max_succ_reads, max_succ_writes) = self.visit_terminator_recursive(terminator);
+                self.is_bb_being_recursively_visited.remove(*block);
+                (max_succ_reads + bb_reads, max_succ_writes + bb_writes)
+            }
+        } else {
+            (bb_reads, bb_writes)
+        }
+    }
+
+    fn visit_terminator_recursive(&mut self, terminator: &Terminator<'body>) -> (u32, u32) {
+        let Terminator { kind, .. } = terminator;
+
+        match kind {
+            TerminatorKind::Goto { target } => self.visit_basic_block_data_recursive(target),
+            TerminatorKind::SwitchInt { targets, .. } => {
+                let (mut max_reads, mut max_writes) = (0, 0);
+                // Iterate through successors and return max
+                for target in targets.all_targets() {
+                    let (r, w) = self.visit_basic_block_data_recursive(target).to_owned();
+
+                    if max_reads + max_writes < r + w {
+                        max_reads = r;
+                        max_writes = w;
+                    }
+                }
+                (max_reads, max_writes)
+            }
+            TerminatorKind::Drop { target, unwind, .. }
+            | TerminatorKind::DropAndReplace { target, unwind, .. } => {
+                let (reads_unwind, writes_unwind) = if let Some(unwind) = unwind {
+                    self.visit_basic_block_data_recursive(unwind)
+                } else {
+                    (0, 0)
+                };
+
+                let (target_reads, target_writes) = self.visit_basic_block_data_recursive(target);
+
+                if target_reads + target_writes < reads_unwind + writes_unwind {
+                    (reads_unwind, writes_unwind)
+                } else {
+                    (target_reads, target_writes)
+                }
+            }
+            TerminatorKind::Call {
+                destination,
+                cleanup,
+                ..
+            } => {
+                let (dest_reads, dest_writes) = if let Some((_, destination)) = destination {
+                    self.visit_basic_block_data_recursive(destination)
+                } else {
+                    (0, 0)
+                };
+
+                let (cleanup_reads, cleanup_writes) = if let Some(cleanup) = cleanup {
+                    self.visit_basic_block_data_recursive(cleanup)
+                } else {
+                    (0, 0)
+                };
+
+                if dest_reads + dest_writes < cleanup_reads + cleanup_writes {
+                    (cleanup_reads, cleanup_writes)
+                } else {
+                    (dest_reads, dest_writes)
+                }
+            }
+            _ => (0, 0),
+        }
     }
 }
