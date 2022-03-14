@@ -2,6 +2,7 @@
 
 members = [
     "meta",
+    "options",
     "saft"
 ]
 

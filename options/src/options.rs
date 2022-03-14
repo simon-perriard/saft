@@ -1,11 +1,13 @@
-use clap::{Command, ErrorKind};
+use clap::{Arg, Command, ErrorKind};
 use itertools::Itertools;
 use rustc_session::config::ErrorOutputType;
 use rustc_session::early_error;
 extern crate clap;
 
 #[derive(Debug, Default)]
-pub struct Options {}
+pub struct Options {
+    pub single_func: Option<String>,
+}
 
 impl Options {
     /// Parse options from an argument string. The argument string will be split using unix
@@ -30,7 +32,7 @@ impl Options {
             rustc_args_start = p + 1;
         }
         let saft_args = &args[0..saft_args_end];
-        let _matches = if rustc_args_start == 0 {
+        let matches = if rustc_args_start == 0 {
             // The arguments may not be intended for SAFT and may get here
             // via some tool, so do not report errors here, but just assume
             // that the arguments were not meant for SAFT.
@@ -66,10 +68,22 @@ impl Options {
             make_options_parser().get_matches_from(saft_args.iter())
         };
 
+        if matches.is_present("single_func") {
+            self.single_func = matches.value_of("single_func").map(|s| s.to_string());
+        }
+
         args[rustc_args_start..].to_vec()
     }
 }
 
 fn make_options_parser<'a>() -> Command<'a> {
-    Command::new("SAFT").no_binary_name(true).version("v0.0.1")
+    Command::new("SAFT")
+        .no_binary_name(true)
+        .version("v0.0.1")
+        .arg(
+            Arg::new("single_func")
+                .long("single_func")
+                .takes_value(true)
+                .help("Focus analysis on the named function."),
+        )
 }

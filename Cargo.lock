@@ -256,8 +256,25 @@ dependencies = [
  "itertools",
  "log",
  "log-derive",
+ "options",
  "rustc_tools_util",
  "saft",
+ "serde",
+ "serde_json",
+ "shellwords",
+]
+
+[[package]]
+name = "options"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
+ "clap",
+ "env_logger",
+ "itertools",
+ "log",
+ "log-derive",
+ "rustc_tools_util",
  "serde",
  "serde_json",
  "shellwords",
@@ -336,6 +353,7 @@ dependencies = [
  "clap",
  "itertools",
  "log",
+ "options",
  "regex",
  "rpds",
  "rustc_tools_util",

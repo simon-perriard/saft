@@ -29,4 +29,5 @@ log-derive = "*"
 shellwords = "*"
 clap = "*"
 saft = { path = "../saft" }
+options = { path = "../options" }
 env_logger = "*"

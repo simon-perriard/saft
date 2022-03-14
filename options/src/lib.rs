@@ -6,4 +6,4 @@ extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_session;
 
-pub mod utils;
+pub mod options;

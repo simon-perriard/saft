@@ -19,6 +19,10 @@ jobs:
           command: |
             cargo test
       - run:
+          name: Build doc
+          command: |
+            cargo doc --workspace
+      - run:
           name: Clone and run on FRAME pallets
           command: |
             ./scripts/run_on_frame.sh

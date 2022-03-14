@@ -22,8 +22,8 @@ extern crate rustc_middle;
 extern crate rustc_session;
 
 use log::*;
-use meta::options::Options;
 use meta::utils;
+use options::options::Options;
 use saft::callbacks;
 //use mirai_annotations::*;
 use rustc_session::config::ErrorOutputType;
@@ -60,7 +60,6 @@ fn main() {
             })
         })
         .collect::<Vec<_>>();
-    //assume!(!args.is_empty());
 
     // Setting RUSTC_WRAPPER causes Cargo to pass 'rustc' as the first argument.
     // We're invoking the compiler programmatically, so we remove it if present.
@@ -111,7 +110,7 @@ fn main() {
             }
         }
 
-        let mut callbacks = callbacks::SaftCallbacks::new();
+        let mut callbacks = callbacks::SaftCallbacks::new(options);
         debug!(
             "rustc_command_line_arguments {:?}",
             rustc_command_line_arguments

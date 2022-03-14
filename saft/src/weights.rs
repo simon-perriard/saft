@@ -1,15 +1,22 @@
+use std::cmp::Ordering;
 use std::fmt;
 use std::ops::*;
 
-#[derive(Debug, PartialEq, PartialOrd, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Weights {
+    /// The number of reads
     pub reads: u32,
+    /// The number of writes
     pub writes: u32,
 }
 
 impl Weights {
     pub fn new(reads: u32, writes: u32) -> Self {
         Weights { reads, writes }
+    }
+
+    pub fn get_total_weight(&self) -> u32 {
+        self.reads + self.writes
     }
 }
 
@@ -59,17 +66,24 @@ impl MulAssign for Weights {
     }
 }
 
-pub trait Max {
-    fn max(w1: Self, w2: Self) -> Self;
+impl PartialEq for Weights {
+    fn eq(&self, other: &Self) -> bool {
+        self.get_total_weight() == other.get_total_weight()
+    }
 }
 
-impl Max for Weights {
-    fn max(w1: Self, w2: Self) -> Self {
-        if w1 > w2 {
-            Weights { ..w1 }
-        } else {
-            Weights { ..w2 }
-        }
+impl Eq for Weights {}
+
+impl Ord for Weights {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.get_total_weight().cmp(&other.get_total_weight())
+    }
+}
+
+impl PartialOrd for Weights {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.get_total_weight()
+            .partial_cmp(&other.get_total_weight())
     }
 }
 
@@ -131,5 +145,20 @@ mod tests {
         let w2 = Weights::new(3, 4);
 
         assert!(Weights::max(w1, w2) == w2)
+    }
+
+    #[test]
+    fn test_eq() {
+        let w1 = Weights::new(1, 2);
+        let w2 = Weights::new(2, 1);
+
+        assert!(w1 == w2);
+    }
+
+    #[test]
+    fn test_ord() {
+        let w1 = Weights::new(1, 2);
+        let w2 = Weights::new(3, 4);
+        assert!(w1 < w2)
     }
 }

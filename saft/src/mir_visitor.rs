@@ -1,6 +1,6 @@
 use crate::extrinsic_visitor::ExtrinsicVisitor;
 use crate::storage_actions::apply_r_w;
-use crate::weights::{Max, Weights};
+use crate::weights::Weights;
 use rpds::{HashTrieMap, HashTrieSet};
 use rustc_hir::def_id::DefId;
 use rustc_index::bit_set::BitSet;

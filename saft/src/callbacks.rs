@@ -1,14 +1,17 @@
 use crate::{analysis_utils, extrinsic_visitor::ExtrinsicVisitor};
+use options::options::Options;
 use rustc_driver::Compilation;
 use rustc_interface::{interface, Queries};
 use rustc_middle::ty::TyCtxt;
 use std::fmt::{Debug, Formatter, Result};
 
-pub struct SaftCallbacks {}
+pub struct SaftCallbacks {
+    pub options: Options,
+}
 
 impl SaftCallbacks {
-    pub fn new() -> SaftCallbacks {
-        SaftCallbacks {}
+    pub fn new(options: Options) -> SaftCallbacks {
+        SaftCallbacks { options }
     }
 
     fn extract_juice<'tcx>(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'tcx>) {
@@ -25,13 +28,36 @@ impl SaftCallbacks {
             std::process::exit(1);
         };
 
-        println!("The following extrinsics will be analyzed :");
-        analysis_utils::print_extrinsics_names(tcx, Some(variant_ids));
+        if let Some(single_function) = &self.options.single_func {
+            println!("The following extrinsics will be analyzed :");
+            println!("{}", single_function);
 
-        for extrinsics_def_id in extrinsics_def_ids {
-            let mut extrinsic_visitor = ExtrinsicVisitor::new(tcx, extrinsics_def_id);
-            println!("Analyzing {}...", extrinsic_visitor.get_fn_name());
-            extrinsic_visitor.visit_body();
+            let mut target_extrinsic_def_id = None;
+
+            for id in &extrinsics_def_ids {
+                if analysis_utils::get_fn_name(tcx, *id) == single_function.trim() {
+                    target_extrinsic_def_id = Some(id);
+                    break;
+                }
+            }
+
+            if let Some(target_extrinsic_def_id) = target_extrinsic_def_id {
+                let mut extrinsic_visitor = ExtrinsicVisitor::new(tcx, *target_extrinsic_def_id);
+                println!("Analyzing {}...", extrinsic_visitor.get_fn_name());
+                extrinsic_visitor.visit_body();
+            } else {
+                println!("Function {} not found.", single_function);
+                std::process::exit(1);
+            }
+        } else {
+            println!("The following extrinsics will be analyzed :");
+            analysis_utils::print_extrinsics_names(tcx, Some(variant_ids));
+
+            for extrinsics_def_id in extrinsics_def_ids {
+                let mut extrinsic_visitor = ExtrinsicVisitor::new(tcx, extrinsics_def_id);
+                println!("Analyzing {}...", extrinsic_visitor.get_fn_name());
+                extrinsic_visitor.visit_body();
+            }
         }
     }
 }
@@ -44,7 +70,7 @@ impl Debug for SaftCallbacks {
 
 impl Default for SaftCallbacks {
     fn default() -> Self {
-        Self::new()
+        Self::new(Options::default())
     }
 }
 
