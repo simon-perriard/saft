@@ -90,7 +90,7 @@ impl<'tcx, 'extrinsic, 'analysis, 'body> MirBodyVisitor<'tcx, 'extrinsic, 'analy
             .unwrap()
             .insert_mut(
                 self.current_basic_block.unwrap(),
-                self.current_bb_context.weights.clone(),
+                self.current_bb_context.weights,
             );
 
         // Reset context
