@@ -48,7 +48,7 @@ impl<'tcx, 'extrinsic> ExtrinsicVisitor<'tcx, 'extrinsic> {
         let mut mir_visitor = MirVisitor::new(self);
         mir_visitor.start_visit();
 
-        let (r, w) = mir_visitor.bodies_weights.get(&self.def_id).unwrap();
-        println!("Reads: {}, Writes: {}", r, w);
+        let weights = mir_visitor.bodies_weights.get(&self.def_id).unwrap();
+        println!("{}", weights);
     }
 }

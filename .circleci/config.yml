@@ -15,6 +15,10 @@ jobs:
             ./scripts/setup.sh
             cargo install --path ./meta
       - run:
+          name: Run unit tests
+          command: |
+            cargo test
+      - run:
           name: Clone and run on FRAME pallets
           command: |
             ./scripts/run_on_frame.sh

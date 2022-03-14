@@ -6,6 +6,7 @@ use rustc_middle::ty::TyCtxt;
 use crate::{
     analysis_utils::{get_fn_name, get_fn_name_with_path},
     mir_visitor::Context,
+    weights::Weights,
 };
 
 pub enum StorageValueActions {
@@ -72,16 +73,16 @@ impl StorageValueActions {
         }
     }
 
-    pub fn get_weights(&self) -> (u32, u32) {
-        let default = (0, 0);
+    pub fn get_weights(&self) -> Weights {
+        let default = Weights::default();
         match self {
-            StorageValueActions::Exists => (1, 0),
-            StorageValueActions::Get => (1, 0),
-            StorageValueActions::TryGet => (1, 0),
+            StorageValueActions::Exists => Weights::new(1, 0),
+            StorageValueActions::Get => Weights::new(1, 0),
+            StorageValueActions::TryGet => Weights::new(1, 0),
             StorageValueActions::Translate => default,
-            StorageValueActions::Put => (0, 1),
-            StorageValueActions::Set => (0, 1),
-            StorageValueActions::Mutate => (0, 0),
+            StorageValueActions::Put => Weights::new(0, 1),
+            StorageValueActions::Set => Weights::new(0, 1),
+            StorageValueActions::Mutate => Weights::new(0, 0),
             StorageValueActions::TryMutate => default,
             StorageValueActions::Kill => default,
             StorageValueActions::Take => default,
@@ -188,11 +189,11 @@ impl StorageMapActions {
         }
     }
 
-    pub fn get_weights(&self) -> (u32, u32) {
-        let default = (0, 0);
+    pub fn get_weights(&self) -> Weights {
+        let default = Weights::default();
         match self {
             StorageMapActions::ContainsKey => default,
-            StorageMapActions::Get => (1, 0),
+            StorageMapActions::Get => Weights::new(1, 0),
             StorageMapActions::TryGet => default,
             StorageMapActions::Swap => default,
             StorageMapActions::Insert => default,
@@ -223,14 +224,13 @@ pub fn apply_r_w(tcx: TyCtxt, def_id: DefId, context: &mut Context) {
     let fn_full_name = get_fn_name_with_path(tcx, def_id);
     let fn_short_name = get_fn_name(tcx, def_id);
 
-    let (mut r, mut w) = (0, 0);
+    let mut weights = Weights::default();
 
     if StorageValueActions::is_storage_value_action(&fn_full_name) {
-        (r, w) = StorageValueActions::from(&fn_short_name).get_weights();
+        weights = StorageValueActions::from(&fn_short_name).get_weights();
     } else if StorageMapActions::is_storage_map_action(&fn_full_name) {
-        (r, w) = StorageMapActions::from(&fn_short_name).get_weights();
+        weights = StorageMapActions::from(&fn_short_name).get_weights();
     }
 
-    context.reads += r;
-    context.writes += w;
+    context.weights += weights
 }

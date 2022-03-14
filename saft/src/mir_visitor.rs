@@ -1,5 +1,6 @@
 use crate::extrinsic_visitor::ExtrinsicVisitor;
 use crate::storage_actions::apply_r_w;
+use crate::weights::{Max, Weights};
 use rpds::{HashTrieMap, HashTrieSet};
 use rustc_hir::def_id::DefId;
 use rustc_index::bit_set::BitSet;
@@ -8,15 +9,13 @@ use rustc_middle::mir::*;
 use rustc_middle::ty::{Const, TyKind};
 
 pub struct Context {
-    pub reads: u32,
-    pub writes: u32,
+    pub weights: Weights,
 }
 
 impl Context {
     pub fn new() -> Context {
         Context {
-            reads: 0,
-            writes: 0,
+            weights: Weights::default(),
         }
     }
 }
@@ -30,9 +29,9 @@ impl Default for Context {
 pub struct MirVisitor<'tcx, 'extrinsic, 'analysis> {
     pub ev: &'analysis ExtrinsicVisitor<'tcx, 'extrinsic>,
     already_visited_bodies: HashTrieSet<DefId>,
-    pub bodies_weights: HashTrieMap<DefId, (u32, u32)>,
+    pub bodies_weights: HashTrieMap<DefId, Weights>,
     already_visited_blocks: HashTrieMap<DefId, HashTrieSet<BasicBlock>>,
-    pub basic_blocks_weights: HashTrieMap<DefId, HashTrieMap<BasicBlock, (u32, u32)>>,
+    pub basic_blocks_weights: HashTrieMap<DefId, HashTrieMap<BasicBlock, Weights>>,
     pub context: Context,
 }
 
@@ -85,23 +84,25 @@ impl<'tcx, 'extrinsic, 'analysis, 'body> MirBodyVisitor<'tcx, 'extrinsic, 'analy
 
     fn close_bb_analysis(&mut self) {
         // Aggregate context returned by analyzed bb
-        let Context { reads, writes } = self.current_bb_context;
         self.mv
             .basic_blocks_weights
             .get_mut(self.def_id)
             .unwrap()
-            .insert_mut(self.current_basic_block.unwrap(), (reads, writes));
+            .insert_mut(
+                self.current_basic_block.unwrap(),
+                self.current_bb_context.weights.clone(),
+            );
 
         // Reset context
         self.current_bb_context = Context::default();
     }
 
     fn close_body_analysis(&mut self) {
-        let (max_reads, max_writes) = self.traverse_and_aggregate_weights();
+        let body_weights_agg = self.traverse_and_aggregate_weights();
 
         self.mv
             .bodies_weights
-            .insert_mut(*self.def_id, (max_reads, max_writes));
+            .insert_mut(*self.def_id, body_weights_agg);
     }
 }
 
@@ -160,10 +161,8 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
             // If body already visited, just add weights
             // otherwise, analyse underlying
             if self.mv.already_visited_bodies.contains(def_id) {
-                let (reads, writes) = self.mv.bodies_weights.get(def_id).unwrap();
-
-                self.current_bb_context.reads += reads;
-                self.current_bb_context.writes += writes;
+                let known_body_weights = self.mv.bodies_weights.get(def_id).unwrap().to_owned();
+                self.current_bb_context.weights += known_body_weights;
             } else if tcx.is_mir_available(def_id) {
                 let called_fn_mir = tcx.optimized_mir(def_id);
 
@@ -184,9 +183,8 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
                 // After underlying function has been analyzed, update bb context and weights
                 let weights = self.mv.bodies_weights.get(def_id);
 
-                if let Some((reads, writes)) = weights {
-                    self.current_bb_context.reads += reads;
-                    self.current_bb_context.writes += writes;
+                if let Some(weights) = weights {
+                    self.current_bb_context.weights += *weights;
                 } else {
                     println!("RECURSION DETECTED, RESULT WILL PROBABLY BE WRONG");
                 }
@@ -203,16 +201,16 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
 }
 
 impl<'tcx, 'extrinsic, 'analysis, 'body> MirBodyVisitor<'tcx, 'extrinsic, 'analysis, 'body> {
-    fn traverse_and_aggregate_weights(&mut self) -> (u32, u32) {
+    fn traverse_and_aggregate_weights(&mut self) -> Weights {
         self.visit_basic_block_data_recursive(&START_BLOCK)
     }
 
-    fn visit_basic_block_data_recursive(&mut self, block: &BasicBlock) -> (u32, u32) {
+    fn visit_basic_block_data_recursive(&mut self, block: &BasicBlock) -> Weights {
         let data = &self.body.basic_blocks()[*block];
         let BasicBlockData { terminator, .. } = data;
 
         //Retrieve weights from successors through the terminator and add them to the current bb weights
-        let (bb_reads, bb_writes) = self
+        let bb_weights = self
             .mv
             .basic_blocks_weights
             .get(self.def_id)
@@ -224,50 +222,47 @@ impl<'tcx, 'extrinsic, 'analysis, 'body> MirBodyVisitor<'tcx, 'extrinsic, 'analy
         if let Some(terminator) = terminator {
             if self.is_bb_being_recursively_visited.contains(*block) {
                 println!("LOOP DETECTED, RESULT WILL PROBABLY BE WRONG");
-                (bb_reads, bb_writes)
+                bb_weights
             } else {
                 self.is_bb_being_recursively_visited.insert(*block);
-                let (max_succ_reads, max_succ_writes) = self.visit_terminator_recursive(terminator);
+                let max_succ_weights = self.visit_terminator_recursive(terminator);
                 self.is_bb_being_recursively_visited.remove(*block);
-                (max_succ_reads + bb_reads, max_succ_writes + bb_writes)
+                bb_weights + max_succ_weights
             }
         } else {
-            (bb_reads, bb_writes)
+            bb_weights
         }
     }
 
-    fn visit_terminator_recursive(&mut self, terminator: &Terminator<'body>) -> (u32, u32) {
+    fn visit_terminator_recursive(&mut self, terminator: &Terminator<'body>) -> Weights {
         let Terminator { kind, .. } = terminator;
 
         match kind {
             TerminatorKind::Goto { target } => self.visit_basic_block_data_recursive(target),
             TerminatorKind::SwitchInt { targets, .. } => {
-                let (mut max_reads, mut max_writes) = (0, 0);
+                let mut max_weights = Weights::default();
                 // Iterate through successors and return max
                 for target in targets.all_targets() {
-                    let (r, w) = self.visit_basic_block_data_recursive(target).to_owned();
+                    let target_weights = self.visit_basic_block_data_recursive(target);
 
-                    if max_reads + max_writes < r + w {
-                        max_reads = r;
-                        max_writes = w;
-                    }
+                    max_weights = Weights::max(max_weights, target_weights);
                 }
-                (max_reads, max_writes)
+                max_weights
             }
             TerminatorKind::Drop { target, unwind, .. }
             | TerminatorKind::DropAndReplace { target, unwind, .. } => {
-                let (reads_unwind, writes_unwind) = if let Some(unwind) = unwind {
+                let unwind_weights = if let Some(unwind) = unwind {
                     self.visit_basic_block_data_recursive(unwind)
                 } else {
-                    (0, 0)
+                    Weights::default()
                 };
 
-                let (target_reads, target_writes) = self.visit_basic_block_data_recursive(target);
+                let target_weights = self.visit_basic_block_data_recursive(target);
 
-                if target_reads + target_writes < reads_unwind + writes_unwind {
-                    (reads_unwind, writes_unwind)
+                if target_weights < unwind_weights {
+                    unwind_weights
                 } else {
-                    (target_reads, target_writes)
+                    target_weights
                 }
             }
             TerminatorKind::Call {
@@ -275,25 +270,25 @@ impl<'tcx, 'extrinsic, 'analysis, 'body> MirBodyVisitor<'tcx, 'extrinsic, 'analy
                 cleanup,
                 ..
             } => {
-                let (dest_reads, dest_writes) = if let Some((_, destination)) = destination {
+                let dest_weights = if let Some((_, destination)) = destination {
                     self.visit_basic_block_data_recursive(destination)
                 } else {
-                    (0, 0)
+                    Weights::default()
                 };
 
-                let (cleanup_reads, cleanup_writes) = if let Some(cleanup) = cleanup {
+                let cleanup_weights = if let Some(cleanup) = cleanup {
                     self.visit_basic_block_data_recursive(cleanup)
                 } else {
-                    (0, 0)
+                    Weights::default()
                 };
 
-                if dest_reads + dest_writes < cleanup_reads + cleanup_writes {
-                    (cleanup_reads, cleanup_writes)
+                if dest_weights < cleanup_weights {
+                    cleanup_weights
                 } else {
-                    (dest_reads, dest_writes)
+                    dest_weights
                 }
             }
-            _ => (0, 0),
+            _ => Weights::default(),
         }
     }
 }

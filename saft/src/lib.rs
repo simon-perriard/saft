@@ -14,3 +14,4 @@ pub mod callbacks;
 pub mod extrinsic_visitor;
 pub mod mir_visitor;
 pub mod storage_actions;
+pub mod weights;
