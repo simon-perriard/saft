@@ -3,15 +3,17 @@ use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_hir::hir_id::HirId;
 use rustc_middle::ty::TyCtxt;
 
-pub fn get_fn_name(tcx: TyCtxt, def_id: DefId) -> String {
-    let full_name = get_fn_name_with_path(tcx, def_id);
+use crate::storage_type_tree::{StorageTypeNode, StorageTypeTree};
+
+pub fn get_def_id_name(tcx: TyCtxt, def_id: DefId) -> String {
+    let full_name = get_def_id_name_with_path(tcx, def_id);
     let split = full_name.split_terminator("::").collect::<Vec<_>>();
     let splat = *split.last().unwrap_or(&"");
 
     splat.to_string()
 }
 
-pub fn get_fn_name_with_path(tcx: TyCtxt, def_id: DefId) -> String {
+pub fn get_def_id_name_with_path(tcx: TyCtxt, def_id: DefId) -> String {
     tcx.def_path_str(def_id)
 }
 
@@ -57,14 +59,13 @@ pub fn get_dispatch_bypass_filter_local_def_id(tcx: TyCtxt) -> Option<LocalDefId
         let def_id = local_def_id.to_def_id();
         let pallet_call_dispatch_regex = Regex::new(r"<pallet::Call<.*\s*(,.*)*> as frame_support::dispatch::UnfilteredDispatchable>::dispatch_bypass_filter").unwrap();
 
-        if pallet_call_dispatch_regex.is_match(&get_fn_name_with_path(tcx, def_id)) {
+        if pallet_call_dispatch_regex.is_match(&get_def_id_name_with_path(tcx, def_id)) {
             return Some(local_def_id);
         }
     }
     None
 }
 
-// path resolution qpath_res is tricky, this function does not work
 pub fn get_extrinsics_fn_ids(
     tcx: TyCtxt,
     dispatch_local_def_id: LocalDefId,
@@ -138,5 +139,72 @@ fn is_matching(pattern: &rustc_hir::PatKind, match_target: &str) -> bool {
             path_segment.ident.as_str() == match_target
         }
         _ => false,
+    }
+}
+
+pub fn get_storage_variables(tcx: &TyCtxt) {
+    fn explore(tcx: &TyCtxt, arg: &rustc_hir::GenericArg, direct_parent: &mut StorageTypeNode) {
+        if let rustc_hir::GenericArg::Type(ty) = arg
+            && let rustc_hir::Ty{ kind: rustc_hir::TyKind::Path(qpath), .. } = ty
+        {
+            if let rustc_hir::QPath::Resolved(_, path) = qpath
+            && let rustc_hir::Path { segments, .. } = path {
+                for segment in segments.iter() {
+                    let rustc_hir::PathSegment { args, .. } = segment;
+                    direct_parent.add_child(segment.ident.as_str().to_string());
+
+                    if let Some(rustc_hir::GenericArgs { args, .. }) = args
+                    {
+                        for arg in args.iter() {
+                            explore(tcx , arg, direct_parent.get_last_as_mut_ref());
+                        }
+                    }
+                }
+            } else if let rustc_hir::QPath::TypeRelative(_, segment) = qpath
+                && let rustc_hir::PathSegment { args, .. } = segment
+            {
+                direct_parent.add_child(segment.ident.as_str().to_string());
+
+                if let Some(rustc_hir::GenericArgs { args, .. }) = args
+                {
+                    for arg in args.iter() {
+                        explore(tcx , arg, direct_parent.get_last_as_mut_ref());
+                    }
+                }
+            }
+        }
+    }
+
+    let mut storage_variables_names = Vec::new();
+
+    for item in tcx.hir().items() {
+        let rustc_hir::Item { ident, .. } = item;
+
+        if ident.as_str().contains("_GeneratedPrefixForStorage") {
+            storage_variables_names.push(ident.as_str().replace("_GeneratedPrefixForStorage", ""));
+        }
+    }
+    let storage_variables_names = storage_variables_names;
+
+    for item in tcx.hir().items() {
+        let rustc_hir::Item { ident, kind, .. } = item;
+        //if storage_variables_names.contains(&String::from(ident.as_str()))
+        if ident.as_str() == "Registrars"
+            && let rustc_hir::ItemKind::TyAlias(ty, _) = kind
+            && let rustc_hir::Ty { kind, .. } = ty
+            && let rustc_hir::TyKind::Path(qpath) = kind
+            && let rustc_hir::QPath::Resolved(_, path) = qpath
+            && let rustc_hir::Path { segments, .. } = path
+            && let rustc_hir::PathSegment { args, .. } = segments[0]
+            && let Some(rustc_hir::GenericArgs { args, .. }) = args
+        {
+            let root = StorageTypeNode::new(segments[0].ident.as_str().to_string());
+            let mut type_tree = StorageTypeTree::new(root);
+
+            for arg in args.iter() {
+                explore(tcx, arg, type_tree.get_root_as_mut_ref());
+            }
+            type_tree.visit_display(tcx);
+        }
     }
 }

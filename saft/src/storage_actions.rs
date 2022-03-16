@@ -4,7 +4,7 @@ use rustc_middle::ty::TyCtxt;
 // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageMap.html
 
 use crate::{
-    analysis_utils::{get_fn_name, get_fn_name_with_path},
+    analysis_utils::{get_def_id_name, get_def_id_name_with_path},
     mir_visitor::Context,
     weights::Weights,
 };
@@ -221,8 +221,8 @@ impl StorageMapActions {
 }
 
 pub fn apply_r_w(tcx: TyCtxt, def_id: DefId, context: &mut Context) {
-    let fn_full_name = get_fn_name_with_path(tcx, def_id);
-    let fn_short_name = get_fn_name(tcx, def_id);
+    let fn_full_name = get_def_id_name_with_path(tcx, def_id);
+    let fn_short_name = get_def_id_name(tcx, def_id);
 
     let mut weights = Weights::default();
 

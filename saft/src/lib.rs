@@ -1,5 +1,6 @@
 #![feature(rustc_private)]
 #![feature(box_patterns)]
+#![feature(let_chains)]
 
 extern crate rustc_driver;
 extern crate rustc_hir;
@@ -14,4 +15,5 @@ pub mod callbacks;
 pub mod extrinsic_visitor;
 pub mod mir_visitor;
 pub mod storage_actions;
+pub mod storage_type_tree;
 pub mod weights;

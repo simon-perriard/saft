@@ -20,8 +20,8 @@ impl<'tcx, 'extrinsic> ExtrinsicVisitor<'tcx, 'extrinsic> {
         let mir = tcx.instance_mir(def);
 
         ExtrinsicVisitor {
-            name: get_fn_name(tcx, def_id),
-            full_path: get_fn_name_with_path(tcx, def_id),
+            name: get_def_id_name(tcx, def_id),
+            full_path: get_def_id_name_with_path(tcx, def_id),
             def_id,
             tcx,
             mir,
