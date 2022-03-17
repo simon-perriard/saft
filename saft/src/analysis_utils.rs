@@ -160,10 +160,18 @@ pub fn get_storage_variables(tcx: &TyCtxt) {
                         }
                     }
                 }
-            } else if let rustc_hir::QPath::TypeRelative(_, segment) = qpath
+            } else if let rustc_hir::QPath::TypeRelative(ty, segment) = qpath
                 && let rustc_hir::PathSegment { args, .. } = segment
             {
-                direct_parent.add_child(segment.ident.as_str().to_string());
+                let mut super_type = "";
+                // Get super type as well
+                if let rustc_hir::Ty{ kind: rustc_hir::TyKind::Path(qpath), .. } = ty
+                && let rustc_hir::QPath::Resolved(_, path) = qpath
+                && let rustc_hir::Path { segments, .. } = path {
+                    super_type = segments[0].ident.as_str();
+                }
+                
+                direct_parent.add_child((super_type.to_owned() + "::" + segment.ident.as_str()).to_string());
 
                 if let Some(rustc_hir::GenericArgs { args, .. }) = args
                 {
@@ -188,8 +196,7 @@ pub fn get_storage_variables(tcx: &TyCtxt) {
 
     for item in tcx.hir().items() {
         let rustc_hir::Item { ident, kind, .. } = item;
-        //if storage_variables_names.contains(&String::from(ident.as_str()))
-        if ident.as_str() == "Registrars"
+        if storage_variables_names.contains(&String::from(ident.as_str()))
             && let rustc_hir::ItemKind::TyAlias(ty, _) = kind
             && let rustc_hir::Ty { kind, .. } = ty
             && let rustc_hir::TyKind::Path(qpath) = kind
