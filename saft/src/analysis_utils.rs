@@ -2,8 +2,9 @@ use regex::Regex;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_hir::hir_id::HirId;
 use rustc_middle::ty::TyCtxt;
+use rustc_hir::def::Res;
 
-use crate::storage_type_tree::{StorageTypeNode, StorageTypeTree};
+use crate::storage_typesystem::{FrameStorageType, StorageKind, ValueType};
 
 pub fn get_def_id_name(tcx: TyCtxt, def_id: DefId) -> String {
     let full_name = get_def_id_name_with_path(tcx, def_id);
@@ -143,7 +144,7 @@ fn is_matching(pattern: &rustc_hir::PatKind, match_target: &str) -> bool {
 }
 
 pub fn get_storage_variables(tcx: &TyCtxt) {
-    fn explore(tcx: &TyCtxt, arg: &rustc_hir::GenericArg, direct_parent: &mut StorageTypeNode) {
+    fn explore(tcx: &TyCtxt, arg: &rustc_hir::GenericArg) -> Option<ValueType> {
         if let rustc_hir::GenericArg::Type(ty) = arg
             && let rustc_hir::Ty{ kind: rustc_hir::TyKind::Path(qpath), .. } = ty
         {
@@ -151,36 +152,36 @@ pub fn get_storage_variables(tcx: &TyCtxt) {
             && let rustc_hir::Path { segments, .. } = path {
                 for segment in segments.iter() {
                     let rustc_hir::PathSegment { args, .. } = segment;
-                    direct_parent.add_child(segment.ident.as_str().to_string());
 
                     if let Some(rustc_hir::GenericArgs { args, .. }) = args
                     {
                         for arg in args.iter() {
-                            explore(tcx , arg, direct_parent.get_last_as_mut_ref());
+                            explore(tcx , arg);
                         }
                     }
+                    return Some(ValueType::Symbol{symbol: "DUMMY".to_string()});
                 }
             } else if let rustc_hir::QPath::TypeRelative(ty, segment) = qpath
                 && let rustc_hir::PathSegment { args, .. } = segment
             {
-                let mut super_type = "";
+                return Some(ValueType::Symbol{symbol: "DUMMY".to_string()});
+                /*let mut super_type = "";
                 // Get super type as well
                 if let rustc_hir::Ty{ kind: rustc_hir::TyKind::Path(qpath), .. } = ty
                 && let rustc_hir::QPath::Resolved(_, path) = qpath
                 && let rustc_hir::Path { segments, .. } = path {
                     super_type = segments[0].ident.as_str();
-                }
-                
-                direct_parent.add_child((super_type.to_owned() + "::" + segment.ident.as_str()).to_string());
+                }*/
 
-                if let Some(rustc_hir::GenericArgs { args, .. }) = args
+                /*if let Some(rustc_hir::GenericArgs { args, .. }) = args
                 {
                     for arg in args.iter() {
-                        explore(tcx , arg, direct_parent.get_last_as_mut_ref());
+                        explore(tcx , arg);
                     }
-                }
+                }*/
             }
         }
+        None
     }
 
     let mut storage_variables_names = Vec::new();
@@ -192,26 +193,45 @@ pub fn get_storage_variables(tcx: &TyCtxt) {
             storage_variables_names.push(ident.as_str().replace("_GeneratedPrefixForStorage", ""));
         }
     }
+
     let storage_variables_names = storage_variables_names;
 
     for item in tcx.hir().items() {
-        let rustc_hir::Item { ident, kind, .. } = item;
+        let rustc_hir::Item {
+            ident,
+            def_id,
+            kind,
+            ..
+        } = item;
         if storage_variables_names.contains(&String::from(ident.as_str()))
             && let rustc_hir::ItemKind::TyAlias(ty, _) = kind
             && let rustc_hir::Ty { kind, .. } = ty
             && let rustc_hir::TyKind::Path(qpath) = kind
             && let rustc_hir::QPath::Resolved(_, path) = qpath
-            && let rustc_hir::Path { segments, .. } = path
+            && let rustc_hir::Path { segments, res, .. } = path
             && let rustc_hir::PathSegment { args, .. } = segments[0]
             && let Some(rustc_hir::GenericArgs { args, .. }) = args
         {
-            let root = StorageTypeNode::new(segments[0].ident.as_str().to_string());
-            let mut type_tree = StorageTypeTree::new(root);
 
-            for arg in args.iter() {
-                explore(tcx, arg, type_tree.get_root_as_mut_ref());
-            }
-            type_tree.visit_display(tcx);
+            println!("{:?}", res);
+            let kind = if let Res::Def(_, def_id) = res {
+                 match get_def_id_name_with_path(*tcx, *def_id).as_str() {
+                     "frame_support::pallet_prelude::StorageValue" => StorageKind::Dummy,
+                     "frame_support::pallet_prelude::StorageMap" => StorageKind::Dummy,
+                     "frame_support::pallet_prelude::StorageDoubleMap" => StorageKind::Dummy,
+                     "frame_support::pallet_prelude::StorageNMap" => StorageKind::Dummy,
+                     _ => {println!("{}", get_def_id_name_with_path(*tcx, *def_id));StorageKind::Dummy}
+                 }
+            } else {
+                unreachable!();
+            };
+
+            /*for arg in args.iter() {
+                explore(tcx, arg);
+            }*/
+
+            /*let storage_type = FrameStorageType::new(tcx, *def_id, kind);
+            println!("{:?}", storage_type);*/
         }
     }
 }
