@@ -15,6 +15,8 @@ pub struct FrameStorageType {
 }
 
 #[derive(Clone, Debug)]
+/// Root types for Substrate storage
+/// https://docs.substrate.io/rustdocs/latest/frame_support/pallet_prelude/index.html#structs
 pub enum StorageKind {
     StorageValue {
         ident: Ident,
