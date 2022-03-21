@@ -1,4 +1,10 @@
-use crate::{analysis_utils::*, extrinsic_visitor::ExtrinsicVisitor};
+use crate::{
+    analysis_utils::{
+        def_id_printer::*, extrinsics_getter::*,
+        typesystem_storage_variables::get_storage_variables,
+    },
+    extrinsic_visitor::ExtrinsicVisitor,
+};
 use options::options::Options;
 use rustc_driver::Compilation;
 use rustc_interface::{interface, Queries};

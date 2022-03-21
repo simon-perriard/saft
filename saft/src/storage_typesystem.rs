@@ -1,16 +1,9 @@
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::ty::TyCtxt;
 
-use crate::analysis_utils::{get_def_id_name, get_def_id_name_with_path};
+use crate::{analysis_utils::def_id_printer::*, typesystem_common::CompSize};
 #[derive(Clone, Debug)]
 pub struct Ident {
-    pub name_short: String,
-    pub name_full: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct RootIdent {
-    pub def_id: LocalDefId,
     pub name_short: String,
     pub name_full: String,
 }
@@ -22,47 +15,31 @@ pub struct FrameStorageType {
 }
 
 #[derive(Clone, Debug)]
-pub enum ValueType {
-    U8,
-    U16,
-    U32,
-    U64,
-    U128,
-    Usize,
-    I8,
-    I16,
-    I32,
-    I64,
-    I128,
-    Isize,
-    Option(Box<ValueType>),
-    BoundedVec(Box<ValueType>),
-    Get(Box<ValueType>),
-    Symbol { symbol: String },
-}
-
-#[derive(Clone, Debug)]
 pub enum StorageKind {
     StorageValue {
-        ident: RootIdent,
-        value: crate::storage_typesystem::ValueType,
+        ident: Ident,
+        value: crate::typesystem_common::ValueType,
     },
     StorageMap {
-        ident: RootIdent,
-        value: crate::storage_typesystem::ValueType,
-        max_value: Option<ValueType>,
+        ident: Ident,
+        value: crate::typesystem_common::ValueType,
+        //max_values: Option<ValueType>,
     },
     StorageDoubleMap {
-        ident: RootIdent,
-        value: crate::storage_typesystem::ValueType,
-        max_value: Option<ValueType>,
+        ident: Ident,
+        value: crate::typesystem_common::ValueType,
+        //max_values: Option<ValueType>,
     },
     StorageNMap {
-        ident: RootIdent,
-        value: crate::storage_typesystem::ValueType,
-        max_value: Option<ValueType>,
+        ident: Ident,
+        value: crate::typesystem_common::ValueType,
+        //max_values: Option<ValueType>,
     },
-    Dummy,
+    CountedStorageMap {
+        ident: Ident,
+        value: crate::typesystem_common::ValueType,
+        //max_values: Option<ValueType>,
+    },
 }
 
 impl FrameStorageType {
@@ -76,21 +53,13 @@ impl FrameStorageType {
         }
     }
 
-    /*pub fn visit_display(&self, tcx: &TyCtxt) {
-        print!("{:?}", self.name);
-        if self.children.len() > 0 {
-            print!("<");
-
-            let mut count = self.children.len() - 1;
-            for child in self.children.iter() {
-                child.visit_display(tcx);
-                if count > 0 {
-                    print!(", ");
-                }
-                count -= 1;
-            }
-
-            print!(">");
+    pub fn get_size(&self) -> CompSize {
+        match &self.kind {
+            StorageKind::StorageValue { value, .. } => value.get_size(),
+            StorageKind::StorageMap { value, .. } => value.get_size(),
+            StorageKind::StorageDoubleMap { value, .. } => value.get_size(),
+            StorageKind::StorageNMap { value, .. } => value.get_size(),
+            StorageKind::CountedStorageMap { value, .. } => value.get_size(),
         }
-    }*/
+    }
 }

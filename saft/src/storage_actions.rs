@@ -3,11 +3,7 @@ use rustc_middle::ty::TyCtxt;
 // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html
 // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageMap.html
 
-use crate::{
-    analysis_utils::{get_def_id_name, get_def_id_name_with_path},
-    mir_visitor::Context,
-    weights::Weights,
-};
+use crate::{analysis_utils::def_id_printer::*, mir_visitor::Context, weights::Weights};
 
 pub enum StorageValueActions {
     Exists,

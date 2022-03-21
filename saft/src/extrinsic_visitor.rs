@@ -3,7 +3,7 @@ use rustc_middle::mir::Body;
 use rustc_middle::ty::TyCtxt;
 use std::io::Write;
 
-use crate::{analysis_utils::*, mir_visitor::MirVisitor};
+use crate::{analysis_utils::def_id_printer::*, mir_visitor::MirVisitor};
 
 pub struct ExtrinsicVisitor<'tcx, 'extrinsic> {
     pub name: String,

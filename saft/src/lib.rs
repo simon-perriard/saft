@@ -2,6 +2,7 @@
 #![feature(box_patterns)]
 #![feature(let_chains)]
 
+extern crate rustc_ast;
 extern crate rustc_driver;
 extern crate rustc_hir;
 extern crate rustc_index;
@@ -16,4 +17,5 @@ pub mod extrinsic_visitor;
 pub mod mir_visitor;
 pub mod storage_actions;
 pub mod storage_typesystem;
+pub mod typesystem_common;
 pub mod weights;
