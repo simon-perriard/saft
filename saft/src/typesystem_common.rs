@@ -28,10 +28,22 @@ impl fmt::Display for Size {
 }
 
 #[derive(Clone, Debug)]
+/// This struct represents a composable size
 pub struct CompSize {
+    /// Multiplication factor associated to the size,
+    /// this can be used for an array that has a max size.
+    /// Example:
+    ///     BoundedVec<u8, MAX::Type>
+    ///     will be represented by CompSize as
+    ///     mul_factor: MAX::Type'size and concrete 1 (byte)
     pub mul_factor: Size,
+    /// The symbols hashmap represents user defined types, 
+    /// for which we may (concrete) or may not (symbol) know the size.
     pub symbols: HashTrieMap<String, Size>,
+    /// The sum of type' sizes we know for sure
     pub concrete: usize,
+    /// This is little hack to represent Tuples and the size
+    /// of each of their members.
     pub tuple_composition: Option<Vec<Box<CompSize>>>,
 }
 
@@ -127,6 +139,7 @@ impl fmt::Display for CompSize {
 }
 
 #[derive(Clone, Debug)]
+/// Only types that can represent a size (vector size)
 pub enum VecSize {
     U8,
     U16,
@@ -152,6 +165,8 @@ impl VecSize {
 }
 
 #[derive(Clone, Debug)]
+/// Different types of values, unknown types should be
+/// defferred to Symbol
 pub enum ValueType {
     U8,
     U16,
