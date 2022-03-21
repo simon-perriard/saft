@@ -1,4 +1,4 @@
-use rpds::{HashTrieMap, HashTrieSet};
+use rpds::HashTrieMap;
 use std::fmt;
 use std::mem;
 
@@ -26,45 +26,24 @@ impl fmt::Display for Size {
         }
     }
 }
-impl Size {
-    /*pub fn add(&self, other: Size) -> Size {
-        match self {
-            Size::Concrete(x) => match other {
-                Size::Concrete(y) => Size::Concrete(x + y),
-                Size::Symbol(_) => unreachable!(),
-                Size::Zero => Size::Concrete(*x),
-                Size::One => Size::Concrete(x+1)
-            },
-            Size::Symbol(s) => match other {
-                Size::Concrete(_) => unreachable!(),
-                Size::Symbol(t) => {
-                    assert!(s.eq(&t));
-                    (*self).clone()
-                }
-                Size::Zero => (*self).clone(),
-                _ => unreachable!(),
-            },
-            Size::One => {
-                match other {
-                    Size::One => Size::Concrete(2),
-                    _ => other.add((*self).clone())
-                }
-            },
-            Size::Zero => {
-                match other {
-                    Size::Zero => unreachable!(),
-                    _ => other
-                }
-            },
-        }
-    }*/
-}
 
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct CompSize {
     pub mul_factor: Size,
     pub symbols: HashTrieMap<String, Size>,
     pub concrete: usize,
+    pub tuple_composition: Option<Vec<Box<CompSize>>>,
+}
+
+impl Default for CompSize {
+    fn default() -> Self {
+        Self {
+            mul_factor: Size::One,
+            symbols: Default::default(),
+            concrete: Default::default(),
+            tuple_composition: Default::default(),
+        }
+    }
 }
 
 impl CompSize {
@@ -75,6 +54,7 @@ impl CompSize {
             mul_factor: Size::One,
             symbols,
             concrete: 0,
+            tuple_composition: None,
         }
     }
 
@@ -83,6 +63,7 @@ impl CompSize {
             mul_factor: Size::One,
             symbols: HashTrieMap::new(),
             concrete,
+            tuple_composition: None,
         }
     }
 
@@ -95,96 +76,55 @@ impl fmt::Display for CompSize {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut fmt = String::new();
 
-        let mut count = self.symbols.keys().len()-1;
+        let mut count = self.symbols.keys().len() - 1;
 
         for (ty, size) in self.symbols.iter() {
             match size {
-                Size::One => fmt.push_str(&format!("{}", ty)),
+                Size::One => fmt.push_str(ty),
                 Size::Zero => continue,
-                _ => fmt.push_str(&format!("({} * {})", size, ty))
+                _ => fmt.push_str(&format!("({} * {})", size, ty)),
             }
-            
+
             if count > 0 {
                 fmt.push_str(" + ")
             }
+            count -= 1;
+        }
 
-            count +=1;
+        if let Some(tuple_composition) = &self.tuple_composition {
+            count = tuple_composition.len() - 1;
+            fmt.push('(');
+            for member in tuple_composition.iter() {
+                fmt.push_str(&format!("{}", member));
+
+                if count > 0 {
+                    fmt.push_str(" + ")
+                }
+                count -= 1;
+            }
+            fmt.push(')');
         }
 
         if self.concrete != 0 {
-            fmt.push_str(&format!(" + {}", self.concrete));
+            if !fmt.is_empty() {
+                fmt.push_str(" + ");
+            }
+            fmt.push_str(&format!("{}", self.concrete));
         }
 
         match self.mul_factor {
             Size::Zero => {
                 write!(f, "")
-            },
+            }
             Size::One => {
                 write!(f, "{}", fmt)
-            },
+            }
             _ => {
                 write!(f, "{} * ({})", self.mul_factor, fmt)
             }
         }
     }
 }
-
-/*impl std::ops::Add for CompSize {
-    type Output = Self;
-
-    fn add(self, other: Self) -> Self::Output {
-        let mut keys = HashTrieSet::new();
-        let mut symbols = HashTrieMap::new();
-
-        for key in self.symbols.keys() {
-            keys.insert_mut(key);
-        }
-        for key in other.symbols.keys() {
-            keys.insert_mut(key);
-        }
-
-        for key in keys.iter() {
-            let count_self = match self.symbols.get(*key) {
-                Some(x) => *x,
-                None => Size::Zero,
-            };
-
-            let count_other = match other.symbols.get(*key) {
-                Some(x) => *x,
-                None => Size::Zero,
-            };
-
-            symbols.insert_mut((*key).clone(), count_self.add(count_other));
-        }
-
-        Self {
-            mul_factor:
-            symbols,
-            concrete: self.concrete + other.concrete,
-        }
-    }
-}
-
-impl std::ops::AddAssign for CompSize {
-    fn add_assign(&mut self, other: Self) {
-        for key in other.symbols.keys() {
-            let count_self = match self.symbols.get(key) {
-                Some(x) => *x,
-                None => Size::Zero,
-            };
-
-            let count_other = match other.symbols.get(key) {
-                Some(x) => *x,
-                None => Size::Zero,
-            };
-
-            self.symbols
-                .insert_mut((*key).clone(), count_other.add(count_self));
-        }
-
-        self.concrete += other.concrete;
-    }
-}*/
 
 #[derive(Clone, Debug)]
 pub enum VecSize {
@@ -263,15 +203,17 @@ impl ValueType {
             ValueType::Char => CompSize::new_concrete(mem::size_of::<char>()),
             ValueType::Option(t) => t.get_size(),
             ValueType::Tuple(t_vec) => {
-                let mut acc = CompSize::default();
+                let mut tuple_vec = Vec::new();
 
                 for t in t_vec.iter() {
-                    //acc += t.get_size();
+                    tuple_vec.push(Box::new(t.get_size()));
                 }
 
-                acc
+                CompSize {
+                    tuple_composition: Some(tuple_vec),
+                    ..CompSize::default()
+                }
             }
-            // TODO multiply by size, which could be a symbol
             ValueType::BoundedVec { value, size } => {
                 let mut val = value.get_size();
                 val.set_mul_factor(size.get_size());
