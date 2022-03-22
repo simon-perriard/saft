@@ -35,11 +35,11 @@ impl<'tcx, 'extrinsic> ExtrinsicVisitor<'tcx, 'extrinsic> {
         let _ = stdout.flush();
     }
 
-    pub fn get_fn_name(&self) -> String {
+    pub fn get_cloned_fn_name(&self) -> String {
         self.name.clone()
     }
 
-    pub fn get_fn_name_with_path(&self) -> String {
+    pub fn get_cloned_fn_name_with_path(&self) -> String {
         self.full_path.clone()
     }
 

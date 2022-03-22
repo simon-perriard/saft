@@ -1,8 +1,26 @@
+//! Basic elements to build the extended typesystem
+
 use rpds::HashTrieMap;
+use rustc_ast::ast::{FloatTy, IntTy, UintTy};
+use rustc_hir::def::Res;
+use rustc_hir::PrimTy;
+use rustc_middle::ty::TyCtxt;
 use std::fmt;
 use std::mem;
 
+use crate::analysis_utils::def_id_printer::*;
+
+#[derive(Clone, Debug)]
+/// Textual identity of a type, aka its name
+pub struct Ident {
+    pub name_short: String,
+    pub name_full: String,
+    // TODO: add a DefId or something similar?
+}
+
 #[derive(Debug, Clone)]
+/// The atomic way to represent a size for a type
+/// It can either be a concrete or a symbolic size
 pub enum Size {
     Concrete(usize),
     Symbol(String),
@@ -28,7 +46,7 @@ impl fmt::Display for Size {
 }
 
 #[derive(Clone, Debug)]
-/// This struct represents a composable size
+/// A composite size, it can contain different elements to describe the size of a type
 pub struct CompSize {
     /// Multiplication factor associated to the size,
     /// this can be used for an array that has a max size.
@@ -59,6 +77,7 @@ impl Default for CompSize {
 }
 
 impl CompSize {
+    /// Create a new symbolic size
     pub fn new_symbol(symbol: String) -> CompSize {
         let mut symbols = HashTrieMap::new();
         symbols.insert_mut(symbol, Size::One);
@@ -70,6 +89,7 @@ impl CompSize {
         }
     }
 
+    /// Create a new concrete size
     pub fn new_concrete(concrete: usize) -> CompSize {
         CompSize {
             mul_factor: Size::One,
@@ -237,5 +257,123 @@ impl ValueType {
             ValueType::Get(t) => t.get_size(),
             ValueType::Symbol(symbol) => CompSize::new_symbol(symbol.to_string()),
         }
+    }
+}
+
+/// Explore a type to get its path resolution and fill its
+/// generics type arguments
+pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty) -> ValueType {
+    if let rustc_hir::Ty {
+        kind: rustc_hir::TyKind::Path(qpath),
+        ..
+    } = ty
+    {
+        if let rustc_hir::QPath::Resolved(_, path) = qpath {
+            return get_value_type(tcx, path);
+        } else if let rustc_hir::QPath::TypeRelative(ty, segment) = qpath {
+            // Get super type as well
+            let super_type = if let rustc_hir::Ty{ kind: rustc_hir::TyKind::Path(qpath), .. } = ty
+            && let rustc_hir::QPath::Resolved(_, path) = qpath
+            && let rustc_hir::Path { segments, .. } = path {
+                segments[0].ident.as_str()
+            } else {
+                unreachable!();
+            };
+            // TODO: check here if this type is defined in the config trait
+
+            // Simply return it as a symbol, TypeRelative paths may be resolved in later work
+            return ValueType::Symbol(super_type.to_owned() + "::" + segment.ident.as_str());
+        }
+    } else if let rustc_hir::Ty {
+        kind: rustc_hir::TyKind::Tup(tys),
+        ..
+    } = ty
+    {
+        // Block for Tuple
+        let mut members = Vec::new();
+
+        for ty in tys.iter() {
+            members.push(Box::new(explore(tcx, ty)));
+        }
+
+        return ValueType::Tuple(members);
+    }
+    unreachable!()
+}
+
+/// Find the ValueType enum member that correspond to the given path
+pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path) -> ValueType {
+    let rustc_hir::Path { segments, res, .. } = path;
+
+    match res {
+        Res::Def(_, def_id) => {
+            match get_def_id_name_with_path(*tcx, *def_id).as_str() {
+                // BoundedVec is a standard type in FRAME:
+                // https://docs.substrate.io/rustdocs/latest/frame_support/storage/bounded_vec/struct.BoundedVec.html
+                "frame_support::BoundedVec" => {
+                    let generics = segments[0].args.unwrap().args;
+                    if let rustc_hir::GenericArg::Type(ty_0) = &generics[0]
+                        && let rustc_hir::GenericArg::Type(ty_1) = &generics[1]
+                    {
+                        let value = Box::new(explore(tcx, ty_0));
+                        let size = match explore(tcx, ty_1) {
+                            ValueType::Usize => VecSize::Usize,
+                            ValueType::U8 => VecSize::U8,
+                            ValueType::U16 => VecSize::U16,
+                            ValueType::U32 => VecSize::U32,
+                            ValueType::U64 => VecSize::U64,
+                            ValueType::U128 => VecSize::U128,
+                            ValueType::Symbol(symbol) => VecSize::Symbol(symbol),
+                            _ => todo!(),
+                        };
+
+                        return ValueType::BoundedVec { value, size };
+                    }
+
+                    unreachable!()
+                }
+                "std::option::Option" => {
+                    let generic = &segments[0].args.unwrap().args[0];
+
+                    if let rustc_hir::GenericArg::Type(ty) = generic {
+                        return ValueType::Option(Box::new(explore(tcx, ty)));
+                    }
+
+                    unreachable!()
+                }
+                _ => {
+                    // Treat every unkown as symbol, later work will maybe resolve those
+                    ValueType::Symbol(get_def_id_name(*tcx, *def_id))
+                }
+            }
+        }
+        // Primitive types
+        // https://doc.rust-lang.org/reference/type-layout.html#primitive-data-layout
+        Res::PrimTy(prim_ty) => match prim_ty {
+            PrimTy::Int(int_ty) => match int_ty {
+                IntTy::Isize => ValueType::Isize,
+                IntTy::I8 => ValueType::I8,
+                IntTy::I16 => ValueType::I16,
+                IntTy::I32 => ValueType::I32,
+                IntTy::I64 => ValueType::I64,
+                IntTy::I128 => ValueType::I128,
+            },
+            PrimTy::Uint(uint_ty) => match uint_ty {
+                UintTy::Usize => ValueType::Usize,
+                UintTy::U8 => ValueType::U8,
+                UintTy::U16 => ValueType::U16,
+                UintTy::U32 => ValueType::U32,
+                UintTy::U64 => ValueType::U64,
+                UintTy::U128 => ValueType::U128,
+            },
+            PrimTy::Float(float_ty) => match float_ty {
+                FloatTy::F32 => ValueType::F32,
+                FloatTy::F64 => ValueType::F64,
+            },
+            PrimTy::Str => ValueType::Str,
+            PrimTy::Bool => ValueType::Bool,
+            PrimTy::Char => ValueType::Char,
+        },
+        _ => todo!(),
     }
 }

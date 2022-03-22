@@ -1,3 +1,6 @@
+//! Helper modules for the analysis
+
+/// Printer module for DefId's names
 pub mod def_id_printer {
     use rustc_hir::def_id::DefId;
     use rustc_middle::ty::TyCtxt;
@@ -14,6 +17,7 @@ pub mod def_id_printer {
     }
 }
 
+/// Helper module to extract the extrinsics from the pallet
 pub mod extrinsics_getter {
 
     use regex::Regex;
@@ -79,9 +83,9 @@ pub mod extrinsics_getter {
     }
 
     /// Get the DefIds of the pallet's extrinsic functions
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `tcx` - Compilation context
     /// * `dispatch_local_def_id` - LocalDefId of the pallet's `dispatch_bypass_filter` function, can be given by [`get_dispatch_bypass_filter_local_def_id`]
     /// * `variant_ids` - Vector containing the extrinsincs' HirIds, can be given by [`get_call_enum_variants_hir_ids`]
@@ -160,233 +164,6 @@ pub mod extrinsics_getter {
                 path_segment.ident.as_str() == match_target
             }
             _ => false,
-        }
-    }
-}
-
-pub mod typesystem_storage_variables {
-    use super::def_id_printer::*;
-    use crate::storage_typesystem::*;
-    use crate::typesystem_common::*;
-    use rustc_ast::ast::{FloatTy, IntTy, UintTy};
-    use rustc_hir::def::Res;
-    use rustc_hir::PrimTy;
-    use rustc_middle::ty::TyCtxt;
-
-    /// Find the pallet's storage variables, resolve their types and try to get
-    /// their size
-    pub fn get_storage_variables(tcx: &TyCtxt) {
-        let mut storage_variables_names = Vec::new();
-
-        for item in tcx.hir().items() {
-            let rustc_hir::Item { ident, .. } = item;
-
-            // _GeneratedPrefixForStorageNAME is generated for storage variables that
-            // have _ as prefix type
-            // TODO: check how it behaves with storage variables with non default prefix
-            if ident.as_str().contains("_GeneratedPrefixForStorage") {
-                storage_variables_names
-                    .push(ident.as_str().replace("_GeneratedPrefixForStorage", ""));
-            }
-        }
-
-        let storage_variables_names = storage_variables_names;
-
-        for item in tcx.hir().items() {
-            let rustc_hir::Item {
-                ident,
-                def_id,
-                kind,
-                ..
-            } = item;
-            if storage_variables_names.contains(&String::from(ident.as_str()))
-                && let rustc_hir::ItemKind::TyAlias(ty, _) = kind
-                && let rustc_hir::Ty { kind, .. } = ty
-                && let rustc_hir::TyKind::Path(qpath) = kind
-                && let rustc_hir::QPath::Resolved(_, path) = qpath
-                && let rustc_hir::Path { res, segments, .. } = path
-                && let rustc_hir::PathSegment { args, .. } = segments[0]
-                && let Some(rustc_hir::GenericArgs { args, .. }) = args
-            {
-                let kind = if let Res::Def(_, def_id) = res {
-                    let ident = Ident {
-                        name_short: get_def_id_name_with_path(*tcx, *def_id),
-                        name_full: get_def_id_name(*tcx, *def_id)
-                    };
-                    match get_def_id_name_with_path(*tcx, *def_id).as_str() {
-                         "frame_support::pallet_prelude::StorageValue" => {
-                            if let rustc_hir::GenericArg::Type(ty) = &args[1] {
-                                StorageKind::StorageValue {
-                                    ident,
-                                    value: explore(tcx, ty),
-                                }
-                             } else {unreachable!()}
-                         },
-                         "frame_support::pallet_prelude::StorageMap" => {
-                            if let rustc_hir::GenericArg::Type(ty) = &args[3] {
-                                StorageKind::StorageNMap {
-                                    ident,
-                                    value: explore(tcx, ty),
-                                    //max_values: Some(explore(tcx, &args[6]))
-                                }
-                             } else {unreachable!()}
-                         },
-                         "frame_support::pallet_prelude::StorageDoubleMap" => {
-                            if let rustc_hir::GenericArg::Type(ty) = &args[3] {
-                                StorageKind::StorageNMap {
-                                    ident,
-                                    value: explore(tcx, ty),
-                                    //max_values: Some(explore(tcx, &args[6]))
-                                }
-                             } else {unreachable!()}
-
-                         },
-                         "frame_support::pallet_prelude::StorageNMap" => {
-                            if let rustc_hir::GenericArg::Type(ty) = &args[3] {
-                                StorageKind::StorageNMap {
-                                    ident,
-                                    value: explore(tcx, ty),
-                                    //max_values: Some(explore(tcx, &args[6]))
-                                }
-                             } else {unreachable!()}
-
-                         },
-                         "frame_support::pallet_prelude::CountedStorageMap" => {
-                            if let rustc_hir::GenericArg::Type(ty) = &args[3] {
-                                StorageKind::CountedStorageMap {
-                                    ident,
-                                    value: explore(tcx, ty),
-                                    //max_values: Some(explore(tcx, &args[6]))
-                                }
-                             } else {unreachable!()}
-
-                         },
-                         _ => {unreachable!()}
-                     }
-                } else {
-                    unreachable!();
-                };
-
-                let storage_type = FrameStorageType::new(tcx, *def_id, kind);
-                println!("{:?}, size is {}", storage_type, storage_type.get_size());
-            }
-        }
-    }
-    /// Explore a type to get its path resolution and fill its
-    /// generics type arguments
-    fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty) -> ValueType {
-        if let rustc_hir::Ty {
-            kind: rustc_hir::TyKind::Path(qpath),
-            ..
-        } = ty
-        {
-            if let rustc_hir::QPath::Resolved(_, path) = qpath {
-                return get_value_type(tcx, path);
-            } else if let rustc_hir::QPath::TypeRelative(ty, segment) = qpath {
-                // Get super type as well
-                let super_type = if let rustc_hir::Ty{ kind: rustc_hir::TyKind::Path(qpath), .. } = ty
-                && let rustc_hir::QPath::Resolved(_, path) = qpath
-                && let rustc_hir::Path { segments, .. } = path {
-                    segments[0].ident.as_str()
-                } else {
-                    unreachable!();
-                };
-                // TODO: check here if this type is defined in the config trait
-
-                // Simply return it as a symbol, TypeRelative paths may be resolved in later work
-                return ValueType::Symbol(super_type.to_owned() + "::" + segment.ident.as_str());
-            }
-        } else if let rustc_hir::Ty {
-            kind: rustc_hir::TyKind::Tup(tys),
-            ..
-        } = ty
-        {
-            // Block for Tuple
-            let mut members = Vec::new();
-
-            for ty in tys.iter() {
-                members.push(Box::new(explore(tcx, ty)));
-            }
-
-            return ValueType::Tuple(members);
-        }
-        unreachable!()
-    }
-
-    /// Find the ValueType enum member that correspond to the given path
-    fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path) -> ValueType {
-        let rustc_hir::Path { segments, res, .. } = path;
-
-        match res {
-            Res::Def(_, def_id) => {
-                match get_def_id_name_with_path(*tcx, *def_id).as_str() {
-                    // BoundedVec is a standard type in FRAME:
-                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/bounded_vec/struct.BoundedVec.html
-                    "frame_support::BoundedVec" => {
-                        let generics = segments[0].args.unwrap().args;
-                        if let rustc_hir::GenericArg::Type(ty_0) = &generics[0]
-                            && let rustc_hir::GenericArg::Type(ty_1) = &generics[1]
-                        {
-                            let value = Box::new(explore(tcx, ty_0));
-                            let size = match explore(tcx, ty_1) {
-                                ValueType::Usize => VecSize::Usize,
-                                ValueType::U8 => VecSize::U8,
-                                ValueType::U16 => VecSize::U16,
-                                ValueType::U32 => VecSize::U32,
-                                ValueType::U64 => VecSize::U64,
-                                ValueType::U128 => VecSize::U128,
-                                ValueType::Symbol(symbol) => VecSize::Symbol(symbol),
-                                _ => todo!(),
-                            };
-
-                            return ValueType::BoundedVec { value, size };
-                        }
-
-                        unreachable!()
-                    }
-                    "std::option::Option" => {
-                        let generic = &segments[0].args.unwrap().args[0];
-
-                        if let rustc_hir::GenericArg::Type(ty) = generic {
-                            return ValueType::Option(Box::new(explore(tcx, ty)));
-                        }
-
-                        unreachable!()
-                    }
-                    _ => {
-                        // Treat every unkown as symbol, later work will maybe resolve those
-                        ValueType::Symbol(get_def_id_name(*tcx, *def_id))
-                    }
-                }
-            }
-            // Primitive types
-            // https://doc.rust-lang.org/reference/type-layout.html#primitive-data-layout
-            Res::PrimTy(prim_ty) => match prim_ty {
-                PrimTy::Int(int_ty) => match int_ty {
-                    IntTy::Isize => ValueType::Isize,
-                    IntTy::I8 => ValueType::I8,
-                    IntTy::I16 => ValueType::I16,
-                    IntTy::I32 => ValueType::I32,
-                    IntTy::I64 => ValueType::I64,
-                    IntTy::I128 => ValueType::I128,
-                },
-                PrimTy::Uint(uint_ty) => match uint_ty {
-                    UintTy::Usize => ValueType::Usize,
-                    UintTy::U8 => ValueType::U8,
-                    UintTy::U16 => ValueType::U16,
-                    UintTy::U32 => ValueType::U32,
-                    UintTy::U64 => ValueType::U64,
-                    UintTy::U128 => ValueType::U128,
-                },
-                PrimTy::Float(float_ty) => match float_ty {
-                    FloatTy::F32 => ValueType::F32,
-                    FloatTy::F64 => ValueType::F64,
-                },
-                PrimTy::Str => ValueType::Str,
-                PrimTy::Bool => ValueType::Bool,
-                PrimTy::Char => ValueType::Char,
-            },
-            _ => todo!(),
         }
     }
 }

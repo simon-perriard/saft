@@ -1,3 +1,5 @@
+//! Weights representing the resources consumption
+
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::*;
@@ -8,6 +10,8 @@ pub struct Weights {
     pub reads: u32,
     /// The number of writes
     pub writes: u32,
+    // TODO: add more fields for concrete and symbolic weights
+    // TODO: build composite weights
 }
 
 impl Weights {
