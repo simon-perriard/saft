@@ -9,7 +9,8 @@ use std::fmt;
 use std::mem;
 
 use crate::analysis_utils::def_id_printer::*;
-use crate::storage_typesystem::FrameStorageType;
+use crate::typesystem_pallet_standard::PalletStandardType;
+use crate::typesystem_storage::FrameStorageType;
 
 #[derive(Clone, Debug)]
 /// Textual identity of a type, aka its name
@@ -303,7 +304,7 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty) -> ValueType {
 }
 
 /// Find the ValueType enum member that correspond to the given path
-pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path) -> ValueType {
+fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path) -> ValueType {
     let rustc_hir::Path { segments, res, .. } = path;
 
     match res {
@@ -387,35 +388,45 @@ pub trait TypeSize {
 
 pub enum TypeVariant {
     FrameStorageType(FrameStorageType),
-    /*FrameConfigType(),
-    IndependentType()*/
+    PalletStandardType(PalletStandardType),
 }
 
 impl TypeSize for TypeVariant {
     fn get_size(&self) -> CompSize {
         match self {
             TypeVariant::FrameStorageType(t) => t.get_size(),
+            TypeVariant::PalletStandardType(t) => t.get_size(),
         }
     }
 
     fn get_name(&self) -> String {
         match self {
             TypeVariant::FrameStorageType(t) => t.get_name(),
+            TypeVariant::PalletStandardType(t) => t.get_name(),
         }
     }
 
     fn get_name_full(&self) -> String {
         match self {
             TypeVariant::FrameStorageType(t) => t.get_name_full(),
+            TypeVariant::PalletStandardType(t) => t.get_name_full(),
         }
     }
 }
 
-pub struct TySysMap {
-    pub tsm: HashTrieMap<String, TypeVariant>
+/// Struct containing information about the types
+/// declared in the pallet
+pub struct TySys {
+    pub tsm: HashTrieMap<String, TypeVariant>,
 }
 
-impl TySysMap {
+impl TySys {
+    pub fn new() -> TySys {
+        TySys {
+            tsm: HashTrieMap::new(),
+        }
+    }
+
     pub fn print_types_names(&self) {
         for key in self.tsm.keys() {
             println!("{}", key)
@@ -424,5 +435,11 @@ impl TySysMap {
 
     pub fn add_type(&mut self, ty: TypeVariant) {
         self.tsm.insert_mut(ty.get_name_full(), ty);
+    }
+}
+
+impl Default for TySys {
+    fn default() -> Self {
+        Self::new()
     }
 }

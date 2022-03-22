@@ -91,8 +91,7 @@ pub fn get_storage_variables_names(tcx: &TyCtxt) -> Vec<String> {
 
 /// Find the pallet's storage variables, resolve their types and try to get
 /// their size. If size cannot be inferred, a symbol will be used instead.
-pub fn get_storage_variables(tcx: &TyCtxt) {
-    
+pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
     let storage_variables_names = get_storage_variables_names(tcx);
 
     for item in tcx.hir().items() {
@@ -171,7 +170,7 @@ pub fn get_storage_variables(tcx: &TyCtxt) {
             };
 
             let storage_type = FrameStorageType::new(tcx, *def_id, kind);
-            println!("{:?}, size is {}", storage_type, storage_type.get_size());
+            ts.add_type(TypeVariant::FrameStorageType(storage_type));
         }
     }
 }
