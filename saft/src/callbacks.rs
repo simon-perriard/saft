@@ -1,7 +1,7 @@
 use crate::{
     analysis_utils::{def_id_printer::*, extrinsics_getter::*},
     extrinsic_visitor::ExtrinsicVisitor,
-    storage_typesystem::get_storage_variables,
+    storage_typesystem::get_storage_variables, config_typesystem::get_config_types,
 };
 use options::options::Options;
 use rustc_driver::Compilation;
@@ -89,7 +89,7 @@ impl rustc_driver::Callbacks for SaftCallbacks {
         compiler.session().abort_if_errors();
 
         queries.global_ctxt().unwrap().peek_mut().enter(
-            |tcx| get_storage_variables(&tcx), /*self.extract_juice(compiler, tcx)*/
+            |tcx| get_config_types(&tcx), /*self.extract_juice(compiler, tcx)*/
         );
 
         Compilation::Continue

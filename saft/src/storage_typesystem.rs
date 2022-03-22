@@ -50,8 +50,10 @@ impl FrameStorageType {
             kind,
         }
     }
+}
 
-    pub fn get_size(&self) -> CompSize {
+impl TypeSize for FrameStorageType {
+    fn get_size(&self) -> CompSize {
         match &self.kind {
             StorageKind::StorageValue { value, .. } => value.get_size(),
             StorageKind::StorageMap { value, .. } => value.get_size(),
@@ -60,11 +62,17 @@ impl FrameStorageType {
             StorageKind::CountedStorageMap { value, .. } => value.get_size(),
         }
     }
+
+    fn get_name(&self) -> String {
+        self.alias_ident.name_short.clone()
+    }
+
+    fn get_name_full(&self) -> String {
+        self.alias_ident.name_full.clone()
+    }
 }
 
-/// Find the pallet's storage variables, resolve their types and try to get
-/// their size. If size cannot be inferred, a symbol will be used instead.
-pub fn get_storage_variables(tcx: &TyCtxt) {
+pub fn get_storage_variables_names(tcx: &TyCtxt) -> Vec<String> {
     let mut storage_variables_names = Vec::new();
 
     for item in tcx.hir().items() {
@@ -78,7 +86,14 @@ pub fn get_storage_variables(tcx: &TyCtxt) {
         }
     }
 
-    let storage_variables_names = storage_variables_names;
+    storage_variables_names
+}
+
+/// Find the pallet's storage variables, resolve their types and try to get
+/// their size. If size cannot be inferred, a symbol will be used instead.
+pub fn get_storage_variables(tcx: &TyCtxt) {
+    
+    let storage_variables_names = get_storage_variables_names(tcx);
 
     for item in tcx.hir().items() {
         let rustc_hir::Item {

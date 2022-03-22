@@ -9,6 +9,7 @@ use std::fmt;
 use std::mem;
 
 use crate::analysis_utils::def_id_printer::*;
+use crate::storage_typesystem::FrameStorageType;
 
 #[derive(Clone, Debug)]
 /// Textual identity of a type, aka its name
@@ -375,5 +376,53 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path) -> ValueType {
             PrimTy::Char => ValueType::Char,
         },
         _ => todo!(),
+    }
+}
+
+pub trait TypeSize {
+    fn get_size(&self) -> CompSize;
+    fn get_name(&self) -> String;
+    fn get_name_full(&self) -> String;
+}
+
+pub enum TypeVariant {
+    FrameStorageType(FrameStorageType),
+    /*FrameConfigType(),
+    IndependentType()*/
+}
+
+impl TypeSize for TypeVariant {
+    fn get_size(&self) -> CompSize {
+        match self {
+            TypeVariant::FrameStorageType(t) => t.get_size(),
+        }
+    }
+
+    fn get_name(&self) -> String {
+        match self {
+            TypeVariant::FrameStorageType(t) => t.get_name(),
+        }
+    }
+
+    fn get_name_full(&self) -> String {
+        match self {
+            TypeVariant::FrameStorageType(t) => t.get_name_full(),
+        }
+    }
+}
+
+pub struct TySysMap {
+    pub tsm: HashTrieMap<String, TypeVariant>
+}
+
+impl TySysMap {
+    pub fn print_types_names(&self) {
+        for key in self.tsm.keys() {
+            println!("{}", key)
+        }
+    }
+
+    pub fn add_type(&mut self, ty: TypeVariant) {
+        self.tsm.insert_mut(ty.get_name_full(), ty);
     }
 }
