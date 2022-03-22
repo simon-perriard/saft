@@ -37,7 +37,7 @@ pub struct CompSize {
     ///     will be represented by CompSize as
     ///     mul_factor: MAX::Type'size and concrete 1 (byte)
     pub mul_factor: Size,
-    /// The symbols hashmap represents user defined types, 
+    /// The symbols hashmap represents user defined types,
     /// for which we may (concrete) or may not (symbol) know the size.
     pub symbols: HashTrieMap<String, Size>,
     /// The sum of type' sizes we know for sure

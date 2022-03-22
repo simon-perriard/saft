@@ -4,6 +4,7 @@ authors = ["Simon Perriard <simon.perriard@epfl.ch>"]
 description = "SAFT: Static Analyzer for Frame palleTs, Static analyzer to count database accesses for FRAME pallets, based on abtract interpretation of the MIR"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
