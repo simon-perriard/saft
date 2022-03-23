@@ -6,7 +6,7 @@ use rustc_middle::ty::TyCtxt;
 use crate::{analysis_utils::def_id_printer::*, typesystem_common::*};
 #[derive(Clone, Debug)]
 pub struct FrameStorageType {
-    pub alias_ident: Ident,
+    pub alias_ident: Identifier,
     pub kind: StorageKind,
 }
 
@@ -15,26 +15,26 @@ pub struct FrameStorageType {
 /// `<https://docs.substrate.io/rustdocs/latest/frame_support/pallet_prelude/index.html#structs>`
 pub enum StorageKind {
     StorageValue {
-        ident: Ident,
+        ident: Identifier,
         value: crate::typesystem_common::ValueType,
     },
     StorageMap {
-        ident: Ident,
+        ident: Identifier,
         value: crate::typesystem_common::ValueType,
         //max_values: Option<ValueType>,
     },
     StorageDoubleMap {
-        ident: Ident,
+        ident: Identifier,
         value: crate::typesystem_common::ValueType,
         //max_values: Option<ValueType>,
     },
     StorageNMap {
-        ident: Ident,
+        ident: Identifier,
         value: crate::typesystem_common::ValueType,
         //max_values: Option<ValueType>,
     },
     CountedStorageMap {
-        ident: Ident,
+        ident: Identifier,
         value: crate::typesystem_common::ValueType,
         //max_values: Option<ValueType>,
     },
@@ -43,7 +43,7 @@ pub enum StorageKind {
 impl FrameStorageType {
     pub fn new(tcx: &TyCtxt, local_def_id: LocalDefId, kind: StorageKind) -> Self {
         FrameStorageType {
-            alias_ident: Ident {
+            alias_ident: Identifier {
                 name_short: get_def_id_name(*tcx, local_def_id.to_def_id()),
                 name_full: get_def_id_name_with_path(*tcx, local_def_id.to_def_id()),
             },
@@ -111,7 +111,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
             && let Some(rustc_hir::GenericArgs { args, .. }) = args
         {
             let kind = if let Res::Def(_, def_id) = res {
-                let ident = Ident {
+                let ident = Identifier {
                     name_short: get_def_id_name_with_path(*tcx, *def_id),
                     name_full: get_def_id_name(*tcx, *def_id)
                 };

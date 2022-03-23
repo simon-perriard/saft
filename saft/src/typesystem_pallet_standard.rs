@@ -6,7 +6,7 @@ use crate::{
 };
 
 pub struct PalletStandardType {
-    pub alias_ident: Ident,
+    pub alias_ident: Identifier,
     pub value: ValueType,
 }
 
@@ -25,6 +25,7 @@ impl TypeSize for PalletStandardType {
 }
 
 pub fn get_config_types(tcx: &TyCtxt, ts: &mut TySys) {
+
     let storage_variables_names = get_storage_variables_names(tcx);
 
     // Start with outermost type declaration as they may be used
@@ -40,7 +41,7 @@ pub fn get_config_types(tcx: &TyCtxt, ts: &mut TySys) {
         if let rustc_hir::ItemKind::TyAlias(ty, _) = kind {
             if !storage_variables_names.contains(&String::from(ident.as_str())) {
                 // Types declared outside #[pallet::config] and are not #[pallet::storage]
-                let alias_ident = Ident {
+                let alias_ident = Identifier {
                     name_short: get_def_id_name(*tcx, def_id.to_def_id()),
                     name_full: get_def_id_name_with_path(*tcx, def_id.to_def_id()),
                 };
@@ -72,7 +73,7 @@ pub fn get_config_types(tcx: &TyCtxt, ts: &mut TySys) {
                     kind: rustc_hir::AssocItemKind::Type,
                     ..
                 } = items_refs {
-                    println!("{:?}", ident.as_str());
+                    //println!("{} - {:?}", ident.as_str(), items_refs);
                 }
             }
         }

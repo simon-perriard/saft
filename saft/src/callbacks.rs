@@ -30,8 +30,7 @@ impl SaftCallbacks {
         let extrinsics_def_ids = if let Some(dispatch_local_def_id) = dispatch_local_def_id {
             get_extrinsics_fn_ids(tcx, dispatch_local_def_id, &variant_ids)
         } else {
-            println!("Pallet level dispatch function not found.\nFunction 'dispatch_bypass_filter' not found, are you running SAFT on the pallet level?");
-            std::process::exit(1);
+            panic!("Pallet level dispatch function not found.\nFunction 'dispatch_bypass_filter' not found, are you running SAFT on the pallet level?");
         };
 
         let mut ts = TySys::new();

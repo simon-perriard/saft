@@ -14,7 +14,7 @@ use crate::typesystem_storage::FrameStorageType;
 
 #[derive(Clone, Debug)]
 /// Textual identity of a type, aka its name
-pub struct Ident {
+pub struct Identifier {
     pub name_short: String,
     pub name_full: String,
     // TODO: add a DefId or something similar?
@@ -24,8 +24,9 @@ pub struct Ident {
 /// The atomic way to represent a size for a type
 /// It can either be a concrete or a symbolic size
 pub enum Size {
-    Concrete(usize),
-    Symbol(String),
+    Concrete(u128),
+    Symbolic(String),
+    //TODO: remove ZEro and One
     Zero,
     One,
 }
@@ -40,7 +41,7 @@ impl fmt::Display for Size {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Size::Concrete(x) => write!(f, "{}", x),
-            Size::Symbol(s) => write!(f, "{}", s),
+            Size::Symbolic(s) => write!(f, "{}", s),
             Size::One => write!(f, "1"),
             Size::Zero => unreachable!(),
         }
@@ -170,18 +171,20 @@ pub enum VecSize {
     U128,
     Usize,
     Symbol(String),
+    Known(u128)
 }
 
 impl VecSize {
     pub fn get_size(&self) -> Size {
         match self {
-            VecSize::U8 => Size::Concrete(mem::size_of::<u8>()),
-            VecSize::U16 => Size::Concrete(mem::size_of::<u16>()),
-            VecSize::U32 => Size::Concrete(mem::size_of::<u32>()),
-            VecSize::U64 => Size::Concrete(mem::size_of::<u64>()),
-            VecSize::U128 => Size::Concrete(mem::size_of::<u128>()),
-            VecSize::Usize => Size::Concrete(mem::size_of::<usize>()),
-            VecSize::Symbol(s) => Size::Symbol((*s).clone()),
+            VecSize::U8 => Size::Concrete(mem::size_of::<u8>().try_into().unwrap()),
+            VecSize::U16 => Size::Concrete(mem::size_of::<u16>().try_into().unwrap()),
+            VecSize::U32 => Size::Concrete(mem::size_of::<u32>().try_into().unwrap()),
+            VecSize::U64 => Size::Concrete(mem::size_of::<u64>().try_into().unwrap()),
+            VecSize::U128 => Size::Concrete(mem::size_of::<u128>().try_into().unwrap()),
+            VecSize::Usize => Size::Concrete(mem::size_of::<usize>().try_into().unwrap()),
+            VecSize::Symbol(s) => Size::Symbolic((*s).clone()),
+            VecSize::Known(x) => Size::Concrete(*x)
         }
     }
 }
@@ -190,6 +193,11 @@ impl VecSize {
 /// Different types of values, unknown types should be
 /// defferred to Symbol
 pub enum ValueType {
+    // TODO:
+    // have is as Type(arg1, arg2, ... ,TypeSize)
+    // example: BoundedVec(Box<ValueType>, GetU32Type, BoundedVecSize)
+    // GetU32Type as a struct with an identifier
+    // GetU32Type contains the identifier of the rustc type passed as second arg to the boundedvec
     U8,
     U16,
     U32,
@@ -210,6 +218,11 @@ pub enum ValueType {
     Option(Box<ValueType>),
     Tuple(Vec<Box<ValueType>>),
     BoundedVec {
+        value: Box<ValueType>,
+        size: VecSize,
+        //TODO: add extra fields with size attributes
+    },
+    Array {
         value: Box<ValueType>,
         size: VecSize,
     },
@@ -251,7 +264,7 @@ impl ValueType {
                     ..CompSize::default()
                 }
             }
-            ValueType::BoundedVec { value, size } => {
+            ValueType::BoundedVec { value, size } | ValueType::Array { value, size } => {
                 let mut val = value.get_size();
                 val.set_mul_factor(size.get_size());
                 val
@@ -299,6 +312,27 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty) -> ValueType {
         }
 
         return ValueType::Tuple(members);
+    } else if let rustc_hir::Ty {
+        kind: rustc_hir::TyKind::Array(ty, len),
+        ..
+    } = ty
+    && let rustc_hir::ArrayLen::Body(annon_const) = len
+    && let rustc_hir::AnonConst { body, .. } = annon_const
+    && let rustc_hir::Body { value, .. } = tcx.hir().body(*body)
+    && let rustc_hir::Expr { kind, .. } = value
+    && let rustc_hir::ExprKind::Lit(lit) = kind
+    && let rustc_span::source_map::Spanned { node, .. } = lit
+    {
+        
+        // TODO: support for arrays like [u8; 16+16]
+        //          now only supports [u8; 32]
+        // Block for Array
+        if let rustc_ast::ast::LitKind::Int(x, _) = node {
+            return ValueType::Array {
+                value: Box::new(explore(tcx, ty)),
+                size: VecSize::Known(*x)
+            }
+        }   
     }
     unreachable!()
 }
@@ -353,6 +387,7 @@ fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path) -> ValueType {
         // https://doc.rust-lang.org/reference/type-layout.html#primitive-data-layout
         Res::PrimTy(prim_ty) => match prim_ty {
             PrimTy::Int(int_ty) => match int_ty {
+                //TODO: only have ValueType::Int(Isize)
                 IntTy::Isize => ValueType::Isize,
                 IntTy::I8 => ValueType::I8,
                 IntTy::I16 => ValueType::I16,
