@@ -1,9 +1,7 @@
 use crate::{
-    analysis_utils::{def_id_printer::*, extrinsics_getter::*},
+    analysis_utils::{def_id_printer::*, extrinsics_getter::*, typesystem_helpers::*},
     extrinsic_visitor::ExtrinsicVisitor,
     typesystem_common::TySys,
-    typesystem_pallet_standard::get_config_types,
-    typesystem_storage::get_storage_variables,
 };
 use options::options::Options;
 use rustc_driver::Compilation;
@@ -34,11 +32,7 @@ impl SaftCallbacks {
         };
 
         let mut ts = TySys::new();
-
-        get_config_types(&tcx, &mut ts);
-        get_storage_variables(&tcx, &mut ts);
-
-        ts.print_types_names();
+        gather_types(&tcx, &mut ts);
 
         if let Some(single_function) = &self.options.single_func {
             println!("The following extrinsics will be analyzed :");

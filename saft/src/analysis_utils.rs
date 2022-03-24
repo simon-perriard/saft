@@ -167,3 +167,70 @@ pub mod extrinsics_getter {
         }
     }
 }
+
+pub mod typesystem_helpers {
+
+    use regex::Regex;
+    use rustc_hir::def_id::LocalDefId;
+    use rustc_middle::ty::TyCtxt;
+
+    use crate::analysis_utils::def_id_printer::get_def_id_name_with_path;
+    use crate::typesystem_common::TySys;
+    use crate::typesystem_config_constant_types::get_config_constant_types;
+    use crate::typesystem_declared_types::get_declared_types;
+    use crate::typesystem_storage::get_storage_variables;
+
+    pub fn get_pallet_constant_types_name(tcx: &TyCtxt) -> Vec<String> {
+        let mut constant_types_names = Vec::new();
+
+        if let Some(local_def_id) = get_pallet_constants_metadata(tcx) {
+            let body_owner = tcx
+                .hir()
+                .body_owned_by(tcx.hir().local_def_id_to_hir_id(local_def_id));
+            let body = tcx.hir().body(body_owner);
+
+            if let rustc_hir::Body { value, .. } = body
+            && let rustc_hir::Expr { kind: rustc_hir::ExprKind::Block(block, _), .. } = value
+            && let rustc_hir::Block { expr: Some(expr), .. } = block
+            && let rustc_hir::Expr { kind: rustc_hir::ExprKind::Call(_, args), .. } = expr
+            && !args.is_empty()
+            && let rustc_hir::Expr { kind: rustc_hir::ExprKind::Box(expr), .. } = args[0]
+            && let rustc_hir::Expr { kind: rustc_hir::ExprKind::Array(members), .. } = expr
+            {
+                for member in members.iter() {
+                    if let rustc_hir::Expr { kind: rustc_hir::ExprKind::Block(block, _), .. } = member
+                    && let rustc_hir::Block { expr: Some(expr), .. } = block
+                    && let rustc_hir::Expr { kind: rustc_hir::ExprKind::Struct(_, fields, _), .. } = expr
+                    && let rustc_hir::ExprField { expr, .. } = fields[0]
+                    && let rustc_hir::Expr { kind: rustc_hir::ExprKind::Lit(lit), .. } = expr
+                    && let rustc_span::source_map::Spanned { node, .. } = lit
+                    && let rustc_ast::LitKind::Str(symbol, _) = node
+                    {
+                        constant_types_names.push(String::from(symbol.as_str()));
+                    }
+                }
+            }
+        }
+
+        constant_types_names
+    }
+
+    pub fn get_pallet_constants_metadata(tcx: &TyCtxt) -> Option<LocalDefId> {
+        for local_def_id in tcx.hir().body_owners() {
+            let def_id = local_def_id.to_def_id();
+            let pallet_constants_metadata_regex =
+                Regex::new(r"pallet::Pallet::<.*\s*(,.*)*>::pallet_constants_metadata").unwrap();
+
+            if pallet_constants_metadata_regex.is_match(&get_def_id_name_with_path(*tcx, def_id)) {
+                return Some(local_def_id);
+            }
+        }
+        None
+    }
+
+    pub fn gather_types(tcx: &TyCtxt, ts: &mut TySys) {
+        get_declared_types(tcx, ts);
+        get_config_constant_types(tcx, ts);
+        get_storage_variables(tcx, ts);
+    }
+}

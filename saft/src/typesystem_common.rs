@@ -10,7 +10,8 @@ use std::fmt;
 use std::mem;
 
 use crate::analysis_utils::def_id_printer::*;
-use crate::typesystem_pallet_standard::PalletStandardType;
+use crate::typesystem_config_constant_types::PalletConfigConstantType;
+use crate::typesystem_declared_types::PalletDeclaredType;
 use crate::typesystem_storage::FrameStorageType;
 
 #[derive(Clone, Debug)]
@@ -227,13 +228,14 @@ pub enum ValueType {
         value: Box<ValueType>,
         size: VecSize,
     },
+    Slice(Box<ValueType>),
     Get(Box<ValueType>),
     Symbol(String),
     Fn {
         inputs: Vec<Box<ValueType>>,
-        output: Box<ValueType>
+        output: Box<ValueType>,
     },
-    DefaultRet
+    DefaultRet,
 }
 
 impl ValueType {
@@ -275,23 +277,22 @@ impl ValueType {
                 val.set_mul_factor(size.get_size());
                 val
             }
+            ValueType::Slice(t) => t.get_size(),
             ValueType::Get(t) => t.get_size(),
             ValueType::Symbol(symbol) => CompSize::new_symbol(symbol.to_string()),
             ValueType::Fn { output, .. } => output.get_size(),
-            ValueType::DefaultRet => CompSize::default()
+            ValueType::DefaultRet => CompSize::default(),
         }
     }
 }
 
 /// Explore a type to get its path resolution and fill its
 /// generics type arguments
-pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty) -> ValueType {
+pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> ValueType {
     match &ty.kind {
         rustc_hir::TyKind::Path(qpath) => {
             match qpath {
-                rustc_hir::QPath::Resolved(_, path) => {
-                    return get_value_type(tcx, path);
-                }
+                rustc_hir::QPath::Resolved(_, path) => get_value_type(tcx, path, ts),
                 rustc_hir::QPath::TypeRelative(ty, segment) => {
                     // Get super type as well
                     let super_type = if let rustc_hir::Ty{ kind: rustc_hir::TyKind::Path(qpath), .. } = ty
@@ -310,16 +311,16 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty) -> ValueType {
                 }
                 _ => unreachable!(),
             }
-        },
+        }
         rustc_hir::TyKind::Tup(tys) => {
             // Block for Tuple
             let mut members = Vec::new();
 
             for ty in tys.iter() {
-                members.push(Box::new(explore(tcx, ty)));
+                members.push(Box::new(explore(tcx, ty, ts)));
             }
 
-            return ValueType::Tuple(members);
+            ValueType::Tuple(members)
         }
         rustc_hir::TyKind::Array(ty, len) => {
             // Block for Array with constant size
@@ -333,7 +334,7 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty) -> ValueType {
                             if let interpret::Scalar::Int(scalar_int) = scalar
                             && let Ok(value) = scalar_int.to_bits(scalar_int.size()) {
                                 return ValueType::Array {
-                                    value: Box::new(explore(tcx, ty)),
+                                    value: Box::new(explore(tcx, ty, ts)),
                                     size: VecSize::Known(value)
                                 };
                             } else {
@@ -342,48 +343,28 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty) -> ValueType {
                         },
                         _ => unimplemented!(),
                     }
-                } else {
-                    return ValueType::Array {
-                        value: Box::new(explore(tcx, ty)),
-                        //TODO: find associated symbol
-                        size: VecSize::Symbol("".to_string())
-                    };
                 }
             }
             unreachable!()
-        },
-        rustc_hir::TyKind::Rptr(_, mut_ty) => {
-            return explore(tcx, mut_ty.ty);
-        },
-        rustc_hir::TyKind::Slice(ty) => {
-            return explore(tcx, ty);
-        },
+        }
+        rustc_hir::TyKind::Rptr(_, mut_ty) => explore(tcx, mut_ty.ty, ts),
+        rustc_hir::TyKind::Slice(ty) => ValueType::Slice(Box::new(explore(tcx, ty, ts))),
         rustc_hir::TyKind::BareFn(bare_fn_ty) => {
-            let rustc_hir::BareFnTy {
-                decl,
-                ..
-            } = bare_fn_ty;
+            let rustc_hir::BareFnTy { decl, .. } = bare_fn_ty;
 
             let mut inputs = Vec::new();
 
             for input_ty in decl.inputs.iter() {
-                inputs.push(Box::new(explore(tcx, input_ty)));
+                inputs.push(Box::new(explore(tcx, input_ty, ts)));
             }
 
             let output = match decl.output {
-                rustc_hir::FnRetTy::DefaultReturn(_) => {
-                    Box::new(ValueType::DefaultRet)
-                },
-                rustc_hir::FnRetTy::Return(ty) => {
-                    Box::new(explore(tcx, ty))
-                }
+                rustc_hir::FnRetTy::DefaultReturn(_) => Box::new(ValueType::DefaultRet),
+                rustc_hir::FnRetTy::Return(ty) => Box::new(explore(tcx, ty, ts)),
             };
 
-            return ValueType::Fn {
-                inputs,
-                output
-            };
-        },
+            ValueType::Fn { inputs, output }
+        }
         _ => {
             println!("{:?}", ty);
             unreachable!()
@@ -392,7 +373,7 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty) -> ValueType {
 }
 
 /// Find the ValueType enum member that correspond to the given path
-pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path) -> ValueType {
+pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> ValueType {
     let rustc_hir::Path { segments, res, .. } = path;
 
     match res {
@@ -405,8 +386,8 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path) -> ValueType {
                     if let rustc_hir::GenericArg::Type(ty_0) = &generics[0]
                         && let rustc_hir::GenericArg::Type(ty_1) = &generics[1]
                     {
-                        let value = Box::new(explore(tcx, ty_0));
-                        let size = match explore(tcx, ty_1) {
+                        let value = Box::new(explore(tcx, ty_0, ts));
+                        let size = match explore(tcx, ty_1, ts) {
                             ValueType::Usize => VecSize::Usize,
                             ValueType::U8 => VecSize::U8,
                             ValueType::U16 => VecSize::U16,
@@ -426,7 +407,7 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path) -> ValueType {
                     let generic = &segments[0].args.unwrap().args[0];
 
                     if let rustc_hir::GenericArg::Type(ty) = generic {
-                        return ValueType::Option(Box::new(explore(tcx, ty)));
+                        return ValueType::Option(Box::new(explore(tcx, ty, ts)));
                     }
 
                     unreachable!()
@@ -435,7 +416,7 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path) -> ValueType {
                     let generic = &segments[0].args.unwrap().args[0];
 
                     if let rustc_hir::GenericArg::Type(ty) = generic {
-                        return ValueType::Get(Box::new(explore(tcx, ty)));
+                        return ValueType::Get(Box::new(explore(tcx, ty, ts)));
                     }
 
                     unreachable!()
@@ -443,7 +424,16 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path) -> ValueType {
                 _ => {
                     //println!("{}", get_def_id_name_with_path(*tcx, *def_id).as_str());
                     // Treat every unkown as symbol, later work will maybe resolve those
-                    ValueType::Symbol(get_def_id_name(*tcx, *def_id))
+                    let key = get_def_id_name_with_path(*tcx, *def_id);
+                    if ts.tsm.contains_key(&key) {
+                        match ts.tsm.get(&key).unwrap() {
+                            TypeVariant::PalletDeclaredType(t) => t.value.clone(),
+                            TypeVariant::PalletConfigConstantType(t) => t.trait_bound.clone(),
+                            TypeVariant::FrameStorageType(_) => unreachable!(),
+                        }
+                    } else {
+                        ValueType::Symbol(get_def_id_name(*tcx, *def_id))
+                    }
                 }
             }
         }
@@ -485,30 +475,35 @@ pub trait TypeSize {
     fn get_name_full(&self) -> String;
 }
 
+#[derive(Debug)]
 pub enum TypeVariant {
     FrameStorageType(FrameStorageType),
-    PalletStandardType(PalletStandardType),
+    PalletDeclaredType(PalletDeclaredType),
+    PalletConfigConstantType(PalletConfigConstantType),
 }
 
 impl TypeSize for TypeVariant {
     fn get_size(&self) -> CompSize {
         match self {
             TypeVariant::FrameStorageType(t) => t.get_size(),
-            TypeVariant::PalletStandardType(t) => t.get_size(),
+            TypeVariant::PalletDeclaredType(t) => t.get_size(),
+            TypeVariant::PalletConfigConstantType(t) => t.get_size(),
         }
     }
 
     fn get_name(&self) -> String {
         match self {
             TypeVariant::FrameStorageType(t) => t.get_name(),
-            TypeVariant::PalletStandardType(t) => t.get_name(),
+            TypeVariant::PalletDeclaredType(t) => t.get_name(),
+            TypeVariant::PalletConfigConstantType(t) => t.get_name(),
         }
     }
 
     fn get_name_full(&self) -> String {
         match self {
             TypeVariant::FrameStorageType(t) => t.get_name_full(),
-            TypeVariant::PalletStandardType(t) => t.get_name_full(),
+            TypeVariant::PalletDeclaredType(t) => t.get_name_full(),
+            TypeVariant::PalletConfigConstantType(t) => t.get_name_full(),
         }
     }
 }
@@ -529,6 +524,18 @@ impl TySys {
     pub fn print_types_names(&self) {
         for key in self.tsm.keys() {
             println!("{}", key)
+        }
+    }
+
+    pub fn print_types_with_sizes(&self) {
+        for (name, t) in self.tsm.iter() {
+            println!("{} - {}", name, t.get_size());
+        }
+    }
+
+    pub fn print_types_hierarchies(&self) {
+        for (name, t) in self.tsm.iter() {
+            println!("{} - {:?}", name, t);
         }
     }
 
