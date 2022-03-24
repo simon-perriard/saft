@@ -4,6 +4,7 @@ use rpds::HashTrieMap;
 use rustc_ast::ast::{FloatTy, IntTy, UintTy};
 use rustc_hir::def::Res;
 use rustc_hir::PrimTy;
+use rustc_middle::mir::interpret;
 use rustc_middle::ty::TyCtxt;
 use std::fmt;
 use std::mem;
@@ -171,7 +172,7 @@ pub enum VecSize {
     U128,
     Usize,
     Symbol(String),
-    Known(u128)
+    Known(u128),
 }
 
 impl VecSize {
@@ -184,7 +185,7 @@ impl VecSize {
             VecSize::U128 => Size::Concrete(mem::size_of::<u128>().try_into().unwrap()),
             VecSize::Usize => Size::Concrete(mem::size_of::<usize>().try_into().unwrap()),
             VecSize::Symbol(s) => Size::Symbolic((*s).clone()),
-            VecSize::Known(x) => Size::Concrete(*x)
+            VecSize::Known(x) => Size::Concrete(*x),
         }
     }
 }
@@ -228,6 +229,11 @@ pub enum ValueType {
     },
     Get(Box<ValueType>),
     Symbol(String),
+    Fn {
+        inputs: Vec<Box<ValueType>>,
+        output: Box<ValueType>
+    },
+    DefaultRet
 }
 
 impl ValueType {
@@ -271,6 +277,8 @@ impl ValueType {
             }
             ValueType::Get(t) => t.get_size(),
             ValueType::Symbol(symbol) => CompSize::new_symbol(symbol.to_string()),
+            ValueType::Fn { output, .. } => output.get_size(),
+            ValueType::DefaultRet => CompSize::default()
         }
     }
 }
@@ -278,67 +286,113 @@ impl ValueType {
 /// Explore a type to get its path resolution and fill its
 /// generics type arguments
 pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty) -> ValueType {
-    if let rustc_hir::Ty {
-        kind: rustc_hir::TyKind::Path(qpath),
-        ..
-    } = ty
-    {
-        if let rustc_hir::QPath::Resolved(_, path) = qpath {
-            return get_value_type(tcx, path);
-        } else if let rustc_hir::QPath::TypeRelative(ty, segment) = qpath {
-            // Get super type as well
-            let super_type = if let rustc_hir::Ty{ kind: rustc_hir::TyKind::Path(qpath), .. } = ty
-            && let rustc_hir::QPath::Resolved(_, path) = qpath
-            && let rustc_hir::Path { segments, .. } = path {
-                segments[0].ident.as_str()
-            } else {
-                unreachable!();
-            };
-            // TODO: check here if this type is defined in the config trait
+    match &ty.kind {
+        rustc_hir::TyKind::Path(qpath) => {
+            match qpath {
+                rustc_hir::QPath::Resolved(_, path) => {
+                    return get_value_type(tcx, path);
+                }
+                rustc_hir::QPath::TypeRelative(ty, segment) => {
+                    // Get super type as well
+                    let super_type = if let rustc_hir::Ty{ kind: rustc_hir::TyKind::Path(qpath), .. } = ty
+                    && let rustc_hir::QPath::Resolved(_, path) = qpath
+                    && let rustc_hir::Path { segments, .. } = path {
+                        segments[0].ident.as_str()
+                    } else {
+                        unreachable!();
+                    };
+                    // TODO: check here if this type is defined in the config trait
 
-            // Simply return it as a symbol, TypeRelative paths may be resolved in later work
-            return ValueType::Symbol(super_type.to_owned() + "::" + segment.ident.as_str());
-        }
-    } else if let rustc_hir::Ty {
-        kind: rustc_hir::TyKind::Tup(tys),
-        ..
-    } = ty
-    {
-        // Block for Tuple
-        let mut members = Vec::new();
-
-        for ty in tys.iter() {
-            members.push(Box::new(explore(tcx, ty)));
-        }
-
-        return ValueType::Tuple(members);
-    } else if let rustc_hir::Ty {
-        kind: rustc_hir::TyKind::Array(ty, len),
-        ..
-    } = ty
-    && let rustc_hir::ArrayLen::Body(annon_const) = len
-    && let rustc_hir::AnonConst { body, .. } = annon_const
-    && let rustc_hir::Body { value, .. } = tcx.hir().body(*body)
-    && let rustc_hir::Expr { kind, .. } = value
-    && let rustc_hir::ExprKind::Lit(lit) = kind
-    && let rustc_span::source_map::Spanned { node, .. } = lit
-    {
-        
-        // TODO: support for arrays like [u8; 16+16]
-        //          now only supports [u8; 32]
-        // Block for Array
-        if let rustc_ast::ast::LitKind::Int(x, _) = node {
-            return ValueType::Array {
-                value: Box::new(explore(tcx, ty)),
-                size: VecSize::Known(*x)
+                    // Simply return it as a symbol, TypeRelative paths may be resolved in later work
+                    return ValueType::Symbol(
+                        super_type.to_owned() + "::" + segment.ident.as_str(),
+                    );
+                }
+                _ => unreachable!(),
             }
-        }   
+        },
+        rustc_hir::TyKind::Tup(tys) => {
+            // Block for Tuple
+            let mut members = Vec::new();
+
+            for ty in tys.iter() {
+                members.push(Box::new(explore(tcx, ty)));
+            }
+
+            return ValueType::Tuple(members);
+        }
+        rustc_hir::TyKind::Array(ty, len) => {
+            // Block for Array with constant size
+            if let rustc_hir::ArrayLen::Body(annon_const) = len
+            && let rustc_hir::AnonConst { hir_id, .. } = annon_const
+            {
+                // Try to evaluate the constant expression
+                if let Ok(const_eval) = tcx.const_eval_poly(tcx.hir().local_def_id(*hir_id).to_def_id()) {
+                    match const_eval {
+                        interpret::ConstValue::Scalar(scalar) => {
+                            if let interpret::Scalar::Int(scalar_int) = scalar
+                            && let Ok(value) = scalar_int.to_bits(scalar_int.size()) {
+                                return ValueType::Array {
+                                    value: Box::new(explore(tcx, ty)),
+                                    size: VecSize::Known(value)
+                                };
+                            } else {
+                                unreachable!();
+                            }
+                        },
+                        _ => unimplemented!(),
+                    }
+                } else {
+                    return ValueType::Array {
+                        value: Box::new(explore(tcx, ty)),
+                        //TODO: find associated symbol
+                        size: VecSize::Symbol("".to_string())
+                    };
+                }
+            }
+            unreachable!()
+        },
+        rustc_hir::TyKind::Rptr(_, mut_ty) => {
+            return explore(tcx, mut_ty.ty);
+        },
+        rustc_hir::TyKind::Slice(ty) => {
+            return explore(tcx, ty);
+        },
+        rustc_hir::TyKind::BareFn(bare_fn_ty) => {
+            let rustc_hir::BareFnTy {
+                decl,
+                ..
+            } = bare_fn_ty;
+
+            let mut inputs = Vec::new();
+
+            for input_ty in decl.inputs.iter() {
+                inputs.push(Box::new(explore(tcx, input_ty)));
+            }
+
+            let output = match decl.output {
+                rustc_hir::FnRetTy::DefaultReturn(_) => {
+                    Box::new(ValueType::DefaultRet)
+                },
+                rustc_hir::FnRetTy::Return(ty) => {
+                    Box::new(explore(tcx, ty))
+                }
+            };
+
+            return ValueType::Fn {
+                inputs,
+                output
+            };
+        },
+        _ => {
+            println!("{:?}", ty);
+            unreachable!()
+        }
     }
-    unreachable!()
 }
 
 /// Find the ValueType enum member that correspond to the given path
-fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path) -> ValueType {
+pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path) -> ValueType {
     let rustc_hir::Path { segments, res, .. } = path;
 
     match res {
@@ -377,7 +431,17 @@ fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path) -> ValueType {
 
                     unreachable!()
                 }
+                "frame_support::traits::Get" => {
+                    let generic = &segments[0].args.unwrap().args[0];
+
+                    if let rustc_hir::GenericArg::Type(ty) = generic {
+                        return ValueType::Get(Box::new(explore(tcx, ty)));
+                    }
+
+                    unreachable!()
+                }
                 _ => {
+                    //println!("{}", get_def_id_name_with_path(*tcx, *def_id).as_str());
                     // Treat every unkown as symbol, later work will maybe resolve those
                     ValueType::Symbol(get_def_id_name(*tcx, *def_id))
                 }
