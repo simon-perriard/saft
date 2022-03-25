@@ -16,12 +16,12 @@ impl TypeSize for PalletConfigConstantType {
         self.trait_bound.get_size()
     }
 
-    fn get_name(&self) -> String {
-        self.alias_ident.name_short.clone()
+    fn get_name(&self, tcx: &TyCtxt) -> String {
+        self.alias_ident.get_name(tcx)
     }
 
-    fn get_name_full(&self) -> String {
-        self.alias_ident.name_full.clone()
+    fn get_name_full(&self, tcx: &TyCtxt) -> String {
+        self.alias_ident.get_name_full(tcx)
     }
 }
 
@@ -47,11 +47,10 @@ pub fn get_config_constant_types(tcx: &TyCtxt, ts: &mut TySys) {
                 {
 
                     let alias_ident = Identifier {
-                        name_short: get_def_id_name(*tcx, id.def_id.to_def_id()),
-                        name_full: get_def_id_name_with_path(*tcx, id.def_id.to_def_id()),
+                        def_id: id.def_id.to_def_id(),
                     };
 
-                    if constant_types_names.contains(&alias_ident.name_short) {
+                    if constant_types_names.contains(&alias_ident.get_name(tcx)) {
 
                         if generic_bounds.is_empty() {
                             panic!("Trait bounds cannot be empty.");
@@ -68,7 +67,7 @@ pub fn get_config_constant_types(tcx: &TyCtxt, ts: &mut TySys) {
                             alias_ident,
                             trait_bound
                         };
-                        ts.add_type(TypeVariant::PalletConfigConstantType(standard_type))
+                        ts.add_type(TypeVariant::PalletConfigConstantType(standard_type), tcx)
                     }
                 }
             }

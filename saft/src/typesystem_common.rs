@@ -3,6 +3,7 @@
 use rpds::HashTrieMap;
 use rustc_ast::ast::{FloatTy, IntTy, UintTy};
 use rustc_hir::def::Res;
+use rustc_hir::def_id::DefId;
 use rustc_hir::PrimTy;
 use rustc_middle::mir::interpret;
 use rustc_middle::ty::TyCtxt;
@@ -17,9 +18,17 @@ use crate::typesystem_storage::FrameStorageType;
 #[derive(Clone, Debug)]
 /// Textual identity of a type, aka its name
 pub struct Identifier {
-    pub name_short: String,
-    pub name_full: String,
-    // TODO: add a DefId or something similar?
+    pub def_id: DefId,
+}
+
+impl Identifier {
+    pub fn get_name(&self, tcx: &TyCtxt) -> String {
+        get_def_id_name(*tcx, self.def_id)
+    }
+
+    pub fn get_name_full(&self, tcx: &TyCtxt) -> String {
+        get_def_id_name_with_path(*tcx, self.def_id)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -302,12 +311,19 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> ValueType {
                     } else {
                         unreachable!();
                     };
-                    // TODO: check here if this type is defined in the config trait
 
-                    // Simply return it as a symbol, TypeRelative paths may be resolved in later work
-                    return ValueType::Symbol(
-                        super_type.to_owned() + "::" + segment.ident.as_str(),
-                    );
+                    // Check whether the symbol has been resolved before
+                    let key = super_type.to_owned() + "::" + segment.ident.as_str();
+                    if ts.tsm.contains_key(&key) {
+                        match ts.tsm.get(&key).unwrap() {
+                            TypeVariant::PalletDeclaredType(t) => t.value.clone(),
+                            TypeVariant::PalletConfigConstantType(t) => t.trait_bound.clone(),
+                            TypeVariant::FrameStorageType(_) => unreachable!(),
+                        }
+                    } else {
+                        // Simply return it as a symbol, TypeRelative paths may be resolved in later work
+                        ValueType::Symbol(super_type.to_owned() + "::" + segment.ident.as_str())
+                    }
                 }
                 _ => unreachable!(),
             }
@@ -471,8 +487,8 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> Value
 
 pub trait TypeSize {
     fn get_size(&self) -> CompSize;
-    fn get_name(&self) -> String;
-    fn get_name_full(&self) -> String;
+    fn get_name(&self, tcx: &TyCtxt) -> String;
+    fn get_name_full(&self, tcx: &TyCtxt) -> String;
 }
 
 #[derive(Debug)]
@@ -491,19 +507,19 @@ impl TypeSize for TypeVariant {
         }
     }
 
-    fn get_name(&self) -> String {
+    fn get_name(&self, tcx: &TyCtxt) -> String {
         match self {
-            TypeVariant::FrameStorageType(t) => t.get_name(),
-            TypeVariant::PalletDeclaredType(t) => t.get_name(),
-            TypeVariant::PalletConfigConstantType(t) => t.get_name(),
+            TypeVariant::FrameStorageType(t) => t.get_name(tcx),
+            TypeVariant::PalletDeclaredType(t) => t.get_name(tcx),
+            TypeVariant::PalletConfigConstantType(t) => t.get_name(tcx),
         }
     }
 
-    fn get_name_full(&self) -> String {
+    fn get_name_full(&self, tcx: &TyCtxt) -> String {
         match self {
-            TypeVariant::FrameStorageType(t) => t.get_name_full(),
-            TypeVariant::PalletDeclaredType(t) => t.get_name_full(),
-            TypeVariant::PalletConfigConstantType(t) => t.get_name_full(),
+            TypeVariant::FrameStorageType(t) => t.get_name_full(tcx),
+            TypeVariant::PalletDeclaredType(t) => t.get_name_full(tcx),
+            TypeVariant::PalletConfigConstantType(t) => t.get_name_full(tcx),
         }
     }
 }
@@ -539,8 +555,8 @@ impl TySys {
         }
     }
 
-    pub fn add_type(&mut self, ty: TypeVariant) {
-        self.tsm.insert_mut(ty.get_name_full(), ty);
+    pub fn add_type(&mut self, ty: TypeVariant, tcx: &TyCtxt) {
+        self.tsm.insert_mut(ty.get_name_full(tcx), ty);
     }
 }
 

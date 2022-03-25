@@ -41,11 +41,10 @@ pub enum StorageKind {
 }
 
 impl FrameStorageType {
-    pub fn new(tcx: &TyCtxt, local_def_id: LocalDefId, kind: StorageKind) -> Self {
+    pub fn new(local_def_id: LocalDefId, kind: StorageKind) -> Self {
         FrameStorageType {
             alias_ident: Identifier {
-                name_short: get_def_id_name(*tcx, local_def_id.to_def_id()),
-                name_full: get_def_id_name_with_path(*tcx, local_def_id.to_def_id()),
+                def_id: local_def_id.to_def_id(),
             },
             kind,
         }
@@ -63,12 +62,12 @@ impl TypeSize for FrameStorageType {
         }
     }
 
-    fn get_name(&self) -> String {
-        self.alias_ident.name_short.clone()
+    fn get_name(&self, tcx: &TyCtxt) -> String {
+        self.alias_ident.get_name(tcx)
     }
 
-    fn get_name_full(&self) -> String {
-        self.alias_ident.name_full.clone()
+    fn get_name_full(&self, tcx: &TyCtxt) -> String {
+        self.alias_ident.get_name_full(tcx)
     }
 }
 
@@ -112,8 +111,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
         {
             let kind = if let Res::Def(_, def_id) = res {
                 let ident = Identifier {
-                    name_short: get_def_id_name_with_path(*tcx, *def_id),
-                    name_full: get_def_id_name(*tcx, *def_id)
+                    def_id: *def_id
                 };
                 match get_def_id_name_with_path(*tcx, *def_id).as_str() {
                         "frame_support::pallet_prelude::StorageValue" => {
@@ -169,8 +167,8 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
                 unreachable!();
             };
 
-            let storage_type = FrameStorageType::new(tcx, *def_id, kind);
-            ts.add_type(TypeVariant::FrameStorageType(storage_type));
+            let storage_type = FrameStorageType::new(*def_id, kind);
+            ts.add_type(TypeVariant::FrameStorageType(storage_type), tcx);
         }
     }
 }

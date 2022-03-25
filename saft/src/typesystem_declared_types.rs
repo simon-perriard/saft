@@ -1,9 +1,6 @@
 use rustc_middle::ty::TyCtxt;
 
-use crate::{
-    analysis_utils::def_id_printer::*, typesystem_common::*,
-    typesystem_storage::get_storage_variables_names,
-};
+use crate::{typesystem_common::*, typesystem_storage::get_storage_variables_names};
 
 #[derive(Debug)]
 pub struct PalletDeclaredType {
@@ -16,12 +13,12 @@ impl TypeSize for PalletDeclaredType {
         self.value.get_size()
     }
 
-    fn get_name(&self) -> String {
-        self.alias_ident.name_short.clone()
+    fn get_name(&self, tcx: &TyCtxt) -> String {
+        self.alias_ident.get_name(tcx)
     }
 
-    fn get_name_full(&self) -> String {
-        self.alias_ident.name_full.clone()
+    fn get_name_full(&self, tcx: &TyCtxt) -> String {
+        self.alias_ident.get_name_full(tcx)
     }
 }
 
@@ -42,8 +39,7 @@ pub fn get_declared_types(tcx: &TyCtxt, ts: &mut TySys) {
             if !storage_variables_names.contains(&String::from(ident.as_str())) {
                 // Types declared outside #[pallet::config] and are not #[pallet::storage]
                 let alias_ident = Identifier {
-                    name_short: get_def_id_name(*tcx, def_id.to_def_id()),
-                    name_full: get_def_id_name_with_path(*tcx, def_id.to_def_id()),
+                    def_id: def_id.to_def_id(),
                 };
 
                 let standard_type = PalletDeclaredType {
@@ -51,7 +47,7 @@ pub fn get_declared_types(tcx: &TyCtxt, ts: &mut TySys) {
                     value: explore(tcx, ty, ts),
                 };
 
-                ts.add_type(TypeVariant::PalletDeclaredType(standard_type))
+                ts.add_type(TypeVariant::PalletDeclaredType(standard_type), tcx)
             }
         }
     }
