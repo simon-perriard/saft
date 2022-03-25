@@ -37,14 +37,11 @@ impl Identifier {
 pub enum Size {
     Concrete(u128),
     Symbolic(String),
-    //TODO: remove ZEro and One
-    Zero,
-    One,
 }
 
 impl Default for Size {
     fn default() -> Self {
-        Size::Zero
+        Size::Concrete(0)
     }
 }
 
@@ -53,8 +50,6 @@ impl fmt::Display for Size {
         match self {
             Size::Concrete(x) => write!(f, "{}", x),
             Size::Symbolic(s) => write!(f, "{}", s),
-            Size::One => write!(f, "1"),
-            Size::Zero => unreachable!(),
         }
     }
 }
@@ -82,7 +77,7 @@ pub struct CompSize {
 impl Default for CompSize {
     fn default() -> Self {
         Self {
-            mul_factor: Size::One,
+            mul_factor: Size::Concrete(1),
             symbols: Default::default(),
             concrete: Default::default(),
             tuple_composition: Default::default(),
@@ -94,9 +89,9 @@ impl CompSize {
     /// Create a new symbolic size
     pub fn new_symbol(symbol: String) -> CompSize {
         let mut symbols = HashTrieMap::new();
-        symbols.insert_mut(symbol, Size::One);
+        symbols.insert_mut(symbol, Size::Concrete(1));
         CompSize {
-            mul_factor: Size::One,
+            mul_factor: Size::Concrete(1),
             symbols,
             concrete: 0,
             tuple_composition: None,
@@ -106,7 +101,7 @@ impl CompSize {
     /// Create a new concrete size
     pub fn new_concrete(concrete: usize) -> CompSize {
         CompSize {
-            mul_factor: Size::One,
+            mul_factor: Size::Concrete(1),
             symbols: HashTrieMap::new(),
             concrete,
             tuple_composition: None,
@@ -126,8 +121,8 @@ impl fmt::Display for CompSize {
 
         for (ty, size) in self.symbols.iter() {
             match size {
-                Size::One => fmt.push_str(ty),
-                Size::Zero => continue,
+                Size::Concrete(0) => fmt.push_str(ty),
+                Size::Concrete(1) => continue,
                 _ => fmt.push_str(&format!("({} * {})", size, ty)),
             }
 
@@ -159,10 +154,10 @@ impl fmt::Display for CompSize {
         }
 
         match self.mul_factor {
-            Size::Zero => {
+            Size::Concrete(0) => {
                 write!(f, "")
             }
-            Size::One => {
+            Size::Concrete(1) => {
                 write!(f, "{}", fmt)
             }
             _ => {
