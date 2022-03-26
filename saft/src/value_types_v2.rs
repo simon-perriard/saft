@@ -1,7 +1,19 @@
+use crate::{
+    analysis_utils::def_id_printer::*, typesystem_config_constant_types::PalletConfigConstantType,
+    typesystem_declared_types::PalletDeclaredType, typesystem_storage::FrameStorageType,
+};
 use core::fmt;
+use rpds::HashTrieMap;
+use rustc_ast::ast::*;
+use rustc_hir::def::Res;
+use rustc_hir::PrimTy;
+use rustc_middle::mir::interpret;
+use rustc_middle::ty::TyCtxt;
 
 use self::{
-    array_type::ArrayTy, bounded_vec_type::BoundedVec, primitive_types::SaftPrimTy,
+    array_type::ArrayTy,
+    bounded_vec_type::BoundedVec,
+    primitive_types::*,
     tuple_type::TupleTy,
 };
 
@@ -339,7 +351,39 @@ pub mod slice_type {
     }
 }
 
-/*pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> ValueType {
+#[derive(Debug)]
+pub enum TypeVariant {
+    FrameStorageType(FrameStorageType),
+    PalletDeclaredType(PalletDeclaredType),
+    PalletConfigConstantType(PalletConfigConstantType),
+}
+
+/// Struct containing information about the types
+/// declared in the pallet
+pub struct TySys {
+    pub tsm: HashTrieMap<String, TypeVariant>,
+}
+
+impl TySys {
+    pub fn new() -> TySys {
+        TySys {
+            tsm: HashTrieMap::new(),
+        }
+    }
+
+    pub fn add_type(&mut self, ty: TypeVariant, tcx: &TyCtxt) {
+        todo!();
+        self.tsm.insert_mut(ty.get_name_full(tcx), ty);
+    }
+}
+
+impl Default for TySys {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> ValueTypeV2 {
     match &ty.kind {
         rustc_hir::TyKind::Path(qpath) => {
             match qpath {
@@ -358,13 +402,18 @@ pub mod slice_type {
                     let key = super_type.to_owned() + "::" + segment.ident.as_str();
                     if ts.tsm.contains_key(&key) {
                         match ts.tsm.get(&key).unwrap() {
-                            TypeVariant::PalletDeclaredType(t) => t.value.clone(),
-                            TypeVariant::PalletConfigConstantType(t) => t.trait_bound.clone(),
+                            TypeVariant::PalletDeclaredType(t) => todo!(),
+                            TypeVariant::PalletConfigConstantType(t) => todo!(),
                             TypeVariant::FrameStorageType(_) => unreachable!(),
                         }
                     } else {
                         // Simply return it as a symbol, TypeRelative paths may be resolved in later work
-                        ValueType::Symbol(super_type.to_owned() + "::" + segment.ident.as_str())
+                        ValueTypeV2::Symbol {
+                            symbol: super_type.to_owned() + "::" + segment.ident.as_str(),
+                            size: SizeType::Symbolic(
+                                super_type.to_owned() + "::" + segment.ident.as_str(),
+                            ),
+                        }
                     }
                 }
                 _ => unreachable!(),
@@ -378,7 +427,7 @@ pub mod slice_type {
                 members.push(Box::new(explore(tcx, ty, ts)));
             }
 
-            ValueType::Tuple(members)
+            todo!() //ValueTypeV2::Tuple(members)
         }
         rustc_hir::TyKind::Array(ty, len) => {
             // Block for Array with constant size
@@ -391,7 +440,7 @@ pub mod slice_type {
                         interpret::ConstValue::Scalar(scalar) => {
                             if let interpret::Scalar::Int(scalar_int) = scalar
                             && let Ok(value) = scalar_int.to_bits(scalar_int.size()) {
-                                return ValueType::Array {
+                                todo!();return ValueTypeV2::Array {
                                     value: Box::new(explore(tcx, ty, ts)),
                                     size: VecSize::Known(value)
                                 };
@@ -406,7 +455,7 @@ pub mod slice_type {
             unreachable!()
         }
         rustc_hir::TyKind::Rptr(_, mut_ty) => explore(tcx, mut_ty.ty, ts),
-        rustc_hir::TyKind::Slice(ty) => ValueType::Slice(Box::new(explore(tcx, ty, ts))),
+        rustc_hir::TyKind::Slice(ty) => todo!(), /*ValueTypeV2::Slice(Box::new(explore(tcx, ty, ts)))*/
         rustc_hir::TyKind::BareFn(bare_fn_ty) => {
             let rustc_hir::BareFnTy { decl, .. } = bare_fn_ty;
 
@@ -417,11 +466,12 @@ pub mod slice_type {
             }
 
             let output = match decl.output {
-                rustc_hir::FnRetTy::DefaultReturn(_) => Box::new(ValueType::DefaultRet),
+                rustc_hir::FnRetTy::DefaultReturn(_) => Box::new(ValueTypeV2::DefaultRet),
                 rustc_hir::FnRetTy::Return(ty) => Box::new(explore(tcx, ty, ts)),
             };
 
-            ValueType::Fn { inputs, output }
+            todo!();
+            ValueTypeV2::Fn { inputs, output }
         }
         _ => {
             println!("{:?}", ty);
@@ -431,11 +481,11 @@ pub mod slice_type {
 }
 
 /// Find the ValueType enum member that corresponds to the given path
-pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> ValueType {
+pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> ValueTypeV2 {
     let rustc_hir::Path { segments, res, .. } = path;
 
     match res {
-        Res::Def(_, def_id) => {
+        /*Res::Def(_, def_id) => {
             match get_def_id_name_with_path(*tcx, *def_id).as_str() {
                 // BoundedVec is a standard type in FRAME:
                 // https://docs.substrate.io/rustdocs/latest/frame_support/storage/bounded_vec/struct.BoundedVec.html
@@ -446,11 +496,11 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> Value
                     {
                         let value = Box::new(explore(tcx, ty_0, ts));
                         let size = match explore(tcx, ty_1, ts) {
-                            ValueType::Usize => VecSize::Usize,
-                            ValueType::U8 => VecSize::U8,
-                            ValueType::U16 => VecSize::U16,
-                            ValueType::U32 => VecSize::U32,
-                            ValueType::U64 => VecSize::U64,
+                            ValueTypeV2::Usize => VecSize::Usize,
+                            ValueTypeV2::U8 => VecSize::U8,
+                            ValueTypeV2::U16 => VecSize::U16,
+                            ValueTypeV2::U32 => VecSize::U32,
+                            ValueTypeV2::U64 => VecSize::U64,
                             ValueType::U128 => VecSize::U128,
                             ValueType::Symbol(symbol) => VecSize::Symbol(symbol),
                             _ => todo!(),
@@ -465,7 +515,7 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> Value
                     let generic = &segments[0].args.unwrap().args[0];
 
                     if let rustc_hir::GenericArg::Type(ty) = generic {
-                        return ValueType::Option(Box::new(explore(tcx, ty, ts)));
+                        return ValueTypeV2::Option(Box::new(explore(tcx, ty, ts)));
                     }
 
                     unreachable!()
@@ -474,7 +524,7 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> Value
                     let generic = &segments[0].args.unwrap().args[0];
 
                     if let rustc_hir::GenericArg::Type(ty) = generic {
-                        return ValueType::Get(Box::new(explore(tcx, ty, ts)));
+                        return ValueTypeV2::Get(Box::new(explore(tcx, ty, ts)));
                     }
 
                     unreachable!()
@@ -490,39 +540,39 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> Value
                             TypeVariant::FrameStorageType(_) => unreachable!(),
                         }
                     } else {
-                        ValueType::Symbol(get_def_id_name(*tcx, *def_id))
+                        ValueTypeV2::Symbol(get_def_id_name(*tcx, *def_id))
                     }
                 }
             }
-        }
+        }*/
         // Primitive types
         // https://doc.rust-lang.org/reference/type-layout.html#primitive-data-layout
         Res::PrimTy(prim_ty) => match prim_ty {
             PrimTy::Int(int_ty) => match int_ty {
                 //TODO: only have ValueType::Int(Isize)
-                IntTy::Isize => ValueType::Isize,
-                IntTy::I8 => ValueType::I8,
-                IntTy::I16 => ValueType::I16,
-                IntTy::I32 => ValueType::I32,
-                IntTy::I64 => ValueType::I64,
-                IntTy::I128 => ValueType::I128,
+                IntTy::Isize => ValueTypeV2::PrimTy(SaftPrimTy::Int(SaftIntTy::Isize(SaftPrimTySize::new()))),
+                IntTy::I8 => ValueTypeV2::PrimTy(SaftPrimTy::Int(SaftIntTy::I8(SaftPrimTySize::new()))),
+                IntTy::I16 => ValueTypeV2::PrimTy(SaftPrimTy::Int(SaftIntTy::I16(SaftPrimTySize::new()))),
+                IntTy::I32 => ValueTypeV2::PrimTy(SaftPrimTy::Int(SaftIntTy::I32(SaftPrimTySize::new()))),
+                IntTy::I64 => ValueTypeV2::PrimTy(SaftPrimTy::Int(SaftIntTy::I64(SaftPrimTySize::new()))),
+                IntTy::I128 => ValueTypeV2::PrimTy(SaftPrimTy::Int(SaftIntTy::I128(SaftPrimTySize::new()))),
             },
             PrimTy::Uint(uint_ty) => match uint_ty {
-                UintTy::Usize => ValueType::Usize,
-                UintTy::U8 => ValueType::U8,
-                UintTy::U16 => ValueType::U16,
-                UintTy::U32 => ValueType::U32,
-                UintTy::U64 => ValueType::U64,
-                UintTy::U128 => ValueType::U128,
+                UintTy::Usize => ValueTypeV2::PrimTy(SaftPrimTy::Uint(SaftUintTy::Usize(SaftPrimTySize::new()))),
+                UintTy::U8 => ValueTypeV2::PrimTy(SaftPrimTy::Uint(SaftUintTy::U8(SaftPrimTySize::new()))),
+                UintTy::U16 => ValueTypeV2::PrimTy(SaftPrimTy::Uint(SaftUintTy::U16(SaftPrimTySize::new()))),
+                UintTy::U32 => ValueTypeV2::PrimTy(SaftPrimTy::Uint(SaftUintTy::U32(SaftPrimTySize::new()))),
+                UintTy::U64 => ValueTypeV2::PrimTy(SaftPrimTy::Uint(SaftUintTy::U64(SaftPrimTySize::new()))),
+                UintTy::U128 => ValueTypeV2::PrimTy(SaftPrimTy::Uint(SaftUintTy::U128(SaftPrimTySize::new()))),
             },
             PrimTy::Float(float_ty) => match float_ty {
-                FloatTy::F32 => ValueType::F32,
-                FloatTy::F64 => ValueType::F64,
+                FloatTy::F32 => ValueTypeV2::PrimTy(SaftPrimTy::Float(SaftFloatTy::F32(SaftPrimTySize::new()))),
+                FloatTy::F64 => ValueTypeV2::PrimTy(SaftPrimTy::Float(SaftFloatTy::F64(SaftPrimTySize::new()))),
             },
-            PrimTy::Str => ValueType::Str,
-            PrimTy::Bool => ValueType::Bool,
-            PrimTy::Char => ValueType::Char,
+            PrimTy::Str => ValueTypeV2::PrimTy(SaftPrimTy::Str(SaftPrimTySize::new())),
+            PrimTy::Bool => ValueTypeV2::PrimTy(SaftPrimTy::Bool(SaftPrimTySize::new())),
+            PrimTy::Char => ValueTypeV2::PrimTy(SaftPrimTy::Char(SaftPrimTySize::new())),
         },
         _ => todo!(),
     }
-}*/
+}
