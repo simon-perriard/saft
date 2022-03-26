@@ -77,9 +77,7 @@ pub fn get_storage_variables_names(tcx: &TyCtxt) -> Vec<String> {
     for item in tcx.hir().items() {
         let rustc_hir::Item { ident, .. } = item;
 
-        // _GeneratedPrefixForStorageNAME is generated for storage variables that
-        // have _ as prefix type
-        // TODO: check how it behaves with storage variables with non default prefix
+        // _GeneratedPrefixForStorageNAME is generated for storage variables
         if ident.as_str().contains("_GeneratedPrefixForStorage") {
             storage_variables_names.push(ident.as_str().replace("_GeneratedPrefixForStorage", ""));
         }

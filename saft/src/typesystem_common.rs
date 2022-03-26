@@ -383,7 +383,7 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> ValueType {
     }
 }
 
-/// Find the ValueType enum member that correspond to the given path
+/// Find the ValueType enum member that corresponds to the given path
 pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> ValueType {
     let rustc_hir::Path { segments, res, .. } = path;
 
