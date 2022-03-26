@@ -1,6 +1,7 @@
 #![feature(rustc_private)]
 #![feature(box_patterns)]
 #![feature(let_chains)]
+#![feature(drain_filter)]
 
 extern crate rustc_ast;
 extern crate rustc_driver;
@@ -20,4 +21,5 @@ pub mod typesystem_common;
 pub mod typesystem_config_constant_types;
 pub mod typesystem_declared_types;
 pub mod typesystem_storage;
+pub mod value_types_v2;
 pub mod weights;
