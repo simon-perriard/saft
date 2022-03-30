@@ -2,18 +2,19 @@ use rustc_middle::ty::TyCtxt;
 
 use crate::{
     analysis_utils::{def_id_printer::*, typesystem_helpers::get_pallet_constant_types_name},
+    typesystem_common::Trait,
     typesystem_common::*,
 };
 
 #[derive(Debug)]
 pub struct PalletConfigConstantType {
     pub alias_ident: Identifier,
-    pub trait_bound: ValueType,
+    pub trait_bound: Trait,
 }
 
-impl TypeSize for PalletConfigConstantType {
-    fn get_size(&self) -> CompSize {
-        self.trait_bound.get_size()
+impl Alias for PalletConfigConstantType {
+    fn get_size(&self) -> SizeType {
+        self.trait_bound.collect_size()
     }
 
     fn get_name(&self, tcx: &TyCtxt) -> String {
@@ -58,16 +59,20 @@ pub fn get_config_constant_types(tcx: &TyCtxt, ts: &mut TySys) {
 
                         let trait_bound = if let rustc_hir::GenericBound::Trait(poly_trait_ref, _) = &generic_bounds[0]
                         && let rustc_hir::PolyTraitRef { trait_ref, .. } = poly_trait_ref {
-                            get_value_type(tcx, trait_ref.path, ts)
+                            get_value_type(tcx, trait_ref.path, ts).expect_trait()
                         } else {
                             unreachable!();
                         };
 
-                        let standard_type = PalletConfigConstantType {
+                        let constant_type = PalletConfigConstantType {
                             alias_ident,
                             trait_bound
                         };
-                        ts.add_type(TypeVariant::PalletConfigConstantType(standard_type), tcx)
+
+                        println!("{:?}", constant_type);
+                        println!("");
+
+                        ts.add_type(TypeVariant::PalletConfigConstantType(constant_type), tcx)
                     }
                 }
             }

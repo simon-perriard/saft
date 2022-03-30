@@ -16,26 +16,26 @@ pub struct FrameStorageType {
 pub enum StorageKind {
     StorageValue {
         ident: Identifier,
-        value: crate::typesystem_common::ValueType,
+        value: crate::typesystem_common::Type,
     },
     StorageMap {
         ident: Identifier,
-        value: crate::typesystem_common::ValueType,
+        value: crate::typesystem_common::Type,
         //max_values: Option<ValueType>,
     },
     StorageDoubleMap {
         ident: Identifier,
-        value: crate::typesystem_common::ValueType,
+        value: crate::typesystem_common::Type,
         //max_values: Option<ValueType>,
     },
     StorageNMap {
         ident: Identifier,
-        value: crate::typesystem_common::ValueType,
+        value: crate::typesystem_common::Type,
         //max_values: Option<ValueType>,
     },
     CountedStorageMap {
         ident: Identifier,
-        value: crate::typesystem_common::ValueType,
+        value: crate::typesystem_common::Type,
         //max_values: Option<ValueType>,
     },
 }
@@ -51,14 +51,14 @@ impl FrameStorageType {
     }
 }
 
-impl TypeSize for FrameStorageType {
-    fn get_size(&self) -> CompSize {
+impl Alias for FrameStorageType {
+    fn get_size(&self) -> SizeType {
         match &self.kind {
-            StorageKind::StorageValue { value, .. } => value.get_size(),
-            StorageKind::StorageMap { value, .. } => value.get_size(),
-            StorageKind::StorageDoubleMap { value, .. } => value.get_size(),
-            StorageKind::StorageNMap { value, .. } => value.get_size(),
-            StorageKind::CountedStorageMap { value, .. } => value.get_size(),
+            StorageKind::StorageValue { value, .. } => value.collect_size(),
+            StorageKind::StorageMap { value, .. } => value.collect_size(),
+            StorageKind::StorageDoubleMap { value, .. } => value.collect_size(),
+            StorageKind::StorageNMap { value, .. } => value.collect_size(),
+            StorageKind::CountedStorageMap { value, .. } => value.collect_size(),
         }
     }
 
@@ -116,7 +116,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
                         if let rustc_hir::GenericArg::Type(ty) = &args[1] {
                             StorageKind::StorageValue {
                                 ident,
-                                value: explore(tcx, ty, ts),
+                                value: explore(tcx, ty, ts).expect_type(),
                             }
                             } else {unreachable!()}
                         },
@@ -124,7 +124,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
                         if let rustc_hir::GenericArg::Type(ty) = &args[3] {
                             StorageKind::StorageNMap {
                                 ident,
-                                value: explore(tcx, ty, ts),
+                                value: explore(tcx, ty, ts).expect_type(),
                                 //max_values: Some(explore(tcx, &args[6]))
                             }
                             } else {unreachable!()}
@@ -133,7 +133,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
                         if let rustc_hir::GenericArg::Type(ty) = &args[3] {
                             StorageKind::StorageNMap {
                                 ident,
-                                value: explore(tcx, ty, ts),
+                                value: explore(tcx, ty, ts).expect_type(),
                                 //max_values: Some(explore(tcx, &args[6]))
                             }
                             } else {unreachable!()}
@@ -143,7 +143,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
                         if let rustc_hir::GenericArg::Type(ty) = &args[3] {
                             StorageKind::StorageNMap {
                                 ident,
-                                value: explore(tcx, ty, ts),
+                                value: explore(tcx, ty, ts).expect_type(),
                                 //max_values: Some(explore(tcx, &args[6]))
                             }
                             } else {unreachable!()}
@@ -153,7 +153,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
                         if let rustc_hir::GenericArg::Type(ty) = &args[3] {
                             StorageKind::CountedStorageMap {
                                 ident,
-                                value: explore(tcx, ty, ts),
+                                value: explore(tcx, ty, ts).expect_type(),
                                 //max_values: Some(explore(tcx, &args[6]))
                             }
                             } else {unreachable!()}
@@ -166,6 +166,9 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
             };
 
             let storage_type = FrameStorageType::new(*def_id, kind);
+            println!("{:?}", storage_type);
+            println!("");
+
             ts.add_type(TypeVariant::FrameStorageType(storage_type), tcx);
         }
     }
