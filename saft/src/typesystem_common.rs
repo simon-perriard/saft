@@ -11,7 +11,7 @@ use crate::{
 use core::fmt;
 use rpds::HashTrieMap;
 use rustc_ast::ast::*;
-use rustc_hir::def::Res;
+use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::PrimTy;
 use rustc_middle::mir::interpret;
@@ -176,12 +176,14 @@ impl TraitOrType {
 #[derive(Clone, Debug)]
 pub enum Trait {
     Get(Type),
+    Symbol { full_name: String, size: SizeType },
 }
 
 impl Trait {
     pub fn collect_size(&self) -> SizeType {
         match self {
             Trait::Get(t) => t.collect_size(),
+            Trait::Symbol { size, .. } => size.clone(),
         }
     }
 }
@@ -389,7 +391,7 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> Trait
     let rustc_hir::Path { segments, res, .. } = path;
 
     match res {
-        Res::Def(_, def_id) => {
+        Res::Def(def_kind, def_id) => {
             match get_def_id_name_with_path(*tcx, *def_id).as_str() {
                 // BoundedVec is a standard type in FRAME:
                 // https://docs.substrate.io/rustdocs/latest/frame_support/storage/bounded_vec/struct.BoundedVec.html
@@ -437,6 +439,11 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> Trait
                             }
                             TypeVariant::FrameStorageType(_) => unreachable!(),
                         }
+                    } else if let DefKind::Trait = def_kind {
+                        TraitOrType::Trait(Trait::Symbol {
+                            full_name: get_def_id_name_with_path(*tcx, *def_id),
+                            size: SizeType::Symbolic(get_def_id_name_with_path(*tcx, *def_id)),
+                        })
                     } else {
                         TraitOrType::Type(Type::Symbol {
                             full_name: get_def_id_name_with_path(*tcx, *def_id),
