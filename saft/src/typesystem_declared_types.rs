@@ -5,12 +5,12 @@ use crate::{typesystem_common::*, typesystem_storage::get_storage_variables_name
 #[derive(Debug)]
 pub struct PalletDeclaredType {
     pub alias_ident: Identifier,
-    pub value: ValueType,
+    pub value: Type,
 }
 
-impl TypeSize for PalletDeclaredType {
-    fn get_size(&self) -> CompSize {
-        self.value.get_size()
+impl Alias for PalletDeclaredType {
+    fn get_size(&self) -> SizeType {
+        self.value.collect_size()
     }
 
     fn get_name(&self, tcx: &TyCtxt) -> String {
@@ -44,9 +44,10 @@ pub fn get_declared_types(tcx: &TyCtxt, ts: &mut TySys) {
 
                 let standard_type = PalletDeclaredType {
                     alias_ident,
-                    value: explore(tcx, ty, ts),
+                    value: explore(tcx, ty, ts).expect_type(),
                 };
-
+                println!("{:?}", standard_type);
+                println!("");
                 ts.add_type(TypeVariant::PalletDeclaredType(standard_type), tcx)
             }
         }
