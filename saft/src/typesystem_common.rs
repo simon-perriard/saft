@@ -46,7 +46,6 @@ pub enum SizeType {
 // instead of size type
 // have a small language to express symbolic bounds
 
-
 impl Default for SizeType {
     fn default() -> Self {
         SizeType::Concrete(0)
