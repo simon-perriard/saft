@@ -54,7 +54,6 @@ pub fn get_declared_types(tcx: &TyCtxt, ts: &mut TySys) {
                 ts.add_type(TypeVariant::PalletDeclaredType(standard_type), tcx)
             }
         } else if let rustc_hir::ItemKind::Struct(variant_data, _) = kind {
-            
             let alias_ident = Identifier {
                 def_id: def_id.to_def_id(),
             };
@@ -64,16 +63,19 @@ pub fn get_declared_types(tcx: &TyCtxt, ts: &mut TySys) {
                     let mut members = Vec::new();
 
                     for field_def in field_defs.iter() {
-                        members.push((explore(tcx, field_def.ty, ts).expect_type(), String::from(field_def.ident.as_str())));
+                        members.push((
+                            explore(tcx, field_def.ty, ts).expect_type(),
+                            String::from(field_def.ident.as_str()),
+                        ));
                     }
 
                     let standard_type = PalletDeclaredType {
                         alias_ident,
-                        value: Type::Struct(Struct::new(members))
+                        value: Type::Struct(Struct::new(members)),
                     };
 
                     ts.add_type(TypeVariant::PalletDeclaredType(standard_type), tcx)
-                },
+                }
                 rustc_hir::VariantData::Tuple(_, _) => (),
                 rustc_hir::VariantData::Unit(_) => (),
             }

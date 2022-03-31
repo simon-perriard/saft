@@ -13,7 +13,11 @@ impl Struct {
             sizes: variants.iter().map(|(e, _)| e.collect_size()).collect(),
         }));
         Struct {
-            variants: variants.iter().cloned().map(|(e, f)| (Box::new(e), f)).collect(),
+            variants: variants
+                .iter()
+                .cloned()
+                .map(|(e, f)| (Box::new(e), f))
+                .collect(),
             size,
         }
     }
