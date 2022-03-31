@@ -1,13 +1,14 @@
+use crate::analysis_utils::def_id_printer::*;
 use crate::typesystem_types::array_type::Array;
 use crate::typesystem_types::boundedvec_type::BoundedVec;
 use crate::typesystem_types::function_type::Function;
 use crate::typesystem_types::primitive_types::{Float, Int, Primitive, PrimitiveSize, Uint};
 use crate::typesystem_types::slice_type::Slice;
+use crate::typesystem_types::struct_type::Struct;
 use crate::typesystem_types::tuple_type::Tuple;
-use crate::{
-    analysis_utils::def_id_printer::*, typesystem_config_constant_types::PalletConfigConstantType,
-    typesystem_declared_types::PalletDeclaredType, typesystem_storage::FrameStorageType,
-};
+use crate::typesystem_types::typesystem_config_constant_types::PalletConfigConstantType;
+use crate::typesystem_types::typesystem_declared_types::PalletDeclaredType;
+use crate::typesystem_types::typesystem_storage::FrameStorageType;
 use core::fmt;
 use rpds::HashTrieMap;
 use rustc_ast::ast::*;
@@ -41,6 +42,10 @@ pub enum SizeType {
     Symbolic(String),
     Composite(Box<CompositeSize>),
 }
+
+// instead of size type
+// have a small language to express symbolic bounds
+
 
 impl Default for SizeType {
     fn default() -> Self {
@@ -197,8 +202,9 @@ pub enum Type {
     Array(Array),
     Slice(Slice),
     Function(Function),
+    Struct(Struct),
     Symbol { full_name: String, size: SizeType },
-    DefaultRet,
+    Unit,
 }
 
 impl Type {
@@ -211,8 +217,9 @@ impl Type {
             Type::Array(ty) => ty.size.clone(),
             Type::Slice(ty) => ty.size.clone(),
             Type::Function(ty) => ty.size.clone(),
+            Type::Struct(ty) => ty.size.clone(),
             Type::Symbol { size, .. } => size.clone(),
-            Type::DefaultRet => SizeType::Concrete(0),
+            Type::Unit => SizeType::Concrete(0),
         }
     }
 }
@@ -373,14 +380,14 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> TraitOrType {
             }
 
             let output = match decl.output {
-                rustc_hir::FnRetTy::DefaultReturn(_) => Type::DefaultRet,
+                rustc_hir::FnRetTy::DefaultReturn(_) => Type::Unit,
                 rustc_hir::FnRetTy::Return(ty) => explore(tcx, ty, ts).expect_type(),
             };
 
             TraitOrType::Type(Type::Function(Function::new(inputs, output)))
         }
         _ => {
-            println!("{:?}", ty);
+            //println!("{:?}", ty);
             unreachable!()
         }
     }

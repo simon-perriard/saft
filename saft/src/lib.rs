@@ -18,8 +18,5 @@ pub mod extrinsic_visitor;
 pub mod mir_visitor;
 pub mod storage_actions;
 pub mod typesystem_common;
-pub mod typesystem_config_constant_types;
-pub mod typesystem_declared_types;
-pub mod typesystem_storage;
 pub mod typesystem_types;
 pub mod weights;

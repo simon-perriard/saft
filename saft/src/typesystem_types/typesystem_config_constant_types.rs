@@ -69,8 +69,8 @@ pub fn get_config_constant_types(tcx: &TyCtxt, ts: &mut TySys) {
                             trait_bound
                         };
 
-                        println!("{:?}", constant_type);
-                        println!("");
+                        //println!("{:?}", constant_type);
+                        //println!("");
 
                         ts.add_type(TypeVariant::PalletConfigConstantType(constant_type), tcx)
                     }

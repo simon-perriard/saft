@@ -176,9 +176,9 @@ pub mod typesystem_helpers {
 
     use crate::analysis_utils::def_id_printer::get_def_id_name_with_path;
     use crate::typesystem_common::TySys;
-    use crate::typesystem_config_constant_types::get_config_constant_types;
-    use crate::typesystem_declared_types::get_declared_types;
-    use crate::typesystem_storage::get_storage_variables;
+    use crate::typesystem_types::typesystem_config_constant_types::get_config_constant_types;
+    use crate::typesystem_types::typesystem_declared_types::get_declared_types;
+    use crate::typesystem_types::typesystem_storage::get_storage_variables;
 
     pub fn get_pallet_constant_types_name(tcx: &TyCtxt) -> Vec<String> {
         let mut constant_types_names = Vec::new();

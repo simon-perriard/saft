@@ -1,6 +1,9 @@
 use rustc_middle::ty::TyCtxt;
 
-use crate::{typesystem_common::*, typesystem_storage::get_storage_variables_names};
+use crate::typesystem_common::*;
+use crate::typesystem_types::struct_type::Struct;
+
+use super::typesystem_storage::get_storage_variables_names;
 
 #[derive(Debug)]
 pub struct PalletDeclaredType {
@@ -46,9 +49,33 @@ pub fn get_declared_types(tcx: &TyCtxt, ts: &mut TySys) {
                     alias_ident,
                     value: explore(tcx, ty, ts).expect_type(),
                 };
-                println!("{:?}", standard_type);
-                println!("");
+                //println!("{:?}", standard_type);
+                //println!("");
                 ts.add_type(TypeVariant::PalletDeclaredType(standard_type), tcx)
+            }
+        } else if let rustc_hir::ItemKind::Struct(variant_data, _) = kind {
+            
+            let alias_ident = Identifier {
+                def_id: def_id.to_def_id(),
+            };
+
+            match variant_data {
+                rustc_hir::VariantData::Struct(field_defs, _) => {
+                    let mut members = Vec::new();
+
+                    for field_def in field_defs.iter() {
+                        members.push((explore(tcx, field_def.ty, ts).expect_type(), String::from(field_def.ident.as_str())));
+                    }
+
+                    let standard_type = PalletDeclaredType {
+                        alias_ident,
+                        value: Type::Struct(Struct::new(members))
+                    };
+
+                    ts.add_type(TypeVariant::PalletDeclaredType(standard_type), tcx)
+                },
+                rustc_hir::VariantData::Tuple(_, _) => (),
+                rustc_hir::VariantData::Unit(_) => (),
             }
         }
     }

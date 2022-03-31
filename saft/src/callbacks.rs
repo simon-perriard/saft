@@ -33,6 +33,7 @@ impl SaftCallbacks {
 
         let mut ts = TySys::new();
         gather_types(&tcx, &mut ts);
+        let ts = &ts;
 
         if let Some(single_function) = &self.options.single_func {
             println!("The following extrinsics will be analyzed :");
@@ -48,7 +49,8 @@ impl SaftCallbacks {
             }
 
             if let Some(target_extrinsic_def_id) = target_extrinsic_def_id {
-                let mut extrinsic_visitor = ExtrinsicVisitor::new(tcx, *target_extrinsic_def_id);
+                let mut extrinsic_visitor =
+                    ExtrinsicVisitor::new(tcx, ts, *target_extrinsic_def_id);
                 println!("Analyzing {}...", extrinsic_visitor.get_cloned_fn_name());
                 extrinsic_visitor.visit_body();
             } else {
@@ -60,7 +62,7 @@ impl SaftCallbacks {
             print_extrinsics_names(tcx, Some(variant_ids));
 
             for extrinsics_def_id in extrinsics_def_ids {
-                let mut extrinsic_visitor = ExtrinsicVisitor::new(tcx, extrinsics_def_id);
+                let mut extrinsic_visitor = ExtrinsicVisitor::new(tcx, ts, extrinsics_def_id);
                 println!("Analyzing {}...", extrinsic_visitor.get_cloned_fn_name());
                 extrinsic_visitor.visit_body();
             }

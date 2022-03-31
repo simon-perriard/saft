@@ -3,7 +3,7 @@ use rustc_middle::mir::Body;
 use rustc_middle::ty::TyCtxt;
 use std::io::Write;
 
-use crate::{analysis_utils::def_id_printer::*, mir_visitor::MirVisitor};
+use crate::{analysis_utils::def_id_printer::*, mir_visitor::MirVisitor, typesystem_common::TySys};
 
 pub struct ExtrinsicVisitor<'tcx, 'extrinsic> {
     pub name: String,
@@ -11,10 +11,11 @@ pub struct ExtrinsicVisitor<'tcx, 'extrinsic> {
     pub def_id: DefId,
     pub tcx: TyCtxt<'tcx>,
     pub mir: &'extrinsic Body<'tcx>,
+    pub ts: &'extrinsic TySys,
 }
 
 impl<'tcx, 'extrinsic> ExtrinsicVisitor<'tcx, 'extrinsic> {
-    pub fn new(tcx: TyCtxt<'tcx>, def_id: DefId) -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>, ts: &'extrinsic TySys, def_id: DefId) -> Self {
         let id = rustc_middle::ty::WithOptConstParam::unknown(def_id);
         let def = rustc_middle::ty::InstanceDef::Item(id);
         let mir = tcx.instance_mir(def);
@@ -25,6 +26,7 @@ impl<'tcx, 'extrinsic> ExtrinsicVisitor<'tcx, 'extrinsic> {
             def_id,
             tcx,
             mir,
+            ts,
         }
     }
 

@@ -166,8 +166,8 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
             };
 
             let storage_type = FrameStorageType::new(*def_id, kind);
-            println!("{:?}", storage_type);
-            println!("");
+            //println!("{:?}", storage_type);
+            //println!("");
 
             ts.add_type(TypeVariant::FrameStorageType(storage_type), tcx);
         }
