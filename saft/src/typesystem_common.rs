@@ -177,7 +177,7 @@ impl Default for TySys {
     }
 }
 
-pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> TraitOrType {
+pub fn explore_ty(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> TraitOrType {
     match &ty.kind {
         rustc_hir::TyKind::Path(qpath) => {
             match qpath {
@@ -223,7 +223,7 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> TraitOrType {
             let mut members = Vec::new();
 
             for ty in tys.iter() {
-                members.push(explore(tcx, ty, ts).expect_type());
+                members.push(explore_ty(tcx, ty, ts).expect_type());
             }
 
             TraitOrType::Type(Type::Tuple(Tuple::new(members)))
@@ -241,7 +241,7 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> TraitOrType {
                             && let Ok(value) = scalar_int.to_bits(scalar_int.size()) {
                                 return TraitOrType::Type(Type::Array(
                                     Array::new(
-                                    explore(tcx, ty, ts).expect_type(),
+                                    explore_ty(tcx, ty, ts).expect_type(),
                                     Size::UnitSize(Box::new(UnitSize::Concrete(value)))
                                 )));
                             } else {
@@ -254,9 +254,9 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> TraitOrType {
             }
             unreachable!()
         }
-        rustc_hir::TyKind::Rptr(_, mut_ty) => explore(tcx, mut_ty.ty, ts),
+        rustc_hir::TyKind::Rptr(_, mut_ty) => explore_ty(tcx, mut_ty.ty, ts),
         rustc_hir::TyKind::Slice(ty) => {
-            TraitOrType::Type(Type::Slice(Slice::new(explore(tcx, ty, ts).expect_type())))
+            TraitOrType::Type(Type::Slice(Slice::new(explore_ty(tcx, ty, ts).expect_type())))
         }
         rustc_hir::TyKind::BareFn(bare_fn_ty) => {
             let rustc_hir::BareFnTy { decl, .. } = bare_fn_ty;
@@ -264,12 +264,12 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> TraitOrType {
             let mut inputs = Vec::new();
 
             for input_ty in decl.inputs.iter() {
-                inputs.push(explore(tcx, input_ty, ts).expect_type());
+                inputs.push(explore_ty(tcx, input_ty, ts).expect_type());
             }
 
             let output = match decl.output {
                 rustc_hir::FnRetTy::DefaultReturn(_) => Type::Unit,
-                rustc_hir::FnRetTy::Return(ty) => explore(tcx, ty, ts).expect_type(),
+                rustc_hir::FnRetTy::Return(ty) => explore_ty(tcx, ty, ts).expect_type(),
             };
 
             TraitOrType::Type(Type::Function(Function::new(inputs, output)))
@@ -294,9 +294,9 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> Trait
                     let generics = segments[0].args.unwrap().args;
                     if let rustc_hir::GenericArg::Type(ty_0) = &generics[0]
                     && let rustc_hir::GenericArg::Type(ty_1) = &generics[1] {
-                        let value = explore(tcx, ty_0, ts).expect_type();
+                        let value = explore_ty(tcx, ty_0, ts).expect_type();
                         //println!("{:?}", ty_1);
-                        let max_length = explore(tcx, ty_1, ts).expect_type();
+                        let max_length = explore_ty(tcx, ty_1, ts).expect_type();
 
                         return TraitOrType::Type(Type::BoundedVec(BoundedVec::new(value, max_length)));
                     }
@@ -308,7 +308,7 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> Trait
 
                     if let rustc_hir::GenericArg::Type(ty) = generic {
                         return TraitOrType::Type(Type::Option(Box::new(
-                            explore(tcx, ty, ts).expect_type(),
+                            explore_ty(tcx, ty, ts).expect_type(),
                         )));
                     }
 
@@ -318,7 +318,7 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> Trait
                     let generic = &segments[0].args.unwrap().args[0];
 
                     if let rustc_hir::GenericArg::Type(ty) = generic {
-                        return TraitOrType::Trait(Trait::Get(explore(tcx, ty, ts).expect_type()));
+                        return TraitOrType::Trait(Trait::Get(explore_ty(tcx, ty, ts).expect_type()));
                     }
 
                     unreachable!()

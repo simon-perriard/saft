@@ -29,8 +29,6 @@ impl Alias for PalletDeclaredType {
 pub fn get_declared_types(tcx: &TyCtxt, ts: &mut TySys) {
     let storage_variables_names = get_storage_variables_names(tcx);
 
-    // Start with outermost type declaration as they may be used
-    // for other type def in the Config trait
     for item in tcx.hir().items() {
         let rustc_hir::Item {
             ident,
@@ -48,7 +46,7 @@ pub fn get_declared_types(tcx: &TyCtxt, ts: &mut TySys) {
 
                 let standard_type = PalletDeclaredType {
                     alias_ident,
-                    value: explore(tcx, ty, ts).expect_type(),
+                    value: explore_ty(tcx, ty, ts).expect_type(),
                 };
                 //println!("{:?}", standard_type);
                 //println!("");
@@ -65,7 +63,7 @@ pub fn get_declared_types(tcx: &TyCtxt, ts: &mut TySys) {
 
                     for field_def in field_defs.iter() {
                         members.push((
-                            explore(tcx, field_def.ty, ts).expect_type(),
+                            explore_ty(tcx, field_def.ty, ts).expect_type(),
                             String::from(field_def.ident.as_str()),
                         ));
                     }

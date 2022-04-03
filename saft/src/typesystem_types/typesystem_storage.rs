@@ -116,7 +116,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
                         if let rustc_hir::GenericArg::Type(ty) = &args[1] {
                             StorageKind::StorageValue {
                                 ident,
-                                value: explore(tcx, ty, ts).expect_type(),
+                                value: explore_ty(tcx, ty, ts).expect_type(),
                             }
                             } else {unreachable!()}
                         },
@@ -124,7 +124,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
                         if let rustc_hir::GenericArg::Type(ty) = &args[3] {
                             StorageKind::StorageNMap {
                                 ident,
-                                value: explore(tcx, ty, ts).expect_type(),
+                                value: explore_ty(tcx, ty, ts).expect_type(),
                                 //max_values: Some(explore(tcx, &args[6]))
                             }
                             } else {unreachable!()}
@@ -133,7 +133,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
                         if let rustc_hir::GenericArg::Type(ty) = &args[3] {
                             StorageKind::StorageNMap {
                                 ident,
-                                value: explore(tcx, ty, ts).expect_type(),
+                                value: explore_ty(tcx, ty, ts).expect_type(),
                                 //max_values: Some(explore(tcx, &args[6]))
                             }
                             } else {unreachable!()}
@@ -143,7 +143,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
                         if let rustc_hir::GenericArg::Type(ty) = &args[3] {
                             StorageKind::StorageNMap {
                                 ident,
-                                value: explore(tcx, ty, ts).expect_type(),
+                                value: explore_ty(tcx, ty, ts).expect_type(),
                                 //max_values: Some(explore(tcx, &args[6]))
                             }
                             } else {unreachable!()}
@@ -153,7 +153,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
                         if let rustc_hir::GenericArg::Type(ty) = &args[3] {
                             StorageKind::CountedStorageMap {
                                 ident,
-                                value: explore(tcx, ty, ts).expect_type(),
+                                value: explore_ty(tcx, ty, ts).expect_type(),
                                 //max_values: Some(explore(tcx, &args[6]))
                             }
                             } else {unreachable!()}
