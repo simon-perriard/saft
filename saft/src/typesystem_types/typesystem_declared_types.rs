@@ -1,5 +1,6 @@
 use rustc_middle::ty::TyCtxt;
 
+use crate::size_language::Size;
 use crate::typesystem_common::*;
 use crate::typesystem_types::struct_type::Struct;
 

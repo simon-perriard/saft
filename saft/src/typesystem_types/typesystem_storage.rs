@@ -3,7 +3,7 @@ use rustc_hir::def::Res;
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::ty::TyCtxt;
 
-use crate::{analysis_utils::def_id_printer::*, typesystem_common::*};
+use crate::{analysis_utils::def_id_printer::*, size_language::Size, typesystem_common::*};
 #[derive(Clone, Debug)]
 pub struct FrameStorageType {
     pub alias_ident: Identifier,

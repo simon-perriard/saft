@@ -1,4 +1,4 @@
-use crate::typesystem_common::*;
+use crate::{size_language::*, typesystem_common::*};
 
 #[derive(Clone, Debug)]
 pub struct Array {
@@ -11,7 +11,7 @@ impl Array {
         let ty_size = ty.collect_size();
         Array {
             ty: Box::new(ty),
-            size: Size::Operation(Box::new(Operation::Mul(ty_size, length))),
+            size: ty_size * length,
         }
     }
 }

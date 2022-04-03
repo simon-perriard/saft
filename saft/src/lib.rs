@@ -16,6 +16,7 @@ pub mod analysis_utils;
 pub mod callbacks;
 pub mod extrinsic_visitor;
 pub mod mir_visitor;
+pub mod size_language;
 pub mod storage_actions;
 pub mod typesystem_common;
 pub mod typesystem_types;

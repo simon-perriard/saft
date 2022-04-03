@@ -1,4 +1,4 @@
-use crate::typesystem_common::*;
+use crate::{size_language::Size, typesystem_common::*};
 
 #[derive(Clone, Debug)]
 pub struct Tuple {

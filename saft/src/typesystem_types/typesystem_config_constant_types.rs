@@ -2,6 +2,7 @@ use rustc_middle::ty::TyCtxt;
 
 use crate::{
     analysis_utils::{def_id_printer::*, typesystem_helpers::get_pallet_constant_types_name},
+    size_language::Size,
     typesystem_common::Trait,
     typesystem_common::*,
 };

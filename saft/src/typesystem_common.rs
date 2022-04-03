@@ -1,4 +1,5 @@
 use crate::analysis_utils::def_id_printer::*;
+use crate::size_language::*;
 use crate::typesystem_types::array_type::Array;
 use crate::typesystem_types::boundedvec_type::BoundedVec;
 use crate::typesystem_types::function_type::Function;
@@ -9,7 +10,6 @@ use crate::typesystem_types::tuple_type::Tuple;
 use crate::typesystem_types::typesystem_config_constant_types::PalletConfigConstantType;
 use crate::typesystem_types::typesystem_declared_types::PalletDeclaredType;
 use crate::typesystem_types::typesystem_storage::FrameStorageType;
-use core::fmt;
 use rpds::HashTrieMap;
 use rustc_ast::ast::*;
 use rustc_hir::def::{DefKind, Res};
@@ -33,80 +33,6 @@ impl Identifier {
     pub fn get_name_full(&self, tcx: &TyCtxt) -> String {
         get_def_id_name_with_path(*tcx, self.def_id)
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum UnitSize {
-    Concrete(u128),
-    Symbolic(String),
-    Interval(Size, Size),
-    Unit,
-}
-
-#[derive(Debug, Clone)]
-pub enum Size {
-    UnitSize(Box<UnitSize>),
-    Operation(Box<Operation>),
-}
-
-#[derive(Debug, Clone)]
-pub enum Operation {
-    Add(Size, Size),
-    Mul(Size, Size),
-    Max(Size, Size),
-}
-
-// instead of size type
-// have a small language to express symbolic bounds
-
-impl Default for Size {
-    fn default() -> Self {
-        Size::UnitSize(Box::new(UnitSize::Concrete(0)))
-    }
-}
-
-impl fmt::Display for UnitSize {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            UnitSize::Concrete(x) => write!(f, "{}", x),
-            UnitSize::Symbolic(s) => write!(f, "{}", s),
-            UnitSize::Interval(a, b) => write!(f, "[{},{}]", a, b),
-            UnitSize::Unit => write!(f, "()"),
-        }
-    }
-}
-
-impl fmt::Display for Operation {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Operation::Add(a, b) => write!(f, "{} + {}", a, b),
-            Operation::Mul(a, b) => write!(f, "({}) * ({})", a, b),
-            Operation::Max(a, b) => write!(f, "MAX({}, {})", a, b),
-        }
-    }
-}
-
-impl fmt::Display for Size {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Size::UnitSize(unit) => write!(f, "{}", unit),
-            Size::Operation(op) => write!(f, "{}", op),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-/// A composite size, it can contain different elements to describe the size of a type
-pub struct CompositeSize {
-    /// Multiplication factor associated to the size,
-    /// this can be used for an array that has a max size.
-    /// Example:
-    ///     BoundedVec<u8, MAX::Type>
-    ///     will be represented by CompSize as
-    ///     mul_factor: MAX::Type'size and concrete 1 (byte)
-    pub mul_factor: Size,
-
-    pub sizes: Vec<Size>,
 }
 
 #[derive(Clone, Debug)]

@@ -1,3 +1,4 @@
+use crate::size_language::*;
 use crate::typesystem_common::Trait;
 use crate::typesystem_common::*;
 
@@ -20,10 +21,7 @@ impl BoundedVec {
             Size::UnitSize(Box::new(UnitSize::Concrete(0))),
             max_length.collect_size(),
         );
-        let size = Size::Operation(Box::new(Operation::Mul(
-            ty.collect_size(),
-            Size::UnitSize(Box::new(length_interval)),
-        )));
+        let size = ty.collect_size() * Size::UnitSize(Box::new(length_interval));
 
         BoundedVec {
             ty: Box::new(ty),

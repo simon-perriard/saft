@@ -1,6 +1,6 @@
 use std::{marker::PhantomData, mem};
 
-use crate::typesystem_common::{Size, UnitSize};
+use crate::size_language::*;
 
 const BYTE: usize = 8;
 
