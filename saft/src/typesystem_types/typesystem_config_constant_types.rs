@@ -13,7 +13,7 @@ pub struct PalletConfigConstantType {
 }
 
 impl Alias for PalletConfigConstantType {
-    fn get_size(&self) -> SizeType {
+    fn get_size(&self) -> Size {
         self.trait_bound.collect_size()
     }
 

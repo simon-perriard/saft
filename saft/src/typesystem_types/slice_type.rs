@@ -3,18 +3,18 @@ use crate::typesystem_common::*;
 #[derive(Clone, Debug)]
 pub struct Slice {
     pub ty: Box<Type>,
-    pub size: SizeType,
+    pub size: Size,
 }
 
 impl Slice {
     pub fn new(ty: Type) -> Slice {
-        let sizes = vec![ty.collect_size()];
+        let ty_size = ty.collect_size();
         Slice {
             ty: Box::new(ty),
-            size: SizeType::Composite(Box::new(CompositeSize {
-                mul_factor: SizeType::Symbolic("UNKNOWN".to_string()),
-                sizes,
-            })),
+            size: Size::Operation(Box::new(Operation::Mul(
+                ty_size,
+                Size::UnitSize(Box::new(todo!())),
+            ))),
         }
     }
 }

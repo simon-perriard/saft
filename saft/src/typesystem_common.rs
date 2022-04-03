@@ -17,6 +17,7 @@ use rustc_hir::def_id::DefId;
 use rustc_hir::PrimTy;
 use rustc_middle::mir::interpret;
 use rustc_middle::ty::TyCtxt;
+use std::fmt::Debug;
 
 #[derive(Clone, Debug)]
 /// Textual identity of a type, aka its name
@@ -35,29 +36,61 @@ impl Identifier {
 }
 
 #[derive(Debug, Clone)]
-/// The atomic way to represent a size for a type
-/// It can either be a concrete or a symbolic size
-pub enum SizeType {
+pub enum UnitSize {
     Concrete(u128),
     Symbolic(String),
-    Composite(Box<CompositeSize>),
+    Interval(Size, Size),
+    Unit,
+}
+
+#[derive(Debug, Clone)]
+pub enum Size {
+    UnitSize(Box<UnitSize>),
+    Operation(Box<Operation>),
+}
+
+#[derive(Debug, Clone)]
+pub enum Operation {
+    Add(Size, Size),
+    Mul(Size, Size),
+    Max(Size, Size),
 }
 
 // instead of size type
 // have a small language to express symbolic bounds
 
-impl Default for SizeType {
+impl Default for Size {
     fn default() -> Self {
-        SizeType::Concrete(0)
+        Size::UnitSize(Box::new(UnitSize::Concrete(0)))
     }
 }
 
-impl fmt::Display for SizeType {
+impl fmt::Display for UnitSize {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            UnitSize::Concrete(x) => write!(f, "{}", x),
+            UnitSize::Symbolic(s) => write!(f, "{}", s),
+            UnitSize::Interval(a, b) => write!(f, "[{},{}]", a, b),
+            UnitSize::Unit => write!(f, "()"),
+        }
+    }
+}
+
+impl fmt::Display for Operation {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Operation::Add(a, b) => write!(f, "{} + {}", a, b),
+            Operation::Mul(a, b) => write!(f, "({}) * ({})", a, b),
+            Operation::Max(a, b) => write!(f, "MAX({}, {})", a, b),
+        }
+    }
+}
+
+impl fmt::Display for Size {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SizeType::Concrete(c) => write!(f, "{}", c),
-            SizeType::Symbolic(s) => write!(f, "{}", s),
-            SizeType::Composite(cs) => write!(f, "{}", cs),
+            Size::UnitSize(unit) => write!(f, "{}", unit),
+            Size::Operation(op) => write!(f, "{}", op),
         }
     }
 }
@@ -71,79 +104,9 @@ pub struct CompositeSize {
     ///     BoundedVec<u8, MAX::Type>
     ///     will be represented by CompSize as
     ///     mul_factor: MAX::Type'size and concrete 1 (byte)
-    pub mul_factor: SizeType,
+    pub mul_factor: Size,
 
-    pub sizes: Vec<SizeType>,
-}
-
-impl Default for CompositeSize {
-    fn default() -> Self {
-        CompositeSize {
-            mul_factor: SizeType::Concrete(1),
-            sizes: Vec::new(),
-        }
-    }
-}
-
-impl CompositeSize {
-    pub fn reduce_concrete(&mut self) {
-        let mut acc = SizeType::default();
-
-        self.sizes = self
-            .sizes
-            .drain_filter(|size| {
-                match *size {
-                    SizeType::Concrete(c) => {
-                        // update accumulator and filter out
-                        if let SizeType::Concrete(accum_size) = acc {
-                            acc = SizeType::Concrete(accum_size + c);
-                        } else {
-                            unreachable!();
-                        }
-
-                        false
-                    }
-                    _ => true,
-                }
-            })
-            .collect();
-
-        // Add back the accumulated concrete
-        self.sizes.push(acc);
-    }
-}
-
-impl fmt::Display for CompositeSize {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut fmt = String::new();
-
-        let mut count = self.sizes.len() - 1;
-
-        for size in self.sizes.iter() {
-            match size {
-                SizeType::Concrete(c) => fmt.push_str(&c.to_string()),
-                SizeType::Symbolic(s) => fmt.push_str(s),
-                SizeType::Composite(cs) => fmt.push_str(&format!("{}", cs)),
-            }
-
-            if count > 0 {
-                fmt.push_str(" + ")
-            }
-            count -= 1;
-        }
-
-        match self.mul_factor {
-            SizeType::Concrete(0) => {
-                write!(f, "")
-            }
-            SizeType::Concrete(1) => {
-                write!(f, "{}", fmt)
-            }
-            _ => {
-                write!(f, "{} * ({})", self.mul_factor, fmt)
-            }
-        }
-    }
+    pub sizes: Vec<Size>,
 }
 
 #[derive(Clone, Debug)]
@@ -169,7 +132,7 @@ impl TraitOrType {
 }
 
 impl TraitOrType {
-    pub fn collect_size(&self) -> SizeType {
+    pub fn collect_size(&self) -> Size {
         match self {
             TraitOrType::Trait(t) => t.collect_size(),
             TraitOrType::Type(t) => t.collect_size(),
@@ -180,11 +143,11 @@ impl TraitOrType {
 #[derive(Clone, Debug)]
 pub enum Trait {
     Get(Type),
-    Symbol { full_name: String, size: SizeType },
+    Symbol { full_name: String, size: Size },
 }
 
 impl Trait {
-    pub fn collect_size(&self) -> SizeType {
+    pub fn collect_size(&self) -> Size {
         match self {
             Trait::Get(t) => t.collect_size(),
             Trait::Symbol { size, .. } => size.clone(),
@@ -202,12 +165,12 @@ pub enum Type {
     Slice(Slice),
     Function(Function),
     Struct(Struct),
-    Symbol { full_name: String, size: SizeType },
+    Symbol { full_name: String, size: Size },
     Unit,
 }
 
 impl Type {
-    pub fn collect_size(&self) -> SizeType {
+    pub fn collect_size(&self) -> Size {
         match self {
             Type::Primitive(ty) => ty.collect_size(),
             Type::Option(ty) => ty.collect_size(),
@@ -218,7 +181,7 @@ impl Type {
             Type::Function(ty) => ty.size.clone(),
             Type::Struct(ty) => ty.size.clone(),
             Type::Symbol { size, .. } => size.clone(),
-            Type::Unit => SizeType::Concrete(0),
+            Type::Unit => Size::UnitSize(Box::new(UnitSize::Concrete(0))),
         }
     }
 }
@@ -231,7 +194,7 @@ pub enum TypeVariant {
 }
 
 pub trait Alias {
-    fn get_size(&self) -> SizeType;
+    fn get_size(&self) -> Size;
 
     fn get_name(&self, tcx: &TyCtxt) -> String;
 
@@ -239,7 +202,7 @@ pub trait Alias {
 }
 
 impl Alias for TypeVariant {
-    fn get_size(&self) -> SizeType {
+    fn get_size(&self) -> Size {
         match self {
             TypeVariant::FrameStorageType(ty) => ty.get_size(),
             TypeVariant::PalletDeclaredType(ty) => ty.get_size(),
@@ -320,9 +283,9 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> TraitOrType {
                         // Resolve type to defId
                         TraitOrType::Type(Type::Symbol {
                             full_name: super_type.to_owned() + "::" + segment.ident.as_str(),
-                            size: SizeType::Symbolic(
+                            size: Size::UnitSize(Box::new(UnitSize::Symbolic(
                                 super_type.to_owned() + "::" + segment.ident.as_str(),
-                            ),
+                            ))),
                         })
                     }
                 }
@@ -353,7 +316,7 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> TraitOrType {
                                 return TraitOrType::Type(Type::Array(
                                     Array::new(
                                     explore(tcx, ty, ts).expect_type(),
-                                    SizeType::Concrete(value)
+                                    Size::UnitSize(Box::new(UnitSize::Concrete(value)))
                                 )));
                             } else {
                                 unreachable!();
@@ -403,10 +366,13 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> Trait
                 // https://docs.substrate.io/rustdocs/latest/frame_support/storage/bounded_vec/struct.BoundedVec.html
                 "frame_support::BoundedVec" => {
                     let generics = segments[0].args.unwrap().args;
-                    if let rustc_hir::GenericArg::Type(ty_0) = &generics[0] {
+                    if let rustc_hir::GenericArg::Type(ty_0) = &generics[0]
+                    && let rustc_hir::GenericArg::Type(ty_1) = &generics[1] {
                         let value = explore(tcx, ty_0, ts).expect_type();
+                        //println!("{:?}", ty_1);
+                        let max_length = explore(tcx, ty_1, ts).expect_type();
 
-                        return TraitOrType::Type(Type::BoundedVec(BoundedVec::new(value)));
+                        return TraitOrType::Type(Type::BoundedVec(BoundedVec::new(value, max_length)));
                     }
 
                     unreachable!()
@@ -448,12 +414,16 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> Trait
                     } else if let DefKind::Trait = def_kind {
                         TraitOrType::Trait(Trait::Symbol {
                             full_name: get_def_id_name_with_path(*tcx, *def_id),
-                            size: SizeType::Symbolic(get_def_id_name_with_path(*tcx, *def_id)),
+                            size: Size::UnitSize(Box::new(UnitSize::Symbolic(
+                                get_def_id_name_with_path(*tcx, *def_id),
+                            ))),
                         })
                     } else {
                         TraitOrType::Type(Type::Symbol {
                             full_name: get_def_id_name_with_path(*tcx, *def_id),
-                            size: SizeType::Symbolic(get_def_id_name_with_path(*tcx, *def_id)),
+                            size: Size::UnitSize(Box::new(UnitSize::Symbolic(
+                                get_def_id_name_with_path(*tcx, *def_id),
+                            ))),
                         })
                     }
                 }
@@ -519,5 +489,16 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> Trait
             }
         },
         _ => todo!(),
+    }
+}
+
+pub fn fill_size(mut remaining: Vec<Type>) -> Size {
+    if remaining.is_empty() {
+        Size::UnitSize(Box::new(UnitSize::Unit))
+    } else if remaining.len() == 1 {
+        remaining[0].collect_size()
+    } else {
+        let last = remaining.pop().unwrap().collect_size();
+        Size::Operation(Box::new(Operation::Add(fill_size(remaining), last)))
     }
 }

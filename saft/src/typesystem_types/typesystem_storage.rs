@@ -52,7 +52,7 @@ impl FrameStorageType {
 }
 
 impl Alias for FrameStorageType {
-    fn get_size(&self) -> SizeType {
+    fn get_size(&self) -> Size {
         match &self.kind {
             StorageKind::StorageValue { value, .. } => value.collect_size(),
             StorageKind::StorageMap { value, .. } => value.collect_size(),

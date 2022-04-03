@@ -12,7 +12,7 @@ pub struct PalletDeclaredType {
 }
 
 impl Alias for PalletDeclaredType {
-    fn get_size(&self) -> SizeType {
+    fn get_size(&self) -> Size {
         self.value.collect_size()
     }
 
@@ -73,7 +73,8 @@ pub fn get_declared_types(tcx: &TyCtxt, ts: &mut TySys) {
                         alias_ident,
                         value: Type::Struct(Struct::new(members)),
                     };
-
+                    //println!("{:?}", standard_type);
+                    //println!("");
                     ts.add_type(TypeVariant::PalletDeclaredType(standard_type), tcx)
                 }
                 rustc_hir::VariantData::Tuple(_, _) => (),

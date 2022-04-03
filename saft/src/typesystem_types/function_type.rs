@@ -4,7 +4,7 @@ use crate::typesystem_common::*;
 pub struct Function {
     pub inputs: Vec<Box<Type>>,
     pub output: Box<Type>,
-    pub size: SizeType,
+    pub size: Size,
 }
 
 impl Function {

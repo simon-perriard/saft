@@ -1,6 +1,6 @@
 use std::{marker::PhantomData, mem};
 
-use crate::typesystem_common::SizeType;
+use crate::typesystem_common::{Size, UnitSize};
 
 const BYTE: usize = 8;
 
@@ -15,7 +15,7 @@ pub enum Primitive {
 }
 
 impl Primitive {
-    pub fn collect_size(&self) -> SizeType {
+    pub fn collect_size(&self) -> Size {
         match self {
             Primitive::Int(ty) => ty.collect_size(),
             Primitive::Uint(ty) => ty.collect_size(),
@@ -38,7 +38,7 @@ pub enum Int {
 }
 
 impl Int {
-    pub fn collect_size(&self) -> SizeType {
+    pub fn collect_size(&self) -> Size {
         match self {
             Int::Isize(s) => s.size.clone(),
             Int::I8(s) => s.size.clone(),
@@ -61,7 +61,7 @@ pub enum Uint {
 }
 
 impl Uint {
-    pub fn collect_size(&self) -> SizeType {
+    pub fn collect_size(&self) -> Size {
         match self {
             Uint::Usize(s) => s.size.clone(),
             Uint::U8(s) => s.size.clone(),
@@ -80,7 +80,7 @@ pub enum Float {
 }
 
 impl Float {
-    pub fn collect_size(&self) -> SizeType {
+    pub fn collect_size(&self) -> Size {
         match self {
             Float::F32(s) => s.size.clone(),
             Float::F64(s) => s.size.clone(),
@@ -92,7 +92,7 @@ impl Float {
 pub struct PrimitiveSize<T>
 // TODO: find a trait bound for primitive types
 {
-    pub size: SizeType,
+    pub size: Size,
     _phantom: PhantomData<T>,
 }
 
@@ -100,7 +100,9 @@ impl<T> PrimitiveSize<T> {
     pub fn new() -> PrimitiveSize<T> {
         PrimitiveSize {
             // convert to number of bits
-            size: SizeType::Concrete((mem::size_of::<T>() * BYTE).try_into().unwrap()),
+            size: Size::UnitSize(Box::new(UnitSize::Concrete(
+                (mem::size_of::<T>() * BYTE).try_into().unwrap(),
+            ))),
             _phantom: PhantomData,
         }
     }
