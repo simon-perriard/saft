@@ -1,7 +1,6 @@
 use crate::{
     analysis_utils::{def_id_printer::*, extrinsics_getter::*, typesystem_helpers::*},
-    extrinsic_visitor::ExtrinsicVisitor,
-    typesystem_common::TySys,
+    extrinsic_visitor::ExtrinsicVisitor, typesystem_common::TySys,
 };
 use options::options::Options;
 use rustc_driver::Compilation;
@@ -31,9 +30,7 @@ impl SaftCallbacks {
             panic!("Pallet level dispatch function not found.\nFunction 'dispatch_bypass_filter' not found, are you running SAFT on the pallet level?");
         };
 
-        let mut ts = TySys::new();
-        gather_types(&tcx, &mut ts);
-        let ts = &ts;
+        let ts = gather_types(tcx, TySys::new());
 
         if let Some(single_function) = &self.options.single_func {
             println!("The following extrinsics will be analyzed :");
@@ -50,7 +47,7 @@ impl SaftCallbacks {
 
             if let Some(target_extrinsic_def_id) = target_extrinsic_def_id {
                 let mut extrinsic_visitor =
-                    ExtrinsicVisitor::new(tcx, ts, *target_extrinsic_def_id);
+                    ExtrinsicVisitor::new(tcx, &ts, *target_extrinsic_def_id);
                 println!("Analyzing {}...", extrinsic_visitor.get_cloned_fn_name());
                 extrinsic_visitor.visit_body();
             } else {
@@ -62,7 +59,7 @@ impl SaftCallbacks {
             print_extrinsics_names(tcx, Some(variant_ids));
 
             for extrinsics_def_id in extrinsics_def_ids {
-                let mut extrinsic_visitor = ExtrinsicVisitor::new(tcx, ts, extrinsics_def_id);
+                let mut extrinsic_visitor = ExtrinsicVisitor::new(tcx, &ts, extrinsics_def_id);
                 println!("Analyzing {}...", extrinsic_visitor.get_cloned_fn_name());
                 extrinsic_visitor.visit_body();
             }

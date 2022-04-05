@@ -26,7 +26,7 @@ impl Alias for PalletConfigConstantType {
     }
 }
 
-pub fn get_config_constant_types(tcx: &TyCtxt, ts: &mut TySys) {
+pub fn get_config_constant_types<'tcx, 'ts>(tcx: &'ts TyCtxt<'tcx>, ts: &'ts mut TySys<'ts>) {
     let constant_types_names = get_pallet_constant_types_name(tcx);
 
     for item in tcx.hir().items() {
@@ -57,6 +57,9 @@ pub fn get_config_constant_types(tcx: &TyCtxt, ts: &mut TySys) {
                             panic!("Trait bounds cannot be empty.");
                         }
 
+                        let ty_ty = tcx.type_of(id.def_id);
+                        println!("{}", ty_ty);
+
                         let trait_bound = if let rustc_hir::GenericBound::Trait(poly_trait_ref, _) = &generic_bounds[0]
                         && let rustc_hir::PolyTraitRef { trait_ref, .. } = poly_trait_ref {
                             get_value_type(tcx, trait_ref.path, ts).expect_trait()
@@ -72,10 +75,11 @@ pub fn get_config_constant_types(tcx: &TyCtxt, ts: &mut TySys) {
                         //println!("{:?}", constant_type);
                         //println!("");
 
-                        ts.add_type(TypeVariant::PalletConfigConstantType(constant_type), tcx)
+                        ts.add_type(ty_ty,TypeVariant::PalletConfigConstantType(constant_type))
                     }
                 }
             }
+            break;
         }
     }
 }

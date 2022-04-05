@@ -25,7 +25,7 @@ impl Alias for PalletDeclaredType {
     }
 }
 
-pub fn get_declared_types(tcx: &TyCtxt, ts: &mut TySys) {
+pub fn get_declared_types<'tcx, 'ts>(tcx: &'ts TyCtxt<'tcx>, ts: &'ts mut TySys<'ts>) {
     let storage_variables_names = get_storage_variables_names(tcx);
 
     // Start with outermost type declaration as they may be used
@@ -40,6 +40,10 @@ pub fn get_declared_types(tcx: &TyCtxt, ts: &mut TySys) {
 
         if let rustc_hir::ItemKind::TyAlias(ty, _) = kind {
             if !storage_variables_names.contains(&String::from(ident.as_str())) {
+
+                let ty_ty = tcx.type_of(*def_id);
+                println!("{}", ty_ty);
+
                 // Types declared outside #[pallet::config] and are not #[pallet::storage]
                 let alias_ident = Identifier {
                     def_id: def_id.to_def_id(),
@@ -51,9 +55,13 @@ pub fn get_declared_types(tcx: &TyCtxt, ts: &mut TySys) {
                 };
                 //println!("{:?}", standard_type);
                 //println!("");
-                ts.add_type(TypeVariant::PalletDeclaredType(standard_type), tcx)
+                ts.add_type(ty_ty, TypeVariant::PalletDeclaredType(standard_type))
             }
         } else if let rustc_hir::ItemKind::Struct(variant_data, _) = kind {
+
+            let ty_ty = tcx.type_of(*def_id);
+            println!("{}", ty_ty);
+
             let alias_ident = Identifier {
                 def_id: def_id.to_def_id(),
             };
@@ -74,7 +82,7 @@ pub fn get_declared_types(tcx: &TyCtxt, ts: &mut TySys) {
                         value: Type::Struct(Struct::new(members)),
                     };
 
-                    ts.add_type(TypeVariant::PalletDeclaredType(standard_type), tcx)
+                    ts.add_type(ty_ty, TypeVariant::PalletDeclaredType(standard_type))
                 }
                 rustc_hir::VariantData::Tuple(_, _) => (),
                 rustc_hir::VariantData::Unit(_) => (),

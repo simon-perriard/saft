@@ -11,6 +11,7 @@ extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_session;
 extern crate rustc_span;
+extern crate rustc_typeck;
 
 pub mod analysis_utils;
 pub mod callbacks;

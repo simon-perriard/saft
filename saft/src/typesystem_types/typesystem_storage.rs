@@ -88,8 +88,8 @@ pub fn get_storage_variables_names(tcx: &TyCtxt) -> Vec<String> {
 
 /// Find the pallet's storage variables, resolve their types and try to get
 /// their size. If size cannot be inferred, a symbol will be used instead.
-pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
-    let storage_variables_names = get_storage_variables_names(tcx);
+pub fn get_storage_variables<'ts>(tcx: TyCtxt<'ts>, mut ts: TySys<'ts>) -> TySys<'ts> {
+    let storage_variables_names = get_storage_variables_names(&tcx);
 
     for item in tcx.hir().items() {
         let rustc_hir::Item {
@@ -107,16 +107,20 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
             && let rustc_hir::PathSegment { args, .. } = segments[0]
             && let Some(rustc_hir::GenericArgs { args, .. }) = args
         {
+
+            let ty_ty: rustc_middle::ty::Ty = tcx.type_of(*def_id);
+            println!("{:?}", ty_ty);
+
             let kind = if let Res::Def(_, def_id) = res {
                 let ident = Identifier {
                     def_id: *def_id
                 };
-                match get_def_id_name_with_path(*tcx, *def_id).as_str() {
+                match get_def_id_name_with_path(tcx, *def_id).as_str() {
                         "frame_support::pallet_prelude::StorageValue" => {
                         if let rustc_hir::GenericArg::Type(ty) = &args[1] {
                             StorageKind::StorageValue {
                                 ident,
-                                value: explore(tcx, ty, ts).expect_type(),
+                                value: explore(&tcx, ty, &ts).expect_type(),
                             }
                             } else {unreachable!()}
                         },
@@ -124,7 +128,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
                         if let rustc_hir::GenericArg::Type(ty) = &args[3] {
                             StorageKind::StorageNMap {
                                 ident,
-                                value: explore(tcx, ty, ts).expect_type(),
+                                value: explore(&tcx, ty, &ts).expect_type(),
                                 //max_values: Some(explore(tcx, &args[6]))
                             }
                             } else {unreachable!()}
@@ -133,7 +137,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
                         if let rustc_hir::GenericArg::Type(ty) = &args[3] {
                             StorageKind::StorageNMap {
                                 ident,
-                                value: explore(tcx, ty, ts).expect_type(),
+                                value: explore(&tcx, ty, &ts).expect_type(),
                                 //max_values: Some(explore(tcx, &args[6]))
                             }
                             } else {unreachable!()}
@@ -143,7 +147,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
                         if let rustc_hir::GenericArg::Type(ty) = &args[3] {
                             StorageKind::StorageNMap {
                                 ident,
-                                value: explore(tcx, ty, ts).expect_type(),
+                                value: explore(&tcx, ty, &ts).expect_type(),
                                 //max_values: Some(explore(tcx, &args[6]))
                             }
                             } else {unreachable!()}
@@ -153,7 +157,7 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
                         if let rustc_hir::GenericArg::Type(ty) = &args[3] {
                             StorageKind::CountedStorageMap {
                                 ident,
-                                value: explore(tcx, ty, ts).expect_type(),
+                                value: explore(&tcx, ty, &ts).expect_type(),
                                 //max_values: Some(explore(tcx, &args[6]))
                             }
                             } else {unreachable!()}
@@ -169,7 +173,9 @@ pub fn get_storage_variables(tcx: &TyCtxt, ts: &mut TySys) {
             //println!("{:?}", storage_type);
             //println!("");
 
-            ts.add_type(TypeVariant::FrameStorageType(storage_type), tcx);
+            ts.add_type(ty_ty, TypeVariant::FrameStorageType(storage_type));
         }
     }
+
+    ts
 }

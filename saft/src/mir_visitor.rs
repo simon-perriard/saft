@@ -1,3 +1,4 @@
+use crate::analysis_utils::def_id_printer::get_def_id_name_with_path;
 use crate::extrinsic_visitor::ExtrinsicVisitor;
 use crate::storage_actions::apply_r_w;
 use crate::weights::Weights;
@@ -26,8 +27,8 @@ impl Default for Context {
     }
 }
 
-pub struct MirVisitor<'tcx, 'extrinsic, 'analysis> {
-    pub ev: &'analysis ExtrinsicVisitor<'tcx, 'extrinsic>,
+pub struct MirVisitor<'tcx, 'ts, 'extrinsic, 'analysis> {
+    pub ev: &'analysis ExtrinsicVisitor<'tcx, 'ts, 'extrinsic>,
     already_visited_bodies: HashTrieSet<DefId>,
     pub bodies_weights: HashTrieMap<DefId, Weights>,
     already_visited_blocks: HashTrieMap<DefId, HashTrieSet<BasicBlock>>,
@@ -35,10 +36,10 @@ pub struct MirVisitor<'tcx, 'extrinsic, 'analysis> {
     pub context: Context,
 }
 
-impl<'tcx, 'extrinsic, 'analysis> MirVisitor<'tcx, 'extrinsic, 'analysis> {
+impl<'tcx, 'ts, 'extrinsic, 'analysis> MirVisitor<'tcx, 'ts, 'extrinsic, 'analysis> {
     pub fn new(
-        ev: &'analysis ExtrinsicVisitor<'tcx, 'extrinsic>,
-    ) -> MirVisitor<'tcx, 'extrinsic, 'analysis> {
+        ev: &'analysis ExtrinsicVisitor<'tcx, 'ts, 'extrinsic>,
+    ) -> MirVisitor<'tcx, 'ts, 'extrinsic, 'analysis> {
         MirVisitor {
             ev,
             already_visited_bodies: HashTrieSet::new(),
@@ -68,8 +69,8 @@ impl<'tcx, 'extrinsic, 'analysis> MirVisitor<'tcx, 'extrinsic, 'analysis> {
     }
 }
 
-pub struct MirBodyVisitor<'tcx, 'extrinsic, 'analysis, 'body> {
-    pub mv: &'body mut MirVisitor<'tcx, 'extrinsic, 'analysis>,
+pub struct MirBodyVisitor<'tcx, 'ts, 'extrinsic, 'analysis, 'body> {
+    pub mv: &'body mut MirVisitor<'tcx, 'ts, 'extrinsic, 'analysis>,
     pub def_id: &'body DefId,
     pub body: &'body Body<'extrinsic>,
     current_basic_block: Option<BasicBlock>,
@@ -77,7 +78,7 @@ pub struct MirBodyVisitor<'tcx, 'extrinsic, 'analysis, 'body> {
     pub is_bb_being_recursively_visited: BitSet<BasicBlock>,
 }
 
-impl<'tcx, 'extrinsic, 'analysis, 'body> MirBodyVisitor<'tcx, 'extrinsic, 'analysis, 'body> {
+impl<'tcx, 'ts, 'extrinsic, 'analysis, 'body> MirBodyVisitor<'tcx, 'ts, 'extrinsic, 'analysis, 'body> {
     pub fn start_visit(&mut self) {
         self.visit_body(self.body);
     }
@@ -106,9 +107,17 @@ impl<'tcx, 'extrinsic, 'analysis, 'body> MirBodyVisitor<'tcx, 'extrinsic, 'analy
     }
 }
 
-impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
+impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, '_, 'body> {
     fn visit_body(&mut self, body: &Body<'body>) {
         if !self.mv.already_visited_blocks.contains_key(self.def_id) {
+
+            /*let Body {user_type_annotations, ..} = body;
+            for annot in user_type_annotations {
+                println!("{}, {:?}", get_def_id_name_with_path(self.mv.ev.tcx, *self.def_id), annot);
+            }
+            println!("{:?}", body.return_ty());
+            println!("");*/
+
             // Initialize set of visited blocks for the current body
             self.mv
                 .already_visited_blocks
@@ -153,7 +162,7 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
         // continue analysis on function calls
         let opt_def_id = match ty.kind() {
             TyKind::FnDef(def_id, _) => Some(def_id),
-            TyKind::Closure(def_id, _) => Some(def_id),
+            TyKind::Closure(def_id, _) => { get_def_id_name_with_path(tcx, *def_id) ;Some(def_id)},
             _ => None,
         };
 
@@ -195,12 +204,24 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
     }
 
     fn visit_terminator(&mut self, terminator: &Terminator<'body>, location: Location) {
+        match &terminator.kind {
+            rustc_middle::mir::TerminatorKind::Call{
+                func,
+                args,
+                destination,
+                cleanup: _,
+                from_hir_call: _,
+                fn_span: _} => {
+                //println!("{:?}", func);
+            }
+            _ => ()
+        }
         self.super_terminator(terminator, location);
         self.close_bb_analysis();
     }
 }
 
-impl<'tcx, 'extrinsic, 'analysis, 'body> MirBodyVisitor<'tcx, 'extrinsic, 'analysis, 'body> {
+impl<'tcx, 'ts, 'extrinsic, 'analysis, 'body> MirBodyVisitor<'tcx, 'ts, 'extrinsic, 'analysis, 'body> {
     fn traverse_and_aggregate_weights(&mut self) -> Weights {
         self.visit_basic_block_data_recursive(&START_BLOCK)
     }

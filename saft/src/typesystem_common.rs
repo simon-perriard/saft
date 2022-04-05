@@ -266,29 +266,40 @@ impl Alias for TypeVariant {
 
 /// Struct containing information about the types
 /// declared in the pallet
-pub struct TySys {
-    pub tsm: HashTrieMap<String, TypeVariant>,
+#[derive(Clone,Debug)]
+pub struct TySys<'tcx> {
+    pub tsm: HashTrieMap<rustc_middle::ty::Ty<'tcx>, TypeVariant>,
 }
 
-impl TySys {
-    pub fn new() -> TySys {
+impl<'tcx> TySys<'tcx> {
+    pub fn new() -> TySys<'tcx> {
         TySys {
             tsm: HashTrieMap::new(),
         }
     }
 
-    pub fn add_type(&mut self, ty: TypeVariant, tcx: &TyCtxt) {
-        self.tsm.insert_mut(ty.get_name_full(tcx), ty);
+    pub fn add_type(&mut self, key: rustc_middle::ty::Ty<'tcx>, ty: TypeVariant) {
+        self.tsm.insert_mut(key, ty);
+    }
+
+    pub fn list_types(&self) {
+        for t in self.tsm.keys() {
+            println!("{}", t);
+        }
     }
 }
 
-impl Default for TySys {
+impl Default for TySys<'_> {
     fn default() -> Self {
         Self::new()
     }
 }
 
 pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> TraitOrType {
+
+    let ty_ty = rustc_typeck::hir_ty_to_ty(*tcx, ty);
+    println!("{}", ty_ty);
+
     match &ty.kind {
         rustc_hir::TyKind::Path(qpath) => {
             match qpath {
@@ -303,10 +314,8 @@ pub fn explore(tcx: &TyCtxt, ty: &rustc_hir::Ty, ts: &TySys) -> TraitOrType {
                         unreachable!();
                     };
 
-                    // Check whether the symbol has been resolved before
-                    let key = super_type.to_owned() + "::" + segment.ident.as_str();
-                    if ts.tsm.contains_key(&key) {
-                        match ts.tsm.get(&key).unwrap() {
+                    if ts.tsm.contains_key(&ty_ty) {
+                        match ts.tsm.get(&ty_ty).unwrap() {
                             TypeVariant::PalletDeclaredType(t) => {
                                 TraitOrType::Type(t.value.clone())
                             }
@@ -398,6 +407,8 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> Trait
 
     match res {
         Res::Def(def_kind, def_id) => {
+            let ty_ty = tcx.type_of(def_id);
+            println!("{}", ty_ty);
             match get_def_id_name_with_path(*tcx, *def_id).as_str() {
                 // BoundedVec is a standard type in FRAME:
                 // https://docs.substrate.io/rustdocs/latest/frame_support/storage/bounded_vec/struct.BoundedVec.html
@@ -434,9 +445,8 @@ pub fn get_value_type(tcx: &TyCtxt, path: &rustc_hir::Path, ts: &TySys) -> Trait
                 _ => {
                     //println!("{}", get_def_id_name_with_path(*tcx, *def_id).as_str());
                     // Treat every unkown as symbol, later work will maybe resolve those
-                    let key = get_def_id_name_with_path(*tcx, *def_id);
-                    if ts.tsm.contains_key(&key) {
-                        match ts.tsm.get(&key).unwrap() {
+                    if ts.tsm.contains_key(&ty_ty) {
+                        match ts.tsm.get(&ty_ty).unwrap() {
                             TypeVariant::PalletDeclaredType(t) => {
                                 TraitOrType::Type(t.value.clone())
                             }
