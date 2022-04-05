@@ -111,12 +111,12 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, '_, 'body> {
     fn visit_body(&mut self, body: &Body<'body>) {
         if !self.mv.already_visited_blocks.contains_key(self.def_id) {
 
-            /*let Body {user_type_annotations, ..} = body;
+            let Body {user_type_annotations, ..} = body;
             for annot in user_type_annotations {
                 println!("{}, {:?}", get_def_id_name_with_path(self.mv.ev.tcx, *self.def_id), annot);
             }
             println!("{:?}", body.return_ty());
-            println!("");*/
+            println!("");
 
             // Initialize set of visited blocks for the current body
             self.mv
@@ -204,18 +204,6 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, '_, 'body> {
     }
 
     fn visit_terminator(&mut self, terminator: &Terminator<'body>, location: Location) {
-        match &terminator.kind {
-            rustc_middle::mir::TerminatorKind::Call{
-                func,
-                args,
-                destination,
-                cleanup: _,
-                from_hir_call: _,
-                fn_span: _} => {
-                //println!("{:?}", func);
-            }
-            _ => ()
-        }
         self.super_terminator(terminator, location);
         self.close_bb_analysis();
     }
