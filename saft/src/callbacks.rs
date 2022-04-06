@@ -1,5 +1,5 @@
 use crate::{
-    analysis_utils::def_id_printer::*, extrinsic_visitor::ExtrinsicVisitor, pallet::Pallet,
+    analysis_utils::def_id_printer::*, dispatchable_visitor::DispatchableVisitor, pallet::Pallet,
 };
 use options::options::Options;
 use rustc_driver::Compilation;
@@ -20,35 +20,35 @@ impl SaftCallbacks {
         let pallet = Pallet::new(tcx);
 
         if let Some(single_function) = &self.options.single_func {
-            println!("The following extrinsics will be analyzed :");
+            println!("The following dispatchables will be analyzed :");
             println!("{}", single_function);
 
-            let mut target_extrinsic_def_id = None;
+            let mut target_dispatchable_def_id = None;
 
-            for id in pallet.functions.keys() {
+            for id in pallet.dispatchables.keys() {
                 if get_def_id_name(tcx, *id) == single_function.trim() {
-                    target_extrinsic_def_id = Some(id);
+                    target_dispatchable_def_id = Some(id);
                     break;
                 }
             }
 
-            if let Some(target_extrinsic_def_id) = target_extrinsic_def_id {
-                let mut extrinsic_visitor =
-                    ExtrinsicVisitor::new(tcx, &pallet, *target_extrinsic_def_id);
-                println!("Analyzing {}...", extrinsic_visitor.get_cloned_fn_name());
-                extrinsic_visitor.visit_body();
+            if let Some(target_dispatchable_def_id) = target_dispatchable_def_id {
+                let mut dispatchable_visitor =
+                    DispatchableVisitor::new(tcx, &pallet, *target_dispatchable_def_id);
+                println!("Analyzing {}...", dispatchable_visitor.get_fn_name());
+                dispatchable_visitor.visit_body();
             } else {
                 println!("Function {} not found.", single_function);
                 std::process::exit(1);
             }
         } else {
-            /*println!("The following extrinsics will be analyzed :");
-            print_extrinsics_names(tcx, pallet.functions);*/
+            /*println!("The following dispatchables will be analyzed :");
+            print_dispatchables_names(tcx, pallet.functions);*/
 
-            for extrinsics_def_id in pallet.functions.keys() {
-                let mut extrinsic_visitor = ExtrinsicVisitor::new(tcx, &pallet, *extrinsics_def_id);
-                println!("Analyzing {}...", extrinsic_visitor.get_cloned_fn_name());
-                extrinsic_visitor.visit_body();
+            for dispatchables_def_id in pallet.dispatchables.keys() {
+                let mut dispatchable_visitor = DispatchableVisitor::new(tcx, &pallet, *dispatchables_def_id);
+                println!("Analyzing {}...", dispatchable_visitor.get_fn_name());
+                dispatchable_visitor.visit_body();
             }
         }
     }

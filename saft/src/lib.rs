@@ -15,7 +15,7 @@ extern crate rustc_typeck;
 
 pub mod analysis_utils;
 pub mod callbacks;
-pub mod extrinsic_visitor;
+pub mod dispatchable_visitor;
 pub mod mir_visitor;
 pub mod pallet;
 pub mod size_language;

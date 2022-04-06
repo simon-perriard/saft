@@ -69,6 +69,4 @@ impl Type {
             _ => unimplemented!(),
         }
     }
-
-    pub fn from_hir_ty() {}
 }

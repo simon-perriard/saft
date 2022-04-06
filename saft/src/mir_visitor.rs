@@ -1,5 +1,4 @@
-use crate::analysis_utils::def_id_printer::get_def_id_name_with_path;
-use crate::extrinsic_visitor::ExtrinsicVisitor;
+use crate::dispatchable_visitor::DispatchableVisitor;
 use crate::storage_actions::apply_r_w;
 use crate::weights::Weights;
 use rpds::{HashTrieMap, HashTrieSet};
@@ -28,7 +27,7 @@ impl Default for Context {
 }
 
 pub struct MirVisitor<'tcx, 'pallet, 'analysis> {
-    pub ev: &'analysis ExtrinsicVisitor<'tcx, 'pallet>,
+    pub ev: &'analysis DispatchableVisitor<'tcx, 'pallet>,
     already_visited_bodies: HashTrieSet<DefId>,
     pub bodies_weights: HashTrieMap<DefId, Weights>,
     already_visited_blocks: HashTrieMap<DefId, HashTrieSet<BasicBlock>>,
@@ -38,7 +37,7 @@ pub struct MirVisitor<'tcx, 'pallet, 'analysis> {
 
 impl<'tcx, 'pallet, 'analysis> MirVisitor<'tcx, 'pallet, 'analysis> {
     pub fn new(
-        ev: &'analysis ExtrinsicVisitor<'tcx, 'pallet>,
+        ev: &'analysis DispatchableVisitor<'tcx, 'pallet>,
     ) -> MirVisitor<'tcx, 'pallet, 'analysis> {
         MirVisitor {
             ev,
@@ -155,7 +154,7 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
         let opt_def_id = match ty.kind() {
             TyKind::FnDef(def_id, _) => Some(def_id),
             TyKind::Closure(def_id, _) => {
-                get_def_id_name_with_path(tcx, *def_id);
+                tcx.def_path_str(*def_id);
                 Some(def_id)
             }
             _ => None,

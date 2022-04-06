@@ -5,24 +5,20 @@ use std::io::Write;
 
 use crate::{analysis_utils::def_id_printer::*, mir_visitor::MirVisitor, pallet::Pallet};
 
-pub struct ExtrinsicVisitor<'tcx, 'pallet> {
-    pub name: String,
-    pub full_path: String,
+pub struct DispatchableVisitor<'tcx, 'pallet> {
     pub def_id: DefId,
     pub tcx: TyCtxt<'tcx>,
     pub mir: &'tcx Body<'tcx>,
     pub pallet: &'pallet Pallet,
 }
 
-impl<'tcx, 'pallet> ExtrinsicVisitor<'tcx, 'pallet> {
+impl<'tcx, 'pallet> DispatchableVisitor<'tcx, 'pallet> {
     pub fn new(tcx: TyCtxt<'tcx>, pallet: &'pallet Pallet, def_id: DefId) -> Self {
         let id = rustc_middle::ty::WithOptConstParam::unknown(def_id);
         let def = rustc_middle::ty::InstanceDef::Item(id);
         let mir = tcx.instance_mir(def);
 
-        ExtrinsicVisitor {
-            name: get_def_id_name(tcx, def_id),
-            full_path: get_def_id_name_with_path(tcx, def_id),
+        DispatchableVisitor {
             def_id,
             tcx,
             mir,
@@ -37,12 +33,12 @@ impl<'tcx, 'pallet> ExtrinsicVisitor<'tcx, 'pallet> {
         let _ = stdout.flush();
     }
 
-    pub fn get_cloned_fn_name(&self) -> String {
-        self.name.clone()
+    pub fn get_fn_name(&self) -> String {
+        get_def_id_name(self.tcx, self.def_id)
     }
 
-    pub fn get_cloned_fn_name_with_path(&self) -> String {
-        self.full_path.clone()
+    pub fn get_fn_name_with_path(&self) -> String {
+        self.tcx.def_path_str(self.def_id)
     }
 
     pub fn visit_body(&mut self) {
