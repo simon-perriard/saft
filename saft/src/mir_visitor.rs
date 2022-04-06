@@ -1,3 +1,4 @@
+use crate::analysis_utils::def_id_printer::get_def_id_name_with_path;
 use crate::extrinsic_visitor::ExtrinsicVisitor;
 use crate::storage_actions::apply_r_w;
 use crate::weights::Weights;
@@ -153,7 +154,10 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
         // continue analysis on function calls
         let opt_def_id = match ty.kind() {
             TyKind::FnDef(def_id, _) => Some(def_id),
-            TyKind::Closure(def_id, _) => Some(def_id),
+            TyKind::Closure(def_id, _) => {
+                get_def_id_name_with_path(tcx, *def_id);
+                Some(def_id)
+            }
             _ => None,
         };
 

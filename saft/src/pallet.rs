@@ -56,7 +56,7 @@ impl Pallet {
     }
 }
 
-fn get_field_names<'tcx>(tcx: TyCtxt<'tcx>) -> HashSet<&'tcx str> {
+fn get_field_names(tcx: TyCtxt) -> HashSet<&str> {
     tcx.hir()
         .items()
         .filter_map(|item| {
@@ -119,7 +119,6 @@ fn get_fields(tcx: TyCtxt) -> HashMap<DefId, Field> {
                 "frame_support::pallet_prelude::StorageMap" => {
                 if let rustc_hir::GenericArg::Type(key_hir_ty) = &args[2]
                 && let rustc_hir::GenericArg::Type(value_hir_ty) = &args[3] {
-                    
                     fields.insert(alias_def_id, Field {
                         def_id: alias_def_id,
                         kind: StorageKind::StorageMap {
@@ -133,7 +132,6 @@ fn get_fields(tcx: TyCtxt) -> HashMap<DefId, Field> {
                 if let rustc_hir::GenericArg::Type(key1_hir_ty) = &args[2]
                 && let rustc_hir::GenericArg::Type(key2_hir_ty) = &args[4]
                 && let rustc_hir::GenericArg::Type(value_hir_ty) = &args[5] {
-                    
                     fields.insert(alias_def_id, Field {
                         def_id: alias_def_id,
                         kind: StorageKind::StorageDoubleMap {
@@ -147,7 +145,6 @@ fn get_fields(tcx: TyCtxt) -> HashMap<DefId, Field> {
                 "frame_support::pallet_prelude::StorageNMap" => {
                     if let rustc_hir::GenericArg::Type(key_hir_ty) = &args[1]
                     && let rustc_hir::GenericArg::Type(value_hir_ty) = &args[2] {
-                        
                         fields.insert(alias_def_id, Field {
                             def_id: alias_def_id,
                             kind: StorageKind::StorageNMap {
@@ -160,7 +157,6 @@ fn get_fields(tcx: TyCtxt) -> HashMap<DefId, Field> {
                 "frame_support::pallet_prelude::CountedStorageMap" => {
                     if let rustc_hir::GenericArg::Type(key_hir_ty) = &args[2]
                     && let rustc_hir::GenericArg::Type(value_hir_ty) = &args[3] {
-                        
                         fields.insert(alias_def_id, Field {
                             def_id: alias_def_id,
                             kind: StorageKind::CountedStorageMap {
@@ -193,7 +189,12 @@ fn get_functions(tcx: TyCtxt) -> HashMap<DefId, Function> {
     let mut functions = HashMap::new();
 
     for function_def_id in extrinsics_def_ids {
-        functions.insert(function_def_id, Function{def_id: function_def_id});
+        functions.insert(
+            function_def_id,
+            Function {
+                def_id: function_def_id,
+            },
+        );
     }
 
     functions
