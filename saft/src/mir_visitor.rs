@@ -26,8 +26,8 @@ impl Default for Context {
     }
 }
 
-pub struct MirVisitor<'tcx, 'extrinsic, 'analysis> {
-    pub ev: &'analysis ExtrinsicVisitor<'tcx, 'extrinsic>,
+pub struct MirVisitor<'tcx, 'pallet, 'analysis> {
+    pub ev: &'analysis ExtrinsicVisitor<'tcx, 'pallet>,
     already_visited_bodies: HashTrieSet<DefId>,
     pub bodies_weights: HashTrieMap<DefId, Weights>,
     already_visited_blocks: HashTrieMap<DefId, HashTrieSet<BasicBlock>>,
@@ -35,10 +35,10 @@ pub struct MirVisitor<'tcx, 'extrinsic, 'analysis> {
     pub context: Context,
 }
 
-impl<'tcx, 'extrinsic, 'analysis> MirVisitor<'tcx, 'extrinsic, 'analysis> {
+impl<'tcx, 'pallet, 'analysis> MirVisitor<'tcx, 'pallet, 'analysis> {
     pub fn new(
-        ev: &'analysis ExtrinsicVisitor<'tcx, 'extrinsic>,
-    ) -> MirVisitor<'tcx, 'extrinsic, 'analysis> {
+        ev: &'analysis ExtrinsicVisitor<'tcx, 'pallet>,
+    ) -> MirVisitor<'tcx, 'pallet, 'analysis> {
         MirVisitor {
             ev,
             already_visited_bodies: HashTrieSet::new(),
@@ -68,16 +68,16 @@ impl<'tcx, 'extrinsic, 'analysis> MirVisitor<'tcx, 'extrinsic, 'analysis> {
     }
 }
 
-pub struct MirBodyVisitor<'tcx, 'extrinsic, 'analysis, 'body> {
-    pub mv: &'body mut MirVisitor<'tcx, 'extrinsic, 'analysis>,
+pub struct MirBodyVisitor<'tcx, 'pallet, 'analysis, 'body> {
+    pub mv: &'body mut MirVisitor<'tcx, 'pallet, 'analysis>,
     pub def_id: &'body DefId,
-    pub body: &'body Body<'extrinsic>,
+    pub body: &'body Body<'tcx>,
     current_basic_block: Option<BasicBlock>,
     pub current_bb_context: Context,
     pub is_bb_being_recursively_visited: BitSet<BasicBlock>,
 }
 
-impl<'tcx, 'extrinsic, 'analysis, 'body> MirBodyVisitor<'tcx, 'extrinsic, 'analysis, 'body> {
+impl<'tcx, 'pallet, 'analysis, 'body> MirBodyVisitor<'tcx, 'pallet, 'analysis, 'body> {
     pub fn start_visit(&mut self) {
         self.visit_body(self.body);
     }
@@ -200,7 +200,7 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
     }
 }
 
-impl<'tcx, 'extrinsic, 'analysis, 'body> MirBodyVisitor<'tcx, 'extrinsic, 'analysis, 'body> {
+impl<'tcx, 'pallet, 'analysis, 'body> MirBodyVisitor<'tcx, 'pallet, 'analysis, 'body> {
     fn traverse_and_aggregate_weights(&mut self) -> Weights {
         self.visit_basic_block_data_recursive(&START_BLOCK)
     }

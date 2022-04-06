@@ -11,13 +11,14 @@ extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_session;
 extern crate rustc_span;
+extern crate rustc_typeck;
 
 pub mod analysis_utils;
 pub mod callbacks;
 pub mod extrinsic_visitor;
 pub mod mir_visitor;
+pub mod pallet;
 pub mod size_language;
 pub mod storage_actions;
-pub mod typesystem_common;
-pub mod typesystem_types;
+pub mod types;
 pub mod weights;
