@@ -1,6 +1,6 @@
-use crate::analysis_utils::extrinsics_getter::get_call_enum_variants_hir_ids;
-use crate::analysis_utils::extrinsics_getter::get_dispatch_bypass_filter_local_def_id;
-use crate::analysis_utils::extrinsics_getter::get_extrinsics_fn_ids;
+use crate::analysis_utils::callable_functions_getter::get_call_enum_variants_hir_ids;
+use crate::analysis_utils::callable_functions_getter::get_dispatch_bypass_filter_local_def_id;
+use crate::analysis_utils::callable_functions_getter::get_dispatchable_def_ids;
 use crate::types::Type;
 use rustc_hir::def::Res;
 use rustc_middle::ty::TyCtxt;
@@ -8,13 +8,13 @@ use rustc_span::def_id::DefId;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-pub struct Function {
+pub struct Dispatchable {
     pub def_id: DefId,
 }
 
 pub struct Pallet {
     pub fields: HashMap<DefId, Field>,
-    pub functions: HashMap<DefId, Function>,
+    pub dispatchables: HashMap<DefId, Dispatchable>,
 }
 
 #[derive(Debug, Clone)]
@@ -51,7 +51,7 @@ impl Pallet {
     pub fn new(tcx: TyCtxt) -> Self {
         Pallet {
             fields: get_fields(tcx),
-            functions: get_functions(tcx),
+            dispatchables: get_dispatchables(tcx),
         }
     }
 }
@@ -173,29 +173,29 @@ fn get_fields(tcx: TyCtxt) -> HashMap<DefId, Field> {
     fields
 }
 
-fn get_functions(tcx: TyCtxt) -> HashMap<DefId, Function> {
+fn get_dispatchables(tcx: TyCtxt) -> HashMap<DefId, Dispatchable> {
     // Retrieve the variants of the Call enum, aka names of extrinsics
     let variant_ids = get_call_enum_variants_hir_ids(tcx);
     // Retrieve local def id of the 'dispatch_bypass_filter' function, aka the function that
     // dispatches the calls at the pallet level
     let dispatch_local_def_id = get_dispatch_bypass_filter_local_def_id(tcx);
 
-    let extrinsics_def_ids = if let Some(dispatch_local_def_id) = dispatch_local_def_id {
-        get_extrinsics_fn_ids(tcx, dispatch_local_def_id, &variant_ids)
+    let dispatchable_def_ids = if let Some(dispatch_local_def_id) = dispatch_local_def_id {
+        get_dispatchable_def_ids(tcx, dispatch_local_def_id, &variant_ids)
     } else {
         panic!("Pallet level dispatch function not found.\nFunction 'dispatch_bypass_filter' not found, are you running SAFT on the pallet level?");
     };
 
-    let mut functions = HashMap::new();
+    let mut dispatchables = HashMap::new();
 
-    for function_def_id in extrinsics_def_ids {
-        functions.insert(
-            function_def_id,
-            Function {
-                def_id: function_def_id,
+    for dispatchable_def_id in dispatchable_def_ids {
+        dispatchables.insert(
+            dispatchable_def_id,
+            Dispatchable {
+                def_id: dispatchable_def_id,
             },
         );
     }
 
-    functions
+    dispatchables
 }

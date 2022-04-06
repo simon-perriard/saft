@@ -217,7 +217,7 @@ impl StorageMapActions {
 }
 
 pub fn apply_r_w(tcx: TyCtxt, def_id: DefId, context: &mut Context) {
-    let fn_full_name = get_def_id_name_with_path(tcx, def_id);
+    let fn_full_name = tcx.def_path_str(def_id);
     let fn_short_name = get_def_id_name(tcx, def_id);
 
     let mut weights = Weights::default();
