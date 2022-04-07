@@ -93,7 +93,7 @@ pub fn extract_juice<'tcx>(_compiler: &rustc_interface::interface::Compiler, tcx
 
         for dispatchables_def_id in pallet.dispatchables.keys() {
             let mut dispatchable_visitor = dispatchable_visitor::DispatchableVisitor::new(tcx, &pallet, *dispatchables_def_id);
-            //println!("Analyzing {}...", dispatchable_visitor.get_fn_name());
+            println!("Analyzing {}...", dispatchable_visitor.get_fn_name());
             dispatchable_visitor.visit_body();
         }
     //}

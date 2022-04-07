@@ -57,7 +57,7 @@ pub mod callable_functions_getter {
 
         for id in ids_lst {
             if let Some(ident) = tcx.hir().get(*id).ident() {
-                //println!("{}", ident.as_str());
+                println!("{}", ident.as_str());
             }
         }
     }

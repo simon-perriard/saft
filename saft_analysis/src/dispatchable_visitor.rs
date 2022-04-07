@@ -46,7 +46,7 @@ impl<'tcx, 'pallet> DispatchableVisitor<'tcx, 'pallet> {
         let mut mir_visitor = MirVisitor::new(self);
         mir_visitor.start_visit();
 
-        let weights = mir_visitor.bodies_weights.get(&self.def_id).unwrap();
+        //let weights = mir_visitor.bodies_weights.get(&self.def_id).unwrap();
         //println!("{}", weights);
     }
 }
