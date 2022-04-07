@@ -13,7 +13,7 @@ jobs:
           name: Compile, build and install
           command: |
             ./scripts/setup.sh
-            cargo install --path ./meta
+            cargo install --path .
       - run:
           name: Run unit tests
           command: |
