@@ -106,10 +106,10 @@ pub mod callable_functions_getter {
                     if let Some(def_id) = typeck_results.qpath_res(qpath, *hir_id).opt_def_id() {
                         extrinsics_fn_ids.push(def_id);
                     } else {
-                        //println!("function '{}' not found", match_target.as_str());
+                        println!("function '{}' not found", match_target.as_str());
                     }
                 } else {
-                    //println!("function '{}' not found", match_target.as_str());
+                    println!("function '{}' not found", match_target.as_str());
                 }
             }
         }
