@@ -10,7 +10,8 @@ use rustc_interface::{interface, Queries};
 use std::{
     env,
     fmt::{Debug, Formatter, Result},
-    process::exit, path::Path,
+    path::Path,
+    process::exit,
 };
 
 #[derive(Default, Clone)]
@@ -46,15 +47,13 @@ impl rustc_driver::Callbacks for SaftCallbacks {
     }
 }
 
-fn get_sysroot() -> String{
+fn get_sysroot() -> String {
     let home = option_env!("RUSTUP_HOME");
     let toolchain = option_env!("RUSTUP_TOOLCHAIN");
     match (home, toolchain) {
         (Some(home), Some(toolchain)) => format!("{}/toolchains/{}", home, toolchain),
         _ => option_env!("RUST_SYSROOT")
-            .expect(
-                "Could not find sysroot.",
-            )
+            .expect("Could not find sysroot.")
             .to_owned(),
     }
 }
@@ -63,7 +62,6 @@ fn main() {
     rustc_driver::init_rustc_env_logger();
     rustc_driver::install_ice_hook();
     exit(rustc_driver::catch_with_exit_code(move || {
-
         let mut args: Vec<String> = env::args().collect();
 
         // We will invoke the compiler programmatically, so we only need what's after the 'rustc'
@@ -75,16 +73,6 @@ fn main() {
         if !args.iter().any(|arg| arg.starts_with(&sysroot)) {
             args.push(sysroot);
             args.push(get_sysroot());
-        }
-
-        let always_encode_mir: String = "always-encode-mir".into();
-        if !args
-            .iter()
-            .any(|arg| arg.ends_with(&always_encode_mir))
-        {
-            // Tell compiler to emit MIR into crate for every function with a body.
-            args.push("-Z".into());
-            args.push(always_encode_mir);
         }
 
         rustc_driver::RunCompiler::new(&args, &mut SaftCallbacks::new()).run()
