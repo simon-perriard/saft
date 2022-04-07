@@ -7,7 +7,6 @@ use std::{
 struct CargoSaftCmd {
     cargo_subcmd: &'static str,
     args: Vec<String>,
-    saft_args: Vec<String>,
 }
 
 impl CargoSaftCmd {
@@ -17,15 +16,9 @@ impl CargoSaftCmd {
     {
         let cargo_subcmd = "check";
         let mut args = Vec::new();
-        let mut saft_args = Vec::new();
 
         while let Some(arg) = old_args.next() {
             match arg.as_str() {
-                "--single_dispatchable" => {
-                    let dispatchable_name = old_args.next().expect("Missing dispatchable name");
-                    saft_args.push(arg + "=" + &dispatchable_name);
-                    continue;
-                }
                 "--" => break,
                 _ => {}
             }
@@ -38,7 +31,6 @@ impl CargoSaftCmd {
         Self {
             cargo_subcmd,
             args,
-            saft_args,
         }
     }
 
@@ -56,14 +48,8 @@ impl CargoSaftCmd {
 
     fn build_command(self) -> Command {
         let mut cmd = Command::new("cargo");
-        let saft_args: String = self
-            .saft_args
-            .iter()
-            .map(|opt| format!("{}{}", opt, saft_analysis::SAFT_OPT_SEPARATOR))
-            .collect();
 
-        cmd.env("RUSTC_WORKSPACE_WRAPPER", Self::analyzer_path())
-            .env("SAFT_OPTIONS", saft_args)
+        cmd.env("RUSTC_WRAPPER", Self::analyzer_path())
             .arg(self.cargo_subcmd)
             .args(self.args);
 
@@ -76,8 +62,6 @@ where
     I: Iterator<Item = String>,
 {
     let mut cmd = CargoSaftCmd::new(old_args).build_command();
-
-    println!("{:?}", cmd);
 
     let exit_status = cmd
         .spawn()
@@ -94,6 +78,6 @@ where
 
 pub fn main() {
     if let Err(code) = process(env::args().skip(2)) {
-        process::exit(code);
+        process::exit(code)
     }
 }

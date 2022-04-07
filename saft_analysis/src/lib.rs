@@ -24,10 +24,10 @@ pub const SAFT_OPT_SEPARATOR: &str = "__OPT_SEPARATOR__";
 
 #[derive(Default,Clone)]
 pub struct SaftOptions {
-    pub single_dispatchable: Option<String>,
+    //pub single_dispatchable: Option<String>,
 }
 
-pub fn parse_options(options: Option<String>) -> SaftOptions {
+/*pub fn parse_options(options: Option<String>) -> SaftOptions {
 
     if let Some(options) = options {
         let mut single_dispatchable = None;
@@ -58,14 +58,14 @@ pub fn parse_options(options: Option<String>) -> SaftOptions {
     } else {
         return SaftOptions::default();
     }
-}
+}*/
 
-pub fn extract_juice<'tcx>(_compiler: &rustc_interface::interface::Compiler, tcx: rustc_middle::ty::TyCtxt<'tcx>, options: SaftOptions) {
+pub fn extract_juice<'tcx>(_compiler: &rustc_interface::interface::Compiler, tcx: rustc_middle::ty::TyCtxt<'tcx>) {
 
     // Extract pallet
     let pallet = pallet::Pallet::new(tcx);
 
-    if let Some(single_function) = options.single_dispatchable {
+    /*if let Some(single_function) = options.single_dispatchable {
         println!("The following dispatchables will be analyzed :");
         println!("{}", single_function);
 
@@ -87,14 +87,14 @@ pub fn extract_juice<'tcx>(_compiler: &rustc_interface::interface::Compiler, tcx
             println!("Function {} not found.", single_function);
             std::process::exit(1);
         }
-    } else {
+    } else {*/
         /*println!("The following dispatchables will be analyzed :");
         print_dispatchables_names(tcx, pallet.functions);*/
 
         for dispatchables_def_id in pallet.dispatchables.keys() {
             let mut dispatchable_visitor = dispatchable_visitor::DispatchableVisitor::new(tcx, &pallet, *dispatchables_def_id);
-            println!("Analyzing {}...", dispatchable_visitor.get_fn_name());
+            //println!("Analyzing {}...", dispatchable_visitor.get_fn_name());
             dispatchable_visitor.visit_body();
         }
-    }
+    //}
 }

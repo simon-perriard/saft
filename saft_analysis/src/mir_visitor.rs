@@ -189,7 +189,7 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
                 if let Some(weights) = weights {
                     self.current_bb_context.weights += *weights;
                 } else {
-                    println!("RECURSION DETECTED, RESULT WILL PROBABLY BE WRONG");
+                    //println!("RECURSION DETECTED, RESULT WILL PROBABLY BE WRONG");
                 }
             } else {
                 apply_r_w(tcx, *def_id, &mut self.current_bb_context);
@@ -224,7 +224,7 @@ impl<'tcx, 'pallet, 'analysis, 'body> MirBodyVisitor<'tcx, 'pallet, 'analysis, '
 
         if let Some(terminator) = terminator {
             if self.is_bb_being_recursively_visited.contains(*block) {
-                println!("LOOP DETECTED, RESULT WILL PROBABLY BE WRONG");
+                //println!("LOOP DETECTED, RESULT WILL PROBABLY BE WRONG");
                 bb_weights
             } else {
                 self.is_bb_being_recursively_visited.insert(*block);
