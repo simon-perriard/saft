@@ -41,7 +41,7 @@ impl rustc_driver::Callbacks for SaftCallbacks {
             .global_ctxt()
             .unwrap()
             .peek_mut()
-            .enter(|tcx| saft_analysis::extract_juice(compiler, tcx));
+            .enter(saft_analysis::extract_juice);
 
         Compilation::Continue
     }
@@ -64,7 +64,7 @@ fn main() {
     exit(rustc_driver::catch_with_exit_code(move || {
         let mut args: Vec<String> = env::args().collect();
 
-        // We will invoke the compiler programmatically, so we only need what's after the 'rustc'
+        // We will invoke the compiler programmatically, so we only need the args after the 'rustc'
         if args.len() > 1 && Path::new(&args[1]).file_stem() == Some("rustc".as_ref()) {
             args.remove(1);
         }
