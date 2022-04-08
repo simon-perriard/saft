@@ -1,6 +1,6 @@
-use crate::analysis_utils::callable_functions_getter::get_call_enum_variants_hir_ids;
-use crate::analysis_utils::callable_functions_getter::get_dispatch_bypass_filter_local_def_id;
-use crate::analysis_utils::callable_functions_getter::get_dispatchable_def_ids;
+use crate::analysis_utils::dispatchables_getter::get_call_enum_variants_hir_ids;
+use crate::analysis_utils::dispatchables_getter::get_dispatch_bypass_filter_local_def_id;
+use crate::analysis_utils::dispatchables_getter::get_dispatchable_def_ids;
 use crate::types::Type;
 use rustc_hir::def::Res;
 use rustc_middle::ty::TyCtxt;
