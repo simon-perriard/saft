@@ -32,7 +32,7 @@ fn main() {
         // Prepare arguments.
         let mut args: Vec<String> = env::args().collect();
         args.remove(1); // remove the `cargo` subcommand
-        sysroot::set_if_missing(&mut args);
+        saft::sysroot::set_if_missing(&mut args);
 
         // Analyze or compile.
         match select_action(&args) {

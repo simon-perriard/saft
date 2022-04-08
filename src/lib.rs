@@ -12,14 +12,9 @@ extern crate rustc_span;
 extern crate rustc_typeck;
 
 pub mod sysroot;
-pub mod analysis_utils;
-pub mod dispatchable_visitor;
-pub mod mir_visitor;
-pub mod pallet;
-pub mod size_language;
-pub mod storage_actions;
-pub mod types;
-pub mod weights;
+pub mod analysis;
+
+use crate::analysis::*;
 
 pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
 
