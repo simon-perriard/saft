@@ -13,15 +13,16 @@ path = "src/main.rs"
 
 [[bin]]
 name = "saft-driver"
-path = "src/driver.rs"
+path = "src/bin/driver.rs"
 
 [dependencies]
-saft_analysis = { path = "saft_analysis" }
 rustc_tools_util = "*"
 cargo_metadata = "*"
 serde_json = "*"
 env_logger = "*"
 log = "*"
+regex = "*"
+rpds = "*"
 
 [package.metadata.rust-analyzer]
 # This package uses #[feature(rustc_private)]
