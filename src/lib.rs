@@ -11,6 +11,7 @@ extern crate rustc_middle;
 extern crate rustc_span;
 extern crate rustc_typeck;
 
+pub mod sysroot;
 pub mod analysis_utils;
 pub mod dispatchable_visitor;
 pub mod mir_visitor;
