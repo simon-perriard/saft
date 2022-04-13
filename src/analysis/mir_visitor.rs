@@ -1,3 +1,4 @@
+use crate::analysis::analysis_utils::def_id_printer::get_def_id_name;
 use crate::dispatchable_visitor::DispatchableVisitor;
 use crate::storage_actions::apply_r_w;
 use crate::weights::Weights;
@@ -7,7 +8,6 @@ use rustc_index::bit_set::BitSet;
 use rustc_middle::mir::visit::*;
 use rustc_middle::mir::*;
 use rustc_middle::ty::{Const, TyKind};
-use rustc_middle::ty::*;
 
 pub struct Context {
     pub weights: Weights,
@@ -209,47 +209,21 @@ impl<'tcx> Visitor<'tcx> for MirBodyVisitor<'tcx, '_, '_, '_> {
                 let tcx = self.mv.ev.tcx;
                 let key = tcx.def_key(*def_id);
                 let parent_def_id = DefId { index: key.parent.unwrap(), ..*def_id };
+                let generics = tcx.generics_of(def_id);
+                let parent_substs = &substs[..generics.parent_count.min(substs.len())];
 
                 if let TyKind::Adt(adt_def_data, _) = tcx.type_of(parent_def_id).kind() {
-                    let reconstructed_ty = tcx.mk_adt(adt_def_data, substs);
-                    //println!("{:?}", reconstructed_ty);
+                    let reconstructed_ty = tcx.mk_adt(adt_def_data, tcx.intern_substs(parent_substs));
+                    
                     for ty in pallet.fields.keys().map(|field_def_id| tcx.type_of(field_def_id)) {
                         if ty == reconstructed_ty {
-                            println!("");
+                            println!("TYPE MATCHED WOOP WOOP");
+                            println!("Operation is {}", get_def_id_name(tcx, *def_id));
+                            println!("Type is {:?}", ty.kind());
+                            println!();
                         }
                     }
                 }
-
-                
-                //let parent_ty = tcx.type_of();
-
-                //let local_def_id = def_id.expect_local();
-                
-                //let body_owner = tcx.hir().body_owned_by(tcx.hir().local_def_id_to_hir_id());
-                //tcx.hir().body_owned_by()
-
-                /*for ty in pallet.fields.keys().map(|field_def_id| tcx.type_of(field_def_id)) {
-                    println!("{:?}", ty);
-                }*/
-
-                //let generics = tcx.generics_of(def_id);
-                //println!("{},{}", generics.parent_count, substs.len());
-                //let parent_substs = &substs[..generics.parent_count.min(substs.len())];
-                //println!("{:?}", parent_substs);
-
-                /*let trait_ref = rustc_middle::ty::TraitRef::new(
-                    parent_def_id,
-                    tcx.intern_substs(parent_substs)
-                );*/
-
-                //println!("{:?}", trait_ref);
-
-                //println!();
-                //println!();
-
-                // reconstruct type from what we have
-                //let adt_def_data = rustc_middle::ty::adt::AdtDefData::new();
-                //let ty = tcx.mk_adt(adt_def_data, substs);
             }
         }
 

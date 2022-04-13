@@ -108,7 +108,7 @@ fn get_fields(tcx: TyCtxt) -> HashMap<DefId, Field> {
             match tcx.def_path_str(*frame_storage_def_id).as_str() {
                 "frame_support::pallet_prelude::StorageValue" => {
                 if let rustc_hir::GenericArg::Type(value_hir_ty) = &args[1] {
-                    println!("{:?}", tcx.type_of(alias_def_id).kind());
+                    
                     fields.insert(alias_def_id, Field {
                         def_id: alias_def_id,
                         kind: StorageKind::StorageValue {
