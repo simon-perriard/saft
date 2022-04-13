@@ -7,6 +7,7 @@ use rustc_index::bit_set::BitSet;
 use rustc_middle::mir::visit::*;
 use rustc_middle::mir::*;
 use rustc_middle::ty::{Const, TyKind};
+use rustc_middle::ty::*;
 
 pub struct Context {
     pub weights: Weights,
@@ -71,7 +72,7 @@ impl<'tcx, 'pallet, 'analysis> MirVisitor<'tcx, 'pallet, 'analysis> {
 pub struct MirBodyVisitor<'tcx, 'pallet, 'analysis, 'body> {
     pub mv: &'body mut MirVisitor<'tcx, 'pallet, 'analysis>,
     pub def_id: &'body DefId,
-    pub body: &'body Body<'tcx>,
+    pub body: &'tcx Body<'tcx>,
     current_basic_block: Option<BasicBlock>,
     pub current_bb_context: Context,
     pub is_bb_being_recursively_visited: BitSet<BasicBlock>,
@@ -106,8 +107,8 @@ impl<'tcx, 'pallet, 'analysis, 'body> MirBodyVisitor<'tcx, 'pallet, 'analysis, '
     }
 }
 
-impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
-    fn visit_body(&mut self, body: &Body<'body>) {
+impl<'tcx> Visitor<'tcx> for MirBodyVisitor<'tcx, '_, '_, '_> {
+    fn visit_body(&mut self, body: &Body<'tcx>) {
         if !self.mv.already_visited_blocks.contains_key(self.def_id) {
             // Initialize set of visited blocks for the current body
             self.mv
@@ -124,7 +125,7 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
         // no visit needed if already visited
     }
 
-    fn visit_basic_block_data(&mut self, block: BasicBlock, data: &BasicBlockData<'body>) {
+    fn visit_basic_block_data(&mut self, block: BasicBlock, data: &BasicBlockData<'tcx>) {
         // Set fresh context for the new bb
         self.current_basic_block = Some(block);
         self.current_bb_context = Context::default();
@@ -146,7 +147,7 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
         }
     }
 
-    fn visit_const(&mut self, cst: Const<'body>, _location: Location) {
+    fn visit_const(&mut self, cst: Const<'tcx>, _location: Location) {
         let ty = cst.ty();
         let tcx = self.mv.ev.tcx;
 
@@ -154,7 +155,7 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
         let opt_def_id = match ty.kind() {
             TyKind::FnDef(def_id, _) => Some(def_id),
             TyKind::Closure(def_id, _) => {
-                tcx.def_path_str(*def_id);
+                //tcx.def_path_str(*def_id);
                 Some(def_id)
             }
             _ => None,
@@ -197,7 +198,61 @@ impl<'body> Visitor<'body> for MirBodyVisitor<'_, '_, '_, 'body> {
         }
     }
 
-    fn visit_terminator(&mut self, terminator: &Terminator<'body>, location: Location) {
+    fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
+
+        if let TerminatorKind::Call { func, .. } = &terminator.kind
+        && let Operand::Constant(c) = func
+        && let TyKind::FnDef(def_id, substs) = c.ty().kind()
+        {
+            if self.mv.ev.tcx.def_path_str(*def_id).starts_with("frame_support::pallet_prelude::Storage"){
+                let pallet = self.mv.ev.pallet;
+                let tcx = self.mv.ev.tcx;
+                let key = tcx.def_key(*def_id);
+                let parent_def_id = DefId { index: key.parent.unwrap(), ..*def_id };
+
+                if let TyKind::Adt(adt_def_data, _) = tcx.type_of(parent_def_id).kind() {
+                    let reconstructed_ty = tcx.mk_adt(adt_def_data, substs);
+                    //println!("{:?}", reconstructed_ty);
+                    for ty in pallet.fields.keys().map(|field_def_id| tcx.type_of(field_def_id)) {
+                        if ty == reconstructed_ty {
+                            println!("");
+                        }
+                    }
+                }
+
+                
+                //let parent_ty = tcx.type_of();
+
+                //let local_def_id = def_id.expect_local();
+                
+                //let body_owner = tcx.hir().body_owned_by(tcx.hir().local_def_id_to_hir_id());
+                //tcx.hir().body_owned_by()
+
+                /*for ty in pallet.fields.keys().map(|field_def_id| tcx.type_of(field_def_id)) {
+                    println!("{:?}", ty);
+                }*/
+
+                //let generics = tcx.generics_of(def_id);
+                //println!("{},{}", generics.parent_count, substs.len());
+                //let parent_substs = &substs[..generics.parent_count.min(substs.len())];
+                //println!("{:?}", parent_substs);
+
+                /*let trait_ref = rustc_middle::ty::TraitRef::new(
+                    parent_def_id,
+                    tcx.intern_substs(parent_substs)
+                );*/
+
+                //println!("{:?}", trait_ref);
+
+                //println!();
+                //println!();
+
+                // reconstruct type from what we have
+                //let adt_def_data = rustc_middle::ty::adt::AdtDefData::new();
+                //let ty = tcx.mk_adt(adt_def_data, substs);
+            }
+        }
+
         self.super_terminator(terminator, location);
         self.close_bb_analysis();
     }

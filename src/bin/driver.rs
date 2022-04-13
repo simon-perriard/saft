@@ -4,6 +4,8 @@
 
 extern crate rustc_driver;
 extern crate rustc_interface;
+extern crate rustc_ast;
+extern crate rustc_expand;
 
 use rustc_driver::Compilation;
 use rustc_interface::{interface, Queries};
@@ -89,6 +91,7 @@ impl Debug for SaftCallbacks {
 }
 
 impl rustc_driver::Callbacks for SaftCallbacks {
+
     fn after_analysis<'tcx>(
         &mut self,
         compiler: &interface::Compiler,
