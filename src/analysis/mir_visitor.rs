@@ -213,7 +213,7 @@ impl<'tcx> Visitor<'tcx> for MirBodyVisitor<'tcx, '_, '_, '_> {
                 let parent_substs = &substs[..generics.parent_count.min(substs.len())];
 
                 if let TyKind::Adt(adt_def_data, _) = tcx.type_of(parent_def_id).kind() {
-                    let reconstructed_ty = tcx.mk_adt(adt_def_data, tcx.intern_substs(parent_substs));
+                    let reconstructed_ty = tcx.mk_adt(*adt_def_data, tcx.intern_substs(parent_substs));
                     
                     for ty in pallet.fields.keys().map(|field_def_id| tcx.type_of(field_def_id)) {
                         if ty == reconstructed_ty {
