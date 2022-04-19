@@ -108,7 +108,6 @@ fn get_fields(tcx: TyCtxt) -> HashMap<DefId, Field> {
             match tcx.def_path_str(*frame_storage_def_id).as_str() {
                 "frame_support::pallet_prelude::StorageValue" => {
                 if let rustc_hir::GenericArg::Type(value_hir_ty) = &args[1] {
-                    
                     fields.insert(alias_def_id, Field {
                         def_id: alias_def_id,
                         kind: StorageKind::StorageValue {
@@ -120,7 +119,6 @@ fn get_fields(tcx: TyCtxt) -> HashMap<DefId, Field> {
                 "frame_support::pallet_prelude::StorageMap" => {
                 if let rustc_hir::GenericArg::Type(key_hir_ty) = &args[2]
                 && let rustc_hir::GenericArg::Type(value_hir_ty) = &args[3] {
-                    
                     fields.insert(alias_def_id, Field {
                         def_id: alias_def_id,
                         kind: StorageKind::StorageMap {
@@ -134,7 +132,6 @@ fn get_fields(tcx: TyCtxt) -> HashMap<DefId, Field> {
                 if let rustc_hir::GenericArg::Type(key1_hir_ty) = &args[2]
                 && let rustc_hir::GenericArg::Type(key2_hir_ty) = &args[4]
                 && let rustc_hir::GenericArg::Type(value_hir_ty) = &args[5] {
-                    
                     fields.insert(alias_def_id, Field {
                         def_id: alias_def_id,
                         kind: StorageKind::StorageDoubleMap {
@@ -148,7 +145,6 @@ fn get_fields(tcx: TyCtxt) -> HashMap<DefId, Field> {
                 "frame_support::pallet_prelude::StorageNMap" => {
                     if let rustc_hir::GenericArg::Type(key_hir_ty) = &args[1]
                     && let rustc_hir::GenericArg::Type(value_hir_ty) = &args[2] {
-                        
                         fields.insert(alias_def_id, Field {
                             def_id: alias_def_id,
                             kind: StorageKind::StorageNMap {
@@ -161,7 +157,6 @@ fn get_fields(tcx: TyCtxt) -> HashMap<DefId, Field> {
                 "frame_support::pallet_prelude::CountedStorageMap" => {
                     if let rustc_hir::GenericArg::Type(key_hir_ty) = &args[2]
                     && let rustc_hir::GenericArg::Type(value_hir_ty) = &args[3] {
-                        
                         fields.insert(alias_def_id, Field {
                             def_id: alias_def_id,
                             kind: StorageKind::CountedStorageMap {

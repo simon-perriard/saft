@@ -199,7 +199,6 @@ impl<'tcx> Visitor<'tcx> for MirBodyVisitor<'tcx, '_, '_, '_> {
     }
 
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
-
         if let TerminatorKind::Call { func, .. } = &terminator.kind
         && let Operand::Constant(c) = func
         && let TyKind::FnDef(def_id, substs) = c.ty().kind()
@@ -214,7 +213,6 @@ impl<'tcx> Visitor<'tcx> for MirBodyVisitor<'tcx, '_, '_, '_> {
 
                 if let TyKind::Adt(adt_def_data, _) = tcx.type_of(parent_def_id).kind() {
                     let reconstructed_ty = tcx.mk_adt(*adt_def_data, tcx.intern_substs(parent_substs));
-                    
                     for ty in pallet.fields.keys().map(|field_def_id| tcx.type_of(field_def_id)) {
                         if ty == reconstructed_ty {
                             println!("TYPE MATCHED WOOP WOOP");

@@ -54,7 +54,10 @@ pub(crate) mod dispatchables_getter {
         ids
     }
 
-    pub(crate) fn print_dispatchable_names(tcx: TyCtxt, dispatchables: &HashMap<DefId, Dispatchable>) {
+    pub(crate) fn print_dispatchable_names(
+        tcx: TyCtxt,
+        dispatchables: &HashMap<DefId, Dispatchable>,
+    ) {
         for def_id in dispatchables.keys() {
             println!("{}", get_def_id_name(tcx, *def_id));
         }

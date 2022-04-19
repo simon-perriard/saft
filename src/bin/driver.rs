@@ -2,10 +2,10 @@
 #![feature(let_chains)]
 #![warn(rustc::internal)]
 
-extern crate rustc_driver;
-extern crate rustc_interface;
 extern crate rustc_ast;
+extern crate rustc_driver;
 extern crate rustc_expand;
+extern crate rustc_interface;
 
 use rustc_driver::Compilation;
 use rustc_interface::{interface, Queries};
@@ -91,7 +91,6 @@ impl Debug for SaftCallbacks {
 }
 
 impl rustc_driver::Callbacks for SaftCallbacks {
-
     fn after_analysis<'tcx>(
         &mut self,
         compiler: &interface::Compiler,
