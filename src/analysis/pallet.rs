@@ -8,23 +8,23 @@ use rustc_span::def_id::DefId;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-pub struct Dispatchable {
+pub(crate) struct Dispatchable {
     pub def_id: DefId,
 }
 
-pub struct Pallet {
+pub(crate) struct Pallet {
     pub fields: HashMap<DefId, Field>,
     pub dispatchables: HashMap<DefId, Dispatchable>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Field {
+pub(crate) struct Field {
     pub def_id: DefId,
     pub kind: StorageKind,
 }
 
 #[derive(Debug, Clone)]
-pub enum StorageKind {
+pub(crate) enum StorageKind {
     StorageValue {
         value_type: Type,
     },

@@ -9,7 +9,7 @@ use rustc_middle::mir::visit::*;
 use rustc_middle::mir::*;
 use rustc_middle::ty::{Const, TyKind};
 
-pub struct Context {
+pub(crate) struct Context {
     pub weights: Weights,
 }
 
@@ -27,7 +27,7 @@ impl Default for Context {
     }
 }
 
-pub struct MirVisitor<'tcx, 'pallet, 'analysis> {
+pub(crate) struct MirVisitor<'tcx, 'pallet, 'analysis> {
     pub ev: &'analysis DispatchableVisitor<'tcx, 'pallet>,
     already_visited_bodies: HashTrieSet<DefId>,
     pub bodies_weights: HashTrieMap<DefId, Weights>,
@@ -69,7 +69,7 @@ impl<'tcx, 'pallet, 'analysis> MirVisitor<'tcx, 'pallet, 'analysis> {
     }
 }
 
-pub struct MirBodyVisitor<'tcx, 'pallet, 'analysis, 'body> {
+pub(crate) struct MirBodyVisitor<'tcx, 'pallet, 'analysis, 'body> {
     pub mv: &'body mut MirVisitor<'tcx, 'pallet, 'analysis>,
     pub def_id: &'body DefId,
     pub body: &'tcx Body<'tcx>,

@@ -1,7 +1,7 @@
 use core::fmt;
 
 #[derive(Debug, Clone)]
-pub enum UnitSize {
+pub(crate) enum UnitSize {
     Concrete(u128),
     Symbolic(String),
     Interval(Size, Size),
@@ -9,13 +9,13 @@ pub enum UnitSize {
 }
 
 #[derive(Debug, Clone)]
-pub enum Size {
+pub(crate) enum Size {
     UnitSize(Box<UnitSize>),
     Operation(Box<Operation>),
 }
 
 #[derive(Debug, Clone)]
-pub enum Operation {
+pub(crate) enum Operation {
     Add(Size, Size),
     Mul(Size, Size),
     Max(Size, Size),

@@ -5,7 +5,7 @@ use std::io::Write;
 
 use crate::{analysis_utils::def_id_printer::*, mir_visitor::MirVisitor, pallet::Pallet};
 
-pub struct DispatchableVisitor<'tcx, 'pallet> {
+pub(crate) struct DispatchableVisitor<'tcx, 'pallet> {
     pub def_id: DefId,
     pub tcx: TyCtxt<'tcx>,
     pub mir: &'tcx Body<'tcx>,

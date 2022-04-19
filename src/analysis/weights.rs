@@ -5,7 +5,7 @@ use std::fmt;
 use std::ops::*;
 
 #[derive(Debug, Default, Clone, Copy)]
-pub struct Weights {
+pub(crate) struct Weights {
     /// The number of reads
     pub reads: u32,
     /// The number of writes

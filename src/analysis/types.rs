@@ -4,7 +4,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_span::def_id::DefId;
 
 #[derive(Clone, Debug)]
-pub enum Type {
+pub(crate) enum Type {
     Bool,
     Char,
     Int(ty::IntTy),
@@ -21,14 +21,14 @@ pub enum Type {
 }
 
 #[derive(Clone, Debug)]
-pub enum Adt {
+pub(crate) enum Adt {
     Unknown(Option<DefId>),
     Vec(Box<Type>),
     BoundedVec(Box<Type>),
 }
 
 impl Type {
-    pub fn from_mir_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: ty::Ty<'tcx>) -> Self {
+    pub(crate) fn from_mir_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: ty::Ty<'tcx>) -> Self {
         use rustc_middle::ty::TyKind;
         match *ty.kind() {
             TyKind::Bool => Type::Bool,

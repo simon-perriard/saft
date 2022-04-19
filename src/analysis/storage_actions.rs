@@ -5,7 +5,7 @@ use rustc_middle::ty::TyCtxt;
 
 use crate::{analysis_utils::def_id_printer::*, mir_visitor::Context, weights::Weights};
 
-pub enum StorageValueActions {
+pub(crate) enum StorageValueActions {
     Exists,
     Get,
     TryGet,
@@ -89,7 +89,7 @@ impl StorageValueActions {
     }
 }
 
-pub enum StorageMapActions {
+pub(crate) enum StorageMapActions {
     ContainsKey,
     Get,
     TryGet,
@@ -216,7 +216,7 @@ impl StorageMapActions {
     }
 }
 
-pub fn apply_r_w(tcx: TyCtxt, def_id: DefId, context: &mut Context) {
+pub(crate) fn apply_r_w(tcx: TyCtxt, def_id: DefId, context: &mut Context) {
     let fn_full_name = tcx.def_path_str(def_id);
     let fn_short_name = get_def_id_name(tcx, def_id);
 
