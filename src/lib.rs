@@ -17,7 +17,6 @@ extern crate rustc_typeck;
 pub mod analysis;
 pub mod sysroot;
 use crate::analysis::*;
-use rustc_mir_dataflow::Analysis;
 
 pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
     // Extract pallet
@@ -25,18 +24,32 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
     let pallet = pallet::Pallet::new(tcx);
     println!(" Done");
 
-    let mut storage_calls_analysis = storage_calls_analysis::StorageCallsAnalysis::new(tcx, &pallet);
-
     //println!("The following dispatchables will be analyzed :");
     //analysis_utils::dispatchables_getter::print_dispatchable_names(tcx, &pallet.dispatchables);
 
-    for dispatchables_def_id in pallet.dispatchables.keys() {
+    for dispatchable_def_id in pallet.dispatchables.keys() {
         /*let mut dispatchable_visitor =
             dispatchable_visitor::DispatchableVisitor::new(tcx, &pallet, *dispatchables_def_id);
         print!("Analyzing {}...", dispatchable_visitor.get_fn_name());
         dispatchable_visitor.visit_body();
         println!(" Done")*/
-        let mir = tcx.optimized_mir(dispatchables_def_id);
-        storage_calls_analysis = storage_calls_analysis.into_engine(tcx, mir).pass_name("storage_calls_analysis").iterate_to_fixpoint().analysis;
+
+        let storage_calls_analysis =
+        storage_calls_analysis::StorageCallsAnalysis::new(tcx, &pallet);
+
+        let mir = tcx.optimized_mir(dispatchable_def_id);
+        let mut results = storage_calls_analysis
+            .into_engine_with_def_id(tcx, mir, *dispatchable_def_id)
+            .pass_name("storage_calls_analysis")
+            .iterate_to_fixpoint()
+            .into_results_cursor(mir);
+
+        let state = if let Some(last) = mir.basic_blocks().last() {
+            results.seek_to_block_end(last);
+            Some(results.get().clone())
+        } else { None };
+
+        println!("{} --- {:?}", tcx.def_path_str(*dispatchable_def_id), state.unwrap().storage_accesses());
+        println!();
     }
 }

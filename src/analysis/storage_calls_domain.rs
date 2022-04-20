@@ -1,18 +1,21 @@
 use rpds::HashTrieSet;
-use rustc_span::def_id::DefId;
-use rustc_mir_dataflow::{lattice::JoinSemiLattice, fmt::DebugWithContext};
 use rustc_middle::mir::BasicBlock;
+use rustc_mir_dataflow::{fmt::DebugWithContext, lattice::JoinSemiLattice};
 
 #[derive(Eq, PartialEq, Clone, Debug)]
-pub struct StorageCallsDomain(HashTrieSet<(DefId, BasicBlock)>);
+pub struct StorageCallsDomain(HashTrieSet<BasicBlock>);
 
 impl StorageCallsDomain {
     pub fn new() -> Self {
         StorageCallsDomain(HashTrieSet::new())
     }
 
-    pub fn add(&mut self, def_id: DefId, bb: BasicBlock) {
-        self.0.insert_mut((def_id, bb));
+    pub fn add(&mut self, bb: BasicBlock) {
+        self.0.insert_mut(bb);
+    }
+
+    pub fn storage_accesses(&self) -> Vec<BasicBlock> {
+        self.0.iter().map(|bb| bb.clone()).collect::<Vec<BasicBlock>>()
     }
 }
 
