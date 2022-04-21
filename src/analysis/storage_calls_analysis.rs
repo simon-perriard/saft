@@ -11,26 +11,20 @@ use rustc_span::def_id::DefId;
 pub struct StorageCallsAnalysis<'tcx, 'intra> {
     tcx: TyCtxt<'tcx>,
     pallet: &'intra Pallet,
-    visited_def_id: HashTrieSet<DefId>,
-    current_function: Option<DefId>,
 }
 
 impl<'tcx, 'intra> StorageCallsAnalysis<'tcx, 'intra> {
     pub(crate) fn new(tcx: TyCtxt<'tcx>, pallet: &'intra Pallet) -> Self {
-        Self::new_with_init(tcx, pallet, HashTrieSet::new(), None)
+        Self::new_with_init(tcx, pallet)
     }
 
     fn new_with_init(
         tcx: TyCtxt<'tcx>,
         pallet: &'intra Pallet,
-        visited_def_id: HashTrieSet<DefId>,
-        current_function: Option<DefId>,
     ) -> Self {
         StorageCallsAnalysis {
             tcx,
             pallet,
-            visited_def_id,
-            current_function,
         }
     }
 
@@ -43,8 +37,6 @@ impl<'tcx, 'intra> StorageCallsAnalysis<'tcx, 'intra> {
     where
         Self: Sized,
     {
-        self.visited_def_id.insert_mut(entry_def_id);
-        self.current_function = Some(entry_def_id);
         Engine::new_generic(tcx, body, self)
     }
 
@@ -52,7 +44,7 @@ impl<'tcx, 'intra> StorageCallsAnalysis<'tcx, 'intra> {
         &self,
         state: &'intra mut StorageCallsDomain,
     ) -> TransferFunction<'tcx, 'intra> {
-        TransferFunction::new(self.tcx, self.pallet, state, self.current_function.unwrap())
+        TransferFunction::new(self.tcx, self.pallet, state)
     }
 }
 
@@ -60,7 +52,6 @@ pub(crate) struct TransferFunction<'tcx, 'intra> {
     tcx: TyCtxt<'tcx>,
     pallet: &'intra Pallet,
     state: &'intra mut StorageCallsDomain,
-    current_def_id: DefId,
 }
 
 impl<'tcx, 'intra> TransferFunction<'tcx, 'intra> {
@@ -68,13 +59,11 @@ impl<'tcx, 'intra> TransferFunction<'tcx, 'intra> {
         tcx: TyCtxt<'tcx>,
         pallet: &'intra Pallet,
         state: &'intra mut StorageCallsDomain,
-        current_def_id: DefId,
     ) -> Self {
         TransferFunction {
             tcx,
             pallet,
             state,
-            current_def_id,
         }
     }
 }
