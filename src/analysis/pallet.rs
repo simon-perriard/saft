@@ -17,13 +17,13 @@ pub(crate) struct Pallet {
     pub dispatchables: HashMap<DefId, Dispatchable>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub(crate) struct Field {
     pub def_id: DefId,
     pub kind: StorageKind,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub(crate) enum StorageKind {
     StorageValue {
         value_type: Type,

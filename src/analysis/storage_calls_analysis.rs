@@ -1,14 +1,14 @@
 use super::pallet::Pallet;
 use super::storage_calls_domain::StorageCallsDomain;
-use rpds::HashTrieSet;
 use rustc_middle::mir::{
     visit::*, BasicBlock, Body, Location, Operand, Statement, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{subst::SubstsRef, Ty, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Engine, Forward};
 use rustc_span::def_id::DefId;
+use crate::pallet::Field;
 
-pub struct StorageCallsAnalysis<'tcx, 'intra> {
+pub(crate) struct StorageCallsAnalysis<'tcx, 'intra> {
     tcx: TyCtxt<'tcx>,
     pallet: &'intra Pallet,
 }
@@ -72,7 +72,7 @@ impl<'visitor, 'tcx> TransferFunction<'tcx, '_>
 where
     Self: Visitor<'visitor>,
 {
-    fn is_storage_call(&self, def_id: DefId, substs: &'tcx SubstsRef) -> Option<Ty> {
+    fn is_storage_call(&self, def_id: DefId, substs: &'tcx SubstsRef) -> Option<Field> {
         if self
             .tcx
             .def_path_str(def_id)
@@ -90,13 +90,13 @@ where
 
             if let TyKind::Adt(adt_def_data, _) = tcx.type_of(parent_def_id).kind() {
                 let reconstructed_ty = tcx.mk_adt(*adt_def_data, tcx.intern_substs(parent_substs));
-                for ty in pallet
+                for (ty, field) in pallet
                     .fields
-                    .keys()
-                    .map(|field_def_id| tcx.type_of(field_def_id))
+                    .iter()
+                    .map(|(field_def_id, field)| (tcx.type_of(field_def_id), field))
                 {
                     if ty == reconstructed_ty {
-                        return Some(ty);
+                        return Some(field.clone());
                     }
                 }
             }
@@ -105,11 +105,11 @@ where
     }
 
     fn t_visit_fn_call(&mut self, def_id: DefId, substs: &'tcx SubstsRef, location: Location) {
-        if let Some(_ty) = self.is_storage_call(def_id, substs) {
-            self.state.add(location.block);
+        if let Some(field) = self.is_storage_call(def_id, substs) {
+            self.state.add(location.block, def_id, field);
         } else {
             // We do intra analysis, if we cannot resolve the function, let's assume it will do storage access
-            self.state.add(location.block);
+            //self.state.add(location.block, def_id);
             // TODO perform inter analysis
         }
     }
@@ -139,22 +139,22 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_> {
     }
 }
 
-impl<'inter> AnalysisDomain<'inter> for StorageCallsAnalysis<'_, '_> {
+impl<'intra> AnalysisDomain<'intra> for StorageCallsAnalysis<'_, '_> {
     type Domain = StorageCallsDomain;
     const NAME: &'static str = "StorageCallsAnalysis";
 
     type Direction = Forward;
 
-    fn bottom_value(&self, _body: &Body<'inter>) -> Self::Domain {
+    fn bottom_value(&self, _body: &Body<'intra>) -> Self::Domain {
         StorageCallsDomain::new()
     }
 
-    fn initialize_start_block(&self, _body: &Body<'inter>, _state: &mut Self::Domain) {
+    fn initialize_start_block(&self, _body: &Body<'intra>, _state: &mut Self::Domain) {
         // Function args do not affect the analysis
     }
 }
 
-impl<'tcx, 'inter, 'intra> Analysis<'tcx> for StorageCallsAnalysis<'tcx, 'inter> {
+impl<'tcx, 'intra> Analysis<'tcx> for StorageCallsAnalysis<'tcx, 'intra> {
     fn apply_statement_effect(
         &self,
         _state: &mut Self::Domain,

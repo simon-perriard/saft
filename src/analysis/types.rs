@@ -3,7 +3,7 @@ use rustc_middle::ty;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::def_id::DefId;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum Type {
     Bool,
     Char,
@@ -20,7 +20,7 @@ pub(crate) enum Type {
     Projection(DefId),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum Adt {
     Unknown(Option<DefId>),
     Vec(Box<Type>),
