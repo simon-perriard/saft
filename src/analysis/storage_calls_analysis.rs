@@ -121,6 +121,7 @@ where
         } else {
             // We do intra analysis, if we cannot resolve the function, let's assume it will do storage access
             self.state.add(location.block);
+            // TODO perform inter analysis
         }
     }
 }
@@ -135,9 +136,6 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_> {
                 args,
                 ..
             } => {
-                //println!("{:?}", c.ty().kind());
-                //println!("");
-                //self.super_terminator(terminator, location);
                 for arg in args {
                     self.super_operand(arg, location);
                 }
