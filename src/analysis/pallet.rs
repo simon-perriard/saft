@@ -59,8 +59,8 @@ impl Pallet {
 fn get_field_names(tcx: TyCtxt) -> HashSet<&str> {
     tcx.hir()
         .items()
-        .filter_map(|item| {
-            item.ident
+        .filter_map(|item_id| {
+            tcx.hir().item(item_id).ident
                 .as_str()
                 .strip_prefix("_GeneratedPrefixForStorage")
         })
@@ -92,13 +92,13 @@ fn get_fields(tcx: TyCtxt) -> HashMap<DefId, Field> {
     let field_names = get_field_names(tcx);
     let mut fields = HashMap::new();
 
-    for item in tcx.hir().items() {
+    for item_id in tcx.hir().items() {
         let rustc_hir::Item {
             ident,
             def_id,
             kind,
             ..
-        } = item;
+        } = tcx.hir().item(item_id);
 
         if field_names.contains(&ident.as_str())
             && let Some((frame_storage_def_id, args)) = get_type_alias_data(kind)

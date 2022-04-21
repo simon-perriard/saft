@@ -32,10 +32,10 @@ pub(crate) mod dispatchables_getter {
     pub(crate) fn get_call_enum_variants_hir_ids(tcx: TyCtxt) -> Vec<&HirId> {
         let mut ids: Vec<&HirId> = Vec::new();
 
-        for item in tcx.hir().items() {
+        for item_id in tcx.hir().items() {
             let rustc_hir::Item {
                 ident, kind, vis, ..
-            } = item;
+            } = tcx.hir().item(item_id);
             if vis.node.is_pub() {
                 if let rustc_hir::ItemKind::Enum(enum_def, _) = kind {
                     if ident.as_str() == "Call" {
