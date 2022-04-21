@@ -3,7 +3,7 @@ use super::storage_calls_domain::StorageCallsDomain;
 use rustc_middle::mir::{
     visit::*, BasicBlock, Body, Location, Operand, Statement, Terminator, TerminatorKind,
 };
-use rustc_middle::ty::{subst::SubstsRef, Ty, TyCtxt, TyKind};
+use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Engine, Forward};
 use rustc_span::def_id::DefId;
 use crate::pallet::Field;
@@ -29,10 +29,10 @@ impl<'tcx, 'intra> StorageCallsAnalysis<'tcx, 'intra> {
     }
 
     pub(crate) fn into_engine_with_def_id<'mir>(
-        mut self,
+        self,
         tcx: TyCtxt<'tcx>,
         body: &'mir Body<'tcx>,
-        entry_def_id: DefId,
+        _entry_def_id: DefId,
     ) -> Engine<'mir, 'tcx, Self>
     where
         Self: Sized,
