@@ -17,6 +17,7 @@ extern crate rustc_typeck;
 pub mod analysis;
 pub mod sysroot;
 use crate::analysis::*;
+use rustc_mir_dataflow::Analysis;
 
 pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
     // Extract pallet
@@ -35,11 +36,11 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
         println!(" Done")*/
 
         let storage_calls_analysis =
-        storage_calls_analysis::StorageCallsAnalysis::new(tcx, &pallet);
+            storage_calls_analysis::StorageCallsAnalysis::new(tcx, &pallet);
 
         let mir = tcx.optimized_mir(dispatchable_def_id);
         let mut results = storage_calls_analysis
-            .into_engine_with_def_id(tcx, mir, *dispatchable_def_id)
+            .into_engine(tcx, mir)
             .pass_name("storage_calls_analysis")
             .iterate_to_fixpoint()
             .into_results_cursor(mir);
@@ -47,9 +48,15 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
         let state = if let Some(last) = mir.basic_blocks().last() {
             results.seek_to_block_end(last);
             Some(results.get().clone())
-        } else { None };
+        } else {
+            None
+        };
 
-        println!("{} --- {:?}", tcx.def_path_str(*dispatchable_def_id), state.unwrap().storage_accesses());
+        /*println!(
+            "{} --- {:?}",
+            tcx.def_path_str(*dispatchable_def_id),
+            state.unwrap().storage_accesses()
+        );*/
         println!();
     }
 }

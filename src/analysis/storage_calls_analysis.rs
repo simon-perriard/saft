@@ -1,74 +1,73 @@
 use super::pallet::Pallet;
 use super::storage_calls_domain::StorageCallsDomain;
+use crate::pallet::Field;
+use rpds::HashTrieMap;
 use rustc_middle::mir::{
     visit::*, BasicBlock, Body, Location, Operand, Statement, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
-use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Engine, Forward};
+use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
 use rustc_span::def_id::DefId;
-use crate::pallet::Field;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-pub(crate) struct StorageCallsAnalysis<'tcx, 'intra> {
+pub(crate) type Summary = HashTrieMap<DefId, StorageCallsDomain>;
+
+pub(crate) struct StorageCallsAnalysis<'tcx, 'inter> {
     tcx: TyCtxt<'tcx>,
-    pallet: &'intra Pallet,
+    pallet: &'inter Pallet,
+    summaries: Rc<RefCell<Summary>>,
 }
 
-impl<'tcx, 'intra> StorageCallsAnalysis<'tcx, 'intra> {
-    pub(crate) fn new(tcx: TyCtxt<'tcx>, pallet: &'intra Pallet) -> Self {
-        Self::new_with_init(tcx, pallet)
+impl<'tcx, 'inter, 'intra> StorageCallsAnalysis<'tcx, 'inter> {
+    pub(crate) fn new(tcx: TyCtxt<'tcx>, pallet: &'inter Pallet) -> Self {
+        Self::new_with_init(tcx, pallet, Rc::new(RefCell::new(HashTrieMap::new())))
     }
 
     fn new_with_init(
         tcx: TyCtxt<'tcx>,
-        pallet: &'intra Pallet,
+        pallet: &'inter Pallet,
+        summaries: Rc<RefCell<Summary>>,
     ) -> Self {
         StorageCallsAnalysis {
             tcx,
             pallet,
+            summaries,
         }
-    }
-
-    pub(crate) fn into_engine_with_def_id<'mir>(
-        self,
-        tcx: TyCtxt<'tcx>,
-        body: &'mir Body<'tcx>,
-        _entry_def_id: DefId,
-    ) -> Engine<'mir, 'tcx, Self>
-    where
-        Self: Sized,
-    {
-        Engine::new_generic(tcx, body, self)
     }
 
     pub(crate) fn transfer_function(
         &self,
         state: &'intra mut StorageCallsDomain,
-    ) -> TransferFunction<'tcx, 'intra> {
-        TransferFunction::new(self.tcx, self.pallet, state)
+    ) -> TransferFunction<'tcx, 'inter, 'intra> {
+        TransferFunction::new(self.tcx, self.pallet, self.summaries.clone(), state)
     }
 }
 
-pub(crate) struct TransferFunction<'tcx, 'intra> {
+pub(crate) struct TransferFunction<'tcx, 'inter, 'intra> {
     tcx: TyCtxt<'tcx>,
-    pallet: &'intra Pallet,
+    pallet: &'inter Pallet,
+    summaries: Rc<RefCell<Summary>>,
     state: &'intra mut StorageCallsDomain,
 }
 
-impl<'tcx, 'intra> TransferFunction<'tcx, 'intra> {
+impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
-        pallet: &'intra Pallet,
+        pallet: &'inter Pallet,
+        summaries: Rc<RefCell<Summary>>,
         state: &'intra mut StorageCallsDomain,
     ) -> Self {
         TransferFunction {
             tcx,
             pallet,
+            summaries,
             state,
         }
     }
 }
 
-impl<'visitor, 'tcx> TransferFunction<'tcx, '_>
+impl<'visitor, 'tcx> TransferFunction<'tcx, '_, '_>
 where
     Self: Visitor<'visitor>,
 {
@@ -104,57 +103,95 @@ where
         None
     }
 
-    fn t_visit_fn_call(&mut self, def_id: DefId, substs: &'tcx SubstsRef, location: Location) {
-        if let Some(field) = self.is_storage_call(def_id, substs) {
-            self.state.add(location.block, def_id, field);
+    fn t_visit_fn_call(
+        &mut self,
+        target_def_id: DefId,
+        substs: &'tcx SubstsRef,
+        location: Location,
+    ) {
+        if let Some(field) = self.is_storage_call(target_def_id, substs) {
+            self.state.add(location.block, target_def_id, field);
         } else {
-            // We do intra analysis, if we cannot resolve the function, let's assume it will do storage access
-            //self.state.add(location.block, def_id);
-            // TODO perform inter analysis
+            self.t_fn_call_analysis(target_def_id);
+        }
+    }
+
+    fn t_fn_call_analysis(&mut self, target_def_id: DefId) {
+
+        if self.summaries.borrow_mut().contains_key(&target_def_id) {
+            // We already have the summary for this function
+            //println!("ALREADY HAVE {:?} --- {:?}", self.tcx.def_path_str(target_def_id), self.summaries.borrow_mut().get(&target_def_id).unwrap());
+            return;
+        }
+
+        if self.tcx.is_mir_available(target_def_id) {
+            let target_mir = self.tcx.optimized_mir(target_def_id);
+
+            let mut results = StorageCallsAnalysis::new_with_init(self.tcx, self.pallet, self.summaries.clone())
+                .into_engine(self.tcx, target_mir)
+                .pass_name("storage_calls_analysis")
+                .iterate_to_fixpoint()
+                .into_results_cursor(target_mir);
+
+            let end_state = if let Some(last) = target_mir.basic_blocks().last() {
+                results.seek_to_block_end(last);
+                Some(results.get().clone())
+            } else {
+                None
+            };
+
+            if let Some(end_state) = end_state {
+                self.summaries.borrow_mut().insert_mut(target_def_id, end_state.clone());
+            }
+
+        } else {
+            let path = self.tcx.def_path_str(target_def_id);
+            if path.starts_with("std") || path.starts_with("alloc") ||
+                path.starts_with("frame_system::ensure_signed") ||
+                path.starts_with("weights") {
+                // standard library does not do storage access
+                // ensure_signed does not do storage access
+                // weights do not do storage access
+            } else {
+                //println!("NO MIR AVAILABLE FOR {:?}", self.tcx.def_path_str(target_def_id));
+            }
         }
     }
 }
 
-impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_> {
+impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
         let Terminator { source_info, kind } = terminator;
 
         match kind {
             TerminatorKind::Call {
                 func: Operand::Constant(c),
-                args,
                 ..
-            } => {
-                for arg in args {
-                    self.super_operand(arg, location);
-                }
-
+            } if let TyKind::FnDef(target_def_id, substs) = c.ty().kind() => {
                 self.visit_source_info(source_info);
-                if let TyKind::FnDef(def_id, substs) = c.ty().kind() {
-                    self.t_visit_fn_call(*def_id, substs, location);
-                }
+                self.t_visit_fn_call(*target_def_id, substs, location);
             }
             _ => self.super_terminator(terminator, location),
         }
     }
 }
 
-impl<'intra> AnalysisDomain<'intra> for StorageCallsAnalysis<'_, '_> {
+impl<'inter> AnalysisDomain<'inter> for StorageCallsAnalysis<'_, '_> {
     type Domain = StorageCallsDomain;
     const NAME: &'static str = "StorageCallsAnalysis";
 
     type Direction = Forward;
 
-    fn bottom_value(&self, _body: &Body<'intra>) -> Self::Domain {
+    fn bottom_value(&self, _body: &Body<'inter>) -> Self::Domain {
         StorageCallsDomain::new()
     }
 
-    fn initialize_start_block(&self, _body: &Body<'intra>, _state: &mut Self::Domain) {
+    fn initialize_start_block(&self, _body: &Body<'inter>, _state: &mut Self::Domain) {
         // Function args do not affect the analysis
     }
 }
 
-impl<'tcx, 'intra> Analysis<'tcx> for StorageCallsAnalysis<'tcx, 'intra> {
+impl<'tcx> Analysis<'tcx> for StorageCallsAnalysis<'tcx, '_> {
     fn apply_statement_effect(
         &self,
         _state: &mut Self::Domain,

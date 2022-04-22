@@ -60,7 +60,9 @@ fn get_field_names(tcx: TyCtxt) -> HashSet<&str> {
     tcx.hir()
         .items()
         .filter_map(|item_id| {
-            tcx.hir().item(item_id).ident
+            tcx.hir()
+                .item(item_id)
+                .ident
                 .as_str()
                 .strip_prefix("_GeneratedPrefixForStorage")
         })

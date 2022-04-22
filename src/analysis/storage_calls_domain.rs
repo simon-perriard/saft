@@ -1,8 +1,8 @@
+use crate::pallet::Field;
 use rpds::HashTrieSet;
 use rustc_middle::mir::BasicBlock;
 use rustc_mir_dataflow::{fmt::DebugWithContext, lattice::JoinSemiLattice};
 use rustc_span::def_id::DefId;
-use crate::pallet::Field;
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub(crate) struct StorageCallsDomain(HashTrieSet<(BasicBlock, DefId, Field)>);
@@ -17,7 +17,10 @@ impl StorageCallsDomain {
     }
 
     pub fn storage_accesses(&self) -> Vec<(BasicBlock, DefId, Field)> {
-        self.0.iter().map(|(bb, def_id, field)| (bb.clone(), def_id.clone(), field.clone())).collect::<Vec<(BasicBlock, DefId, Field)>>()
+        self.0
+            .iter()
+            .map(|(bb, def_id, field)| (bb.clone(), def_id.clone(), field.clone()))
+            .collect::<Vec<(BasicBlock, DefId, Field)>>()
     }
 }
 
