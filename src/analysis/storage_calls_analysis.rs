@@ -3,7 +3,7 @@ use super::storage_calls_domain::StorageCallsDomain;
 use crate::pallet::Field;
 use rpds::HashTrieMap;
 use rustc_middle::mir::{
-    visit::*, BasicBlock, Body, Location, Operand, Statement, Terminator, TerminatorKind,
+    visit::*, BasicBlock, Body, Location, Operand, Place, Statement, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
@@ -110,6 +110,10 @@ where
         location: Location,
     ) {
         if let Some(field) = self.is_storage_call(target_def_id, substs) {
+            if let TyKind::Closure(closure_def_id, _) = substs.last().unwrap().expect_ty().kind() {
+                self.t_fn_call_analysis(*closure_def_id);
+            }
+
             self.state.add(location.block, target_def_id, field);
         } else {
             self.t_fn_call_analysis(target_def_id);
@@ -117,7 +121,6 @@ where
     }
 
     fn t_fn_call_analysis(&mut self, target_def_id: DefId) {
-
         if self.summaries.borrow_mut().contains_key(&target_def_id) {
             // We already have the summary for this function
             //println!("ALREADY HAVE {:?} --- {:?}", self.tcx.def_path_str(target_def_id), self.summaries.borrow_mut().get(&target_def_id).unwrap());
@@ -127,11 +130,12 @@ where
         if self.tcx.is_mir_available(target_def_id) {
             let target_mir = self.tcx.optimized_mir(target_def_id);
 
-            let mut results = StorageCallsAnalysis::new_with_init(self.tcx, self.pallet, self.summaries.clone())
-                .into_engine(self.tcx, target_mir)
-                .pass_name("storage_calls_analysis")
-                .iterate_to_fixpoint()
-                .into_results_cursor(target_mir);
+            let mut results =
+                StorageCallsAnalysis::new_with_init(self.tcx, self.pallet, self.summaries.clone())
+                    .into_engine(self.tcx, target_mir)
+                    .pass_name("storage_calls_analysis")
+                    .iterate_to_fixpoint()
+                    .into_results_cursor(target_mir);
 
             let end_state = if let Some(last) = target_mir.basic_blocks().last() {
                 results.seek_to_block_end(last);
@@ -141,19 +145,27 @@ where
             };
 
             if let Some(end_state) = end_state {
-                self.summaries.borrow_mut().insert_mut(target_def_id, end_state.clone());
+                self.summaries
+                    .borrow_mut()
+                    .insert_mut(target_def_id, end_state.clone());
             }
-
         } else {
             let path = self.tcx.def_path_str(target_def_id);
-            if path.starts_with("std") || path.starts_with("alloc") ||
-                path.starts_with("frame_system::ensure_signed") ||
-                path.starts_with("weights") {
-                // standard library does not do storage access
-                // ensure_signed does not do storage access
-                // weights do not do storage access
+            if path.starts_with("std")
+                || path.starts_with("alloc")
+                || path.starts_with("frame_system::ensure_signed")
+                || path.starts_with("weights")
+            {
+                /* No MIR available for those but:
+                    - standard library does not do storage access
+                    - ensure_signed does not do storage access
+                    - weights do not do storage access
+                **/
             } else {
-                //println!("NO MIR AVAILABLE FOR {:?}", self.tcx.def_path_str(target_def_id));
+                println!(
+                    "NO MIR AVAILABLE FOR {:?}",
+                    self.tcx.def_path_str(target_def_id)
+                );
             }
         }
     }
@@ -166,9 +178,14 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
         match kind {
             TerminatorKind::Call {
                 func: Operand::Constant(c),
+                args,
                 ..
             } if let TyKind::FnDef(target_def_id, substs) = c.ty().kind() => {
                 self.visit_source_info(source_info);
+                for arg in args {
+                    self.visit_operand(arg, location);
+                }
+
                 self.t_visit_fn_call(*target_def_id, substs, location);
             }
             _ => self.super_terminator(terminator, location),

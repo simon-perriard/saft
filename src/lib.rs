@@ -34,7 +34,6 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
         print!("Analyzing {}...", dispatchable_visitor.get_fn_name());
         dispatchable_visitor.visit_body();
         println!(" Done")*/
-
         let storage_calls_analysis =
             storage_calls_analysis::StorageCallsAnalysis::new(tcx, &pallet);
 
@@ -52,11 +51,11 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
             None
         };
 
-        /*println!(
+        println!(
             "{} --- {:?}",
             tcx.def_path_str(*dispatchable_def_id),
             state.unwrap().storage_accesses()
-        );*/
+        );
         println!();
     }
 }
