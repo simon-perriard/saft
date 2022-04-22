@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use crate::rustc_mir_dataflow::JoinSemiLattice;
 
-pub(crate) type Summary = HashTrieMap<DefId, StorageCallsDomain>;
+pub(crate) type Summary = HashTrieMap<DefId, Option<StorageCallsDomain>>;
 
 pub(crate) struct StorageCallsAnalysis<'tcx, 'inter> {
     tcx: TyCtxt<'tcx>,
@@ -127,11 +127,20 @@ where
             //println!("ALREADY HAVE {:?} --- {:?}", self.tcx.def_path_str(target_def_id), self.summaries.borrow_mut().get(&target_def_id).unwrap());
             let summary = self.summaries.borrow_mut();
             let summary = summary.get(&target_def_id).unwrap();
-            self.state.join(summary);
+
+            if let Some(summary) = summary {
+                self.state.join(summary);
+            } else {
+                // we are in a recursive call, just ignore it
+            }
+            
             return;
         }
 
         if self.tcx.is_mir_available(target_def_id) {
+
+            self.summaries.borrow_mut().insert_mut(target_def_id, None);
+
             let target_mir = self.tcx.optimized_mir(target_def_id);
 
             let mut results =
@@ -151,7 +160,7 @@ where
             if let Some(end_state) = end_state {
                 self.summaries
                     .borrow_mut()
-                    .insert_mut(target_def_id, end_state.clone());
+                    .insert_mut(target_def_id, Some(end_state.clone()));
 
                 // Mark domain that called function at that Location does storage access
                 if !end_state.is_empty() {
@@ -196,7 +205,6 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 for arg in args {
                     self.visit_operand(arg, location);
                 }
-
                 self.t_visit_fn_call(*target_def_id, substs, location);
             }
             _ => self.super_terminator(terminator, location),
