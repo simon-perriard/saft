@@ -1,23 +1,24 @@
 use super::pallet::Pallet;
-use super::storage_calls_domain::{StorageCallsDomain, AccessType};
+use super::storage_calls_domain::{AccessType, StorageCallsDomain};
 use crate::pallet::Field;
+use crate::rustc_mir_dataflow::JoinSemiLattice;
 use rpds::HashTrieMap;
 use rustc_middle::mir::{
-    visit::*, BasicBlock, Body, Location, Operand, Statement, Terminator, TerminatorKind,
+    traversal::*, visit::*, BasicBlock, Body, Location, Operand, Statement, Terminator,
+    TerminatorKind,
 };
 use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
 use rustc_span::def_id::DefId;
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::rustc_mir_dataflow::JoinSemiLattice;
 
 pub(crate) type Summary = HashTrieMap<DefId, Option<StorageCallsDomain>>;
 
 pub(crate) struct StorageCallsAnalysis<'tcx, 'inter> {
     tcx: TyCtxt<'tcx>,
     pallet: &'inter Pallet,
-    summaries: Rc<RefCell<Summary>>,
+    pub summaries: Rc<RefCell<Summary>>,
 }
 
 impl<'tcx, 'inter, 'intra> StorageCallsAnalysis<'tcx, 'inter> {
@@ -114,8 +115,8 @@ where
             if let TyKind::Closure(closure_def_id, _) = substs.last().unwrap().expect_ty().kind() {
                 self.t_fn_call_analysis(*closure_def_id, location);
             }
-
-            self.state.add(location.block, AccessType::Direct(target_def_id, field));
+            self.state
+                .add(location.block, AccessType::Direct(target_def_id, field));
         } else {
             self.t_fn_call_analysis(target_def_id, location);
         }
@@ -124,7 +125,6 @@ where
     fn t_fn_call_analysis(&mut self, target_def_id: DefId, location: Location) {
         if self.summaries.borrow_mut().contains_key(&target_def_id) {
             // We already have the summary for this function
-            //println!("ALREADY HAVE {:?} --- {:?}", self.tcx.def_path_str(target_def_id), self.summaries.borrow_mut().get(&target_def_id).unwrap());
             let summary = self.summaries.borrow_mut();
             let summary = summary.get(&target_def_id).unwrap();
 
@@ -133,12 +133,11 @@ where
             } else {
                 // we are in a recursive call, just ignore it
             }
-            
+
             return;
         }
 
         if self.tcx.is_mir_available(target_def_id) {
-
             self.summaries.borrow_mut().insert_mut(target_def_id, None);
 
             let target_mir = self.tcx.optimized_mir(target_def_id);
@@ -150,7 +149,7 @@ where
                     .iterate_to_fixpoint()
                     .into_results_cursor(target_mir);
 
-            let end_state = if let Some(last) = target_mir.basic_blocks().last() {
+            let end_state = if let Some((last, _)) = reverse_postorder(target_mir).last() {
                 results.seek_to_block_end(last);
                 Some(results.get().clone())
             } else {
@@ -164,20 +163,22 @@ where
 
                 // Mark domain that called function at that Location does storage access
                 if !end_state.is_empty() {
-                    self.state.add(location.block, AccessType::Indirect(target_def_id));
+                    self.state
+                        .add(location.block, AccessType::Indirect(target_def_id));
                 }
             }
         } else {
             let path = self.tcx.def_path_str(target_def_id);
             if path.starts_with("std")
                 || path.starts_with("alloc")
-                || path.starts_with("frame_system::ensure_signed")
+                || path.starts_with("frame_system") && path.ends_with("ensure_signed")
+                || path.starts_with("frame_support") && path.ends_with("ensure_origin")
                 || path.starts_with("weights")
                 || path.starts_with("frame_system") && path.ends_with("deposit_event")
             {
                 /* No MIR available for those but:
                     - standard library does not do storage access
-                    - ensure_signed does not do storage access
+                    - ensure_signed/origin does not do storage access
                     - weights do not do storage access
                     - deposit_event does not do storage access
                 **/
@@ -198,13 +199,10 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
         match kind {
             TerminatorKind::Call {
                 func: Operand::Constant(c),
-                args,
                 ..
             } if let TyKind::FnDef(target_def_id, substs) = c.ty().kind() => {
                 self.visit_source_info(source_info);
-                for arg in args {
-                    self.visit_operand(arg, location);
-                }
+
                 self.t_visit_fn_call(*target_def_id, substs, location);
             }
             _ => self.super_terminator(terminator, location),

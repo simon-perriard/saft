@@ -44,12 +44,13 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
             .iterate_to_fixpoint()
             .into_results_cursor(mir);
 
-        let state = if let Some(last) = mir.basic_blocks().last() {
-            results.seek_to_block_end(last);
-            Some(results.get().clone())
-        } else {
-            None
-        };
+        let state =
+            if let Some((last, _)) = rustc_middle::mir::traversal::reverse_postorder(mir).last() {
+                results.seek_to_block_end(last);
+                Some(results.get().clone())
+            } else {
+                None
+            };
 
         println!(
             "{} --- {:?}",
