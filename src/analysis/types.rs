@@ -22,9 +22,9 @@ pub(crate) enum Type {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum Adt {
-    Unknown(Option<DefId>),
+    Unknown(DefId),
     Vec(Box<Type>),
-    BoundedVec(Box<Type>),
+    BoundedVec(Box<Type>, Box<Type>),
 }
 
 impl Type {
@@ -36,7 +36,17 @@ impl Type {
             TyKind::Int(t) => Type::Int(t),
             TyKind::Uint(t) => Type::Uint(t),
             TyKind::Float(t) => Type::Float(t),
-            TyKind::Adt(_, _) => Type::Adt(Adt::Unknown(None)),
+            TyKind::Adt(adt_def, substs) => {
+
+                match tcx.def_path_str(adt_def.did()).as_str() {
+                    "frame_support::BoundedVec" => {
+                        let ty = Self::from_mir_ty(tcx, substs.type_at(0));
+                        let max_size = Self::from_mir_ty(tcx, substs.type_at(1));
+                        Type::Adt(Adt::BoundedVec(Box::new(ty), Box::new(max_size)))
+                    },
+                    _ => Type::Adt(Adt::Unknown(adt_def.did()))
+                }                
+            },
             TyKind::Str => Type::Str,
             TyKind::Array(t, size) => Type::Array(
                 Box::new(Self::from_mir_ty(tcx, t)),

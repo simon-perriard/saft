@@ -25,15 +25,11 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
     let pallet = pallet::Pallet::new(tcx);
     println!(" Done");
 
-    //println!("The following dispatchables will be analyzed :");
-    //analysis_utils::dispatchables_getter::print_dispatchable_names(tcx, &pallet.dispatchables);
+    println!("The following dispatchables will be analyzed :");
+    analysis_utils::dispatchables_getter::print_dispatchable_names(tcx, &pallet.dispatchables);
 
     for dispatchable_def_id in pallet.dispatchables.keys() {
-        /*let mut dispatchable_visitor =
-            dispatchable_visitor::DispatchableVisitor::new(tcx, &pallet, *dispatchables_def_id);
-        print!("Analyzing {}...", dispatchable_visitor.get_fn_name());
-        dispatchable_visitor.visit_body();
-        println!(" Done")*/
+
         let storage_calls_analysis =
             storage_calls_analysis::StorageCallsAnalysis::new(tcx, &pallet);
 
@@ -52,11 +48,11 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
                 None
             };
 
-        println!(
+        /*println!(
             "{} --- {:?}",
             tcx.def_path_str(*dispatchable_def_id),
             state.unwrap().storage_accesses()
-        );
+        );*/
         println!();
     }
 }
