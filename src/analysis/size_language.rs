@@ -1,6 +1,6 @@
 use core::fmt;
 
-#[derive(Debug, Clone)]
+#[derive(Eq, PartialEq, Clone, Debug)]
 pub(crate) enum UnitSize {
     Concrete(u128),
     Symbolic(String),
@@ -8,17 +8,34 @@ pub(crate) enum UnitSize {
     Unit,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Eq, PartialEq, Clone, Debug)]
 pub(crate) enum Size {
     UnitSize(Box<UnitSize>),
     Operation(Box<Operation>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Eq, PartialEq, Clone, Debug)]
 pub(crate) enum Operation {
     Add(Size, Size),
     Mul(Size, Size),
-    Max(Size, Size),
+}
+
+impl Size {
+    pub(crate) fn concrete(c: u128) -> Self {
+        Size::UnitSize(Box::new(UnitSize::Concrete(c)))
+    }
+
+    pub(crate) fn symbolic(s: String) -> Self {
+        Size::UnitSize(Box::new(UnitSize::Symbolic(s)))
+    }
+
+    pub(crate) fn interval(a: Size, b: Size) -> Self {
+        Size::UnitSize(Box::new(UnitSize::Interval(a, b)))
+    }
+
+    pub(crate) fn unit() -> Self {
+        Size::UnitSize(Box::new(UnitSize::Unit))
+    }
 }
 
 impl Default for Size {
@@ -43,7 +60,6 @@ impl fmt::Display for Operation {
         match self {
             Operation::Add(a, b) => write!(f, "{} + {}", a, b),
             Operation::Mul(a, b) => write!(f, "({}) * ({})", a, b),
-            Operation::Max(a, b) => write!(f, "MAX({}, {})", a, b),
         }
     }
 }

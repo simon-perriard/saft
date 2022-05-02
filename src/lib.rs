@@ -28,8 +28,8 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
     println!("The following dispatchables will be analyzed :");
     analysis_utils::dispatchables_getter::print_dispatchable_names(tcx, &pallet.dispatchables);
 
-    for dispatchable_def_id in pallet.dispatchables.keys() {
-
+    // Storage calls analysis
+    /*for dispatchable_def_id in pallet.dispatchables.keys() {
         let storage_calls_analysis =
             storage_calls_analysis::StorageCallsAnalysis::new(tcx, &pallet);
 
@@ -48,11 +48,38 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
                 None
             };
 
-        /*println!(
+        println!(
             "{} --- {:?}",
             tcx.def_path_str(*dispatchable_def_id),
             state.unwrap().storage_accesses()
-        );*/
+        );
+        println!();
+    }*/
+
+    // Reads/Writes count anaylsis
+    for dispatchable_def_id in pallet.dispatchables.keys() {
+        let r_w_count_analysis = r_w_count_analysis::RWCountAnalysis::new(tcx, &pallet);
+
+        let mir = tcx.optimized_mir(dispatchable_def_id);
+        let mut results = r_w_count_analysis
+            .into_engine(tcx, mir)
+            .pass_name("r_w_count_analysis")
+            .iterate_to_fixpoint()
+            .into_results_cursor(mir);
+
+        let state =
+            if let Some((last, _)) = rustc_middle::mir::traversal::reverse_postorder(mir).last() {
+                results.seek_to_block_end(last);
+                Some(results.get().clone())
+            } else {
+                None
+            };
+
+        println!(
+            "{} --- {:?}",
+            tcx.def_path_str(*dispatchable_def_id),
+            state.unwrap()
+        );
         println!();
     }
 }

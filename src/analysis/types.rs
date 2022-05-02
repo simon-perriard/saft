@@ -3,6 +3,8 @@ use rustc_middle::ty;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::def_id::DefId;
 
+use super::size_language::Size;
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum Type {
     Bool,
@@ -36,16 +38,13 @@ impl Type {
             TyKind::Int(t) => Type::Int(t),
             TyKind::Uint(t) => Type::Uint(t),
             TyKind::Float(t) => Type::Float(t),
-            TyKind::Adt(adt_def, substs) => {
-
-                match tcx.def_path_str(adt_def.did()).as_str() {
-                    "frame_support::BoundedVec" => {
-                        let ty = Self::from_mir_ty(tcx, substs.type_at(0));
-                        let max_size = Self::from_mir_ty(tcx, substs.type_at(1));
-                        Type::Adt(Adt::BoundedVec(Box::new(ty), Box::new(max_size)))
-                    },
-                    _ => Type::Adt(Adt::Unknown(adt_def.did()))
-                }                
+            TyKind::Adt(adt_def, substs) => match tcx.def_path_str(adt_def.did()).as_str() {
+                "frame_support::BoundedVec" => {
+                    let ty = Self::from_mir_ty(tcx, substs.type_at(0));
+                    let max_size = Self::from_mir_ty(tcx, substs.type_at(1));
+                    Type::Adt(Adt::BoundedVec(Box::new(ty), Box::new(max_size)))
+                }
+                _ => Type::Adt(Adt::Unknown(adt_def.did())),
             },
             TyKind::Str => Type::Str,
             TyKind::Array(t, size) => Type::Array(
@@ -77,6 +76,24 @@ impl Type {
             ),
             TyKind::Projection(p) => Type::Projection(p.item_def_id),
             _ => unimplemented!(),
+        }
+    }
+
+    pub(crate) fn get_size(&self) -> Size {
+        match self {
+            Type::Bool => todo!(),
+            Type::Char => todo!(),
+            Type::Int(_) => todo!(),
+            Type::Uint(_) => todo!(),
+            Type::Float(_) => todo!(),
+            Type::Adt(_) => todo!(),
+            Type::Str => todo!(),
+            Type::Array(_, _) => todo!(),
+            Type::Slice(_) => todo!(),
+            Type::Ref(_, _) => todo!(),
+            Type::FnPtr(_, _) => todo!(),
+            Type::Tuple(_) => todo!(),
+            Type::Projection(_) => todo!(),
         }
     }
 }
