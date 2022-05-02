@@ -20,22 +20,25 @@ pub(crate) struct RWCountAnalysis<'tcx, 'inter> {
     tcx: TyCtxt<'tcx>,
     pallet: &'inter Pallet,
     pub summaries: Rc<RefCell<Summary>>,
+    pub is_success: Rc<RefCell<bool>>,
 }
 
 impl<'tcx, 'inter, 'intra> RWCountAnalysis<'tcx, 'inter> {
     pub(crate) fn new(tcx: TyCtxt<'tcx>, pallet: &'inter Pallet) -> Self {
-        Self::new_with_init(tcx, pallet, Rc::new(RefCell::new(HashTrieMap::new())))
+        Self::new_with_init(tcx, pallet, Rc::new(RefCell::new(HashTrieMap::new())), Rc::new(RefCell::new(true)))
     }
 
     fn new_with_init(
         tcx: TyCtxt<'tcx>,
         pallet: &'inter Pallet,
         summaries: Rc<RefCell<Summary>>,
+        is_success: Rc<RefCell<bool>>,
     ) -> Self {
         RWCountAnalysis {
             tcx,
             pallet,
             summaries,
+            is_success,
         }
     }
 
@@ -43,7 +46,7 @@ impl<'tcx, 'inter, 'intra> RWCountAnalysis<'tcx, 'inter> {
         &self,
         state: &'intra mut RWCountDomain,
     ) -> TransferFunction<'tcx, 'inter, 'intra> {
-        TransferFunction::new(self.tcx, self.pallet, self.summaries.clone(), state)
+        TransferFunction::new(self.tcx, self.pallet, self.summaries.clone(), state, self.is_success.clone())
     }
 }
 
@@ -52,6 +55,7 @@ pub(crate) struct TransferFunction<'tcx, 'inter, 'intra> {
     pallet: &'inter Pallet,
     summaries: Rc<RefCell<Summary>>,
     state: &'intra mut RWCountDomain,
+    is_success: Rc<RefCell<bool>>,
 }
 
 impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
@@ -60,12 +64,14 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
         pallet: &'inter Pallet,
         summaries: Rc<RefCell<Summary>>,
         state: &'intra mut RWCountDomain,
+        is_success: Rc<RefCell<bool>>,
     ) -> Self {
         TransferFunction {
             tcx,
             pallet,
             summaries,
             state,
+            is_success
         }
     }
 }
@@ -135,6 +141,8 @@ where
                 self.state.join(summary);
             } else {
                 // we are in a recursive call, just ignore it
+                println!("Recursive calls not supported.");
+                *self.is_success.borrow_mut() = false;
             }
 
             return;
@@ -145,12 +153,22 @@ where
 
             let target_mir = self.tcx.optimized_mir(target_def_id);
 
+            // Detect loops in analyzed function
+            if target_mir.is_cfg_cyclic() {
+                println!("Loop detected in function {}, loops are not supported", self.tcx.def_path_str(target_def_id));
+                *self.is_success.borrow_mut() = false;
+                return;
+            }
+
             let mut results =
-                RWCountAnalysis::new_with_init(self.tcx, self.pallet, self.summaries.clone())
+                RWCountAnalysis::new_with_init(self.tcx, self.pallet, self.summaries.clone(), self.is_success.clone())
                     .into_engine(self.tcx, target_mir)
-                    .pass_name("storage_calls_analysis")
+                    .pass_name("r_w_count_analysis")
                     .iterate_to_fixpoint()
                     .into_results_cursor(target_mir);
+
+            let fn_call_success_anaylsis = *results.analysis().is_success.borrow();
+            *self.is_success.borrow_mut() = fn_call_success_anaylsis;
 
             let end_state = if let Some((last, _)) = reverse_postorder(target_mir).last() {
                 results.seek_to_block_end(last);
@@ -180,10 +198,10 @@ where
                     - deposit_event does not do storage access
                 **/
             } else {
-                println!(
+                /*println!(
                     "NO MIR AVAILABLE FOR {:?}",
                     self.tcx.def_path_str(target_def_id)
-                );
+                );*/
             }
         }
     }
@@ -209,7 +227,7 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
 
 impl<'inter> AnalysisDomain<'inter> for RWCountAnalysis<'_, '_> {
     type Domain = RWCountDomain;
-    const NAME: &'static str = "StorageCallsAnalysis";
+    const NAME: &'static str = "ReadsWritesCountAnalysis";
 
     type Direction = Forward;
 

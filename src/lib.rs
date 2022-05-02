@@ -13,6 +13,7 @@ extern crate rustc_middle;
 extern crate rustc_mir_dataflow;
 extern crate rustc_span;
 extern crate rustc_typeck;
+extern crate rustc_data_structures;
 
 pub mod analysis;
 pub mod sysroot;
@@ -58,14 +59,26 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
 
     // Reads/Writes count anaylsis
     for dispatchable_def_id in pallet.dispatchables.keys() {
-        let r_w_count_analysis = r_w_count_analysis::RWCountAnalysis::new(tcx, &pallet);
 
         let mir = tcx.optimized_mir(dispatchable_def_id);
+        // Detect loops in analyzed function
+        if mir.is_cfg_cyclic() {
+            println!("Loop detected in function {}, loops are not supported", tcx.def_path_str(*dispatchable_def_id));
+            continue;
+        }
+
+        let r_w_count_analysis = r_w_count_analysis::RWCountAnalysis::new(tcx, &pallet);
+
         let mut results = r_w_count_analysis
             .into_engine(tcx, mir)
             .pass_name("r_w_count_analysis")
             .iterate_to_fixpoint()
             .into_results_cursor(mir);
+
+        if !*results.analysis().is_success.borrow() {
+            println!("Analysis failed for {}", tcx.def_path_str(*dispatchable_def_id));
+            continue;
+        }
 
         let state =
             if let Some((last, _)) = rustc_middle::mir::traversal::reverse_postorder(mir).last() {

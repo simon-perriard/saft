@@ -22,19 +22,16 @@ impl RWCountDomain {
 
 impl JoinSemiLattice for RWCountDomain {
     fn join(&mut self, other: &Self) -> bool {
-        let mut res = false;
 
-        if other.reads > self.reads {
-            res = true;
-            self.reads += other.reads;
+        if other.reads == 0 && other.writes == 0 {
+            return false;
         }
 
-        if other.writes > self.writes {
-            res = true;
-            self.writes += other.writes;
-        }
+        self.reads += other.reads;
+        
+        self.writes += other.writes;
 
-        res
+        true
     }
 }
 
