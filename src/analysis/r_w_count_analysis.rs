@@ -106,11 +106,7 @@ where
         None
     }
 
-    fn t_visit_fn_call(
-        &mut self,
-        target_def_id: DefId,
-        substs: &'tcx SubstsRef,
-    ) {
+    fn t_visit_fn_call(&mut self, target_def_id: DefId, substs: &'tcx SubstsRef) {
         if let Some(field) = self.is_storage_call(target_def_id, substs) {
             if let TyKind::Closure(closure_def_id, _) = substs.last().unwrap().expect_ty().kind() {
                 self.t_fn_call_analysis(*closure_def_id);
