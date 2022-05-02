@@ -33,19 +33,19 @@ impl HasAccessType for Field {
 }
 
 pub(crate) enum StorageValueActions {
-    Exists,
-    Get,
-    TryGet,
-    Translate,
-    Put,
-    Set,
-    Mutate,
-    TryMutate,
-    Kill,
-    Take,
     Append,
     DecodeLen,
+    Exists,
+    Get,
+    Kill,
+    Mutate,
+    Put,
+    Set,
+    Take,
+    Translate,
     TryAppend,
+    TryGet,
+    TryMutate,
 }
 
 impl StorageValueActions {
@@ -55,19 +55,19 @@ impl StorageValueActions {
 
     fn storage_value_actions() -> Vec<String> {
         let storage_value_actions = vec![
-            "exists",
-            "get",
-            "try_get",
-            "translate",
-            "put",
-            "set",
-            "mutate",
-            "try_mutate",
-            "kill",
-            "take",
             "append",
             "decode_len",
+            "exists",
+            "get",
+            "kill",
+            "mutate",
+            "put",
+            "set",
+            "take",
+            "translate",
             "try_append",
+            "try_get",
+            "try_mutate",
         ];
 
         storage_value_actions
@@ -78,19 +78,19 @@ impl StorageValueActions {
 
     fn from(action: &str) -> StorageValueActions {
         match action {
-            "exists" => StorageValueActions::Exists,
-            "get" => StorageValueActions::Get,
-            "try_get" => StorageValueActions::TryGet,
-            "translate" => StorageValueActions::Translate,
-            "put" => StorageValueActions::Put,
-            "set" => StorageValueActions::Set,
-            "mutate" => StorageValueActions::Mutate,
-            "try_mutate" => StorageValueActions::TryMutate,
-            "kill" => StorageValueActions::Kill,
-            "take" => StorageValueActions::Take,
             "append" => StorageValueActions::Append,
             "decode_len" => StorageValueActions::DecodeLen,
+            "exists" => StorageValueActions::Exists,
+            "get" => StorageValueActions::Get,
+            "kill" => StorageValueActions::Kill,
+            "mutate" => StorageValueActions::Mutate,
+            "put" => StorageValueActions::Put,
+            "set" => StorageValueActions::Set,
+            "take" => StorageValueActions::Take,
+            "translate" => StorageValueActions::Translate,
             "try_append" => StorageValueActions::TryAppend,
+            "try_get" => StorageValueActions::TryGet,
+            "try_mutate" => StorageValueActions::TryMutate,
             _ => panic!("Invalid StorageValue action"),
         }
     }
@@ -102,82 +102,82 @@ impl StorageValueActions {
             None
         } else {
             match Self::from(action_short) {
-                StorageValueActions::Exists
-                | StorageValueActions::Get
-                | StorageValueActions::TryGet
-                | StorageValueActions::DecodeLen => Some(AccessType::Read),
-                StorageValueActions::Put | StorageValueActions::Set | StorageValueActions::Kill => {
-                    Some(AccessType::Write)
-                }
-                StorageValueActions::Mutate
-                | StorageValueActions::TryMutate
-                | StorageValueActions::Take
-                | StorageValueActions::Append
-                | StorageValueActions::TryAppend
-                | StorageValueActions::Translate => Some(AccessType::Both),
+                StorageValueActions::Append => Some(AccessType::Both),
+                StorageValueActions::DecodeLen => Some(AccessType::Read),
+                StorageValueActions::Exists => Some(AccessType::Read),
+                StorageValueActions::Get => Some(AccessType::Read),
+                StorageValueActions::Kill => Some(AccessType::Write),
+                StorageValueActions::Mutate => Some(AccessType::Both),
+                StorageValueActions::Put => Some(AccessType::Write),
+                StorageValueActions::Set => Some(AccessType::Write),
+                StorageValueActions::Take => Some(AccessType::Both),
+                StorageValueActions::Translate => Some(AccessType::Both),
+                StorageValueActions::TryAppend => Some(AccessType::Both),
+                StorageValueActions::TryGet => Some(AccessType::Read),
+                StorageValueActions::TryMutate => Some(AccessType::Both),
             }
         }
     }
 }
 
 pub(crate) enum StorageMapActions {
-    ContainsKey,
-    Get,
-    TryGet,
-    Swap,
-    Insert,
-    Remove,
-    Mutate,
-    TryMutate,
-    MutateExists,
-    TryMutateExists,
-    Take,
     Append,
+    ContainsKey,
     DecodeLen,
-    MigrateKey,
-    RemoveAll,
-    IterValues,
-    TranslateValues,
-    TryAppend,
+    Drain,
+    Get,
+    Insert,
     Iter,
     IterFrom,
     IterKeys,
     IterKeysFrom,
-    Drain,
+    IterValues,
+    MigrateKey,
+    Mutate,
+    MutateExists,
+    Remove,
+    RemoveAll,
+    Swap,
+    Take,
     Translate,
+    TranslateValues,
+    TryAppend,
+    TryGet,
+    TryMutate,
+    TryMutateExists,
 }
 
 impl StorageMapActions {
-    pub fn is_storage_map_action(action: &str) -> bool {
+    fn is_storage_map_action(action: &str) -> bool {
         StorageMapActions::storage_map_actions().contains(&action.to_owned())
     }
 
-    pub fn storage_map_actions() -> Vec<String> {
+    fn storage_map_actions() -> Vec<String> {
         let storage_map_actions = vec![
-            "contains_key",
-            "get",
-            "try_get",
-            "swap",
-            "insert",
-            "remove",
-            "mutate",
-            "try_mutate",
-            "mutate_exists",
-            "try_mutate_exists",
-            "take",
             "append",
+            "contains_key",
             "decode_len",
-            "migrate_key",
-            "remove_all",
-            "iter_values",
-            "translate_values",
-            "try_append",
+            "drain",
+            "get",
+            "insert",
             "iter",
             "iter_from",
             "iter_keys",
             "iter_keys_from",
-            "drain",
+            "iter_values",
+            "migrate_key",
+            "mutate",
+            "mutate_exists",
+            "remove",
+            "remove_all",
+            "swap",
+            "take",
             "translate",
+            "translate_values",
+            "try_append",
+            "try_get",
+            "try_mutate",
+            "try_mutate_exists",
         ];
 
         storage_map_actions
@@ -186,32 +186,32 @@ impl StorageMapActions {
             .collect()
     }
 
-    pub fn from(action: &str) -> StorageMapActions {
+    fn from(action: &str) -> StorageMapActions {
         match action {
-            "contains_key" => StorageMapActions::ContainsKey,
-            "get" => StorageMapActions::Get,
-            "try_get" => StorageMapActions::TryGet,
-            "swap" => StorageMapActions::Swap,
-            "insert" => StorageMapActions::Insert,
-            "remove" => StorageMapActions::Remove,
-            "mutate" => StorageMapActions::Mutate,
-            "try_mutate" => StorageMapActions::TryMutate,
-            "mutate_exists" => StorageMapActions::MutateExists,
-            "try_mutate_exists" => StorageMapActions::TryMutateExists,
-            "take" => StorageMapActions::Take,
             "append" => StorageMapActions::Append,
+            "contains_key" => StorageMapActions::ContainsKey,
             "decode_len" => StorageMapActions::DecodeLen,
-            "migrate_key" => StorageMapActions::MigrateKey,
-            "remove_all" => StorageMapActions::RemoveAll,
-            "iter_values" => StorageMapActions::IterValues,
-            "translate_values" => StorageMapActions::TranslateValues,
-            "try_append" => StorageMapActions::TryAppend,
+            "drain" => StorageMapActions::Drain,
+            "get" => StorageMapActions::Get,
+            "insert" => StorageMapActions::Insert,
             "iter" => StorageMapActions::Iter,
             "iter_from" => StorageMapActions::IterFrom,
             "iter_keys" => StorageMapActions::IterKeys,
             "iter_keys_from" => StorageMapActions::IterKeysFrom,
-            "drain" => StorageMapActions::Drain,
+            "iter_values" => StorageMapActions::IterValues,
+            "migrate_key" => StorageMapActions::MigrateKey,
+            "mutate" => StorageMapActions::Mutate,
+            "mutate_exists" => StorageMapActions::MutateExists,
+            "remove" => StorageMapActions::Remove,
+            "remove_all" => StorageMapActions::RemoveAll,
+            "swap" => StorageMapActions::Swap,
+            "take" => StorageMapActions::Take,
             "translate" => StorageMapActions::Translate,
+            "translate_values" => StorageMapActions::TranslateValues,
+            "try_append" => StorageMapActions::TryAppend,
+            "try_get" => StorageMapActions::TryGet,
+            "try_mutate" => StorageMapActions::TryMutate,
+            "try_mutate_exists" => StorageMapActions::TryMutateExists,
             _ => panic!("Invalid StorageMap action"),
         }
     }
@@ -223,31 +223,30 @@ impl StorageMapActions {
             None
         } else {
             match Self::from(action_short) {
-                StorageMapActions::ContainsKey
-                | StorageMapActions::Get
-                | StorageMapActions::TryGet
-                | StorageMapActions::DecodeLen => Some(AccessType::Read),
-
-                StorageMapActions::Swap => Some(AccessType::Both),
-                StorageMapActions::Insert => Some(AccessType::Write),
-                StorageMapActions::Remove => Some(AccessType::Write),
-                StorageMapActions::Mutate => Some(AccessType::Both),
-                StorageMapActions::TryMutate => Some(AccessType::Both),
-                StorageMapActions::MutateExists => Some(AccessType::Both),
-                StorageMapActions::TryMutateExists => Some(AccessType::Both),
-                StorageMapActions::Take => Some(AccessType::Both),
                 StorageMapActions::Append => Some(AccessType::Both),
-                StorageMapActions::MigrateKey => Some(AccessType::Both),
-                StorageMapActions::RemoveAll => Some(AccessType::Write),
-                StorageMapActions::IterValues => Some(AccessType::Read),
-                StorageMapActions::TranslateValues => Some(AccessType::Both),
-                StorageMapActions::TryAppend => Some(AccessType::Both),
+                StorageMapActions::ContainsKey => Some(AccessType::Read),
+                StorageMapActions::DecodeLen => Some(AccessType::Read),
+                StorageMapActions::Drain => Some(AccessType::Both),
+                StorageMapActions::Get => Some(AccessType::Read),
+                StorageMapActions::Insert => Some(AccessType::Write),
                 StorageMapActions::Iter => Some(AccessType::Read),
                 StorageMapActions::IterFrom => Some(AccessType::Read),
                 StorageMapActions::IterKeys => Some(AccessType::Read),
                 StorageMapActions::IterKeysFrom => Some(AccessType::Read),
-                StorageMapActions::Drain => Some(AccessType::Both),
+                StorageMapActions::IterValues => Some(AccessType::Read),
+                StorageMapActions::MigrateKey => Some(AccessType::Both),
+                StorageMapActions::Mutate => Some(AccessType::Both),
+                StorageMapActions::MutateExists => Some(AccessType::Both),
+                StorageMapActions::Remove => Some(AccessType::Write),
+                StorageMapActions::RemoveAll => Some(AccessType::Write),
+                StorageMapActions::Swap => Some(AccessType::Both),
+                StorageMapActions::Take => Some(AccessType::Both),
                 StorageMapActions::Translate => Some(AccessType::Both),
+                StorageMapActions::TranslateValues => Some(AccessType::Both),
+                StorageMapActions::TryAppend => Some(AccessType::Both),
+                StorageMapActions::TryGet => Some(AccessType::Read),
+                StorageMapActions::TryMutate => Some(AccessType::Both),
+                StorageMapActions::TryMutateExists => Some(AccessType::Both),
             }
         }
     }
@@ -288,11 +287,11 @@ pub(crate) enum StorageDoubleMapActions {
 }
 
 impl StorageDoubleMapActions {
-    pub fn is_storage_map_action(action: &str) -> bool {
+    fn is_storage_map_action(action: &str) -> bool {
         StorageDoubleMapActions::storage_double_map_actions().contains(&action.to_owned())
     }
 
-    pub fn storage_double_map_actions() -> Vec<String> {
+    fn storage_double_map_actions() -> Vec<String> {
         let storage_double_map_actions = vec![
             "append",
             "contains_key",
@@ -333,7 +332,7 @@ impl StorageDoubleMapActions {
             .collect()
     }
 
-    pub fn from(action: &str) -> StorageDoubleMapActions {
+    fn from(action: &str) -> StorageDoubleMapActions {
         match action {
             "append" => StorageDoubleMapActions::Append,
             "contains_key" => StorageDoubleMapActions::ContainsKey,
@@ -366,7 +365,7 @@ impl StorageDoubleMapActions {
             "try_get" => StorageDoubleMapActions::TryGet,
             "try_mutate" => StorageDoubleMapActions::TryMutate,
             "try_mutate_exists" => StorageDoubleMapActions::TryMutateExists,
-            _ => panic!("Invalid StorageMap action"),
+            _ => panic!("Invalid StorageDoubleMap action"),
         }
     }
 

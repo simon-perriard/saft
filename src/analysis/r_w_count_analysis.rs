@@ -110,11 +110,10 @@ where
         &mut self,
         target_def_id: DefId,
         substs: &'tcx SubstsRef,
-        location: Location,
     ) {
         if let Some(field) = self.is_storage_call(target_def_id, substs) {
             if let TyKind::Closure(closure_def_id, _) = substs.last().unwrap().expect_ty().kind() {
-                self.t_fn_call_analysis(*closure_def_id, location);
+                self.t_fn_call_analysis(*closure_def_id);
             }
 
             match field {
@@ -126,11 +125,11 @@ where
                 }
             }
         } else {
-            self.t_fn_call_analysis(target_def_id, location);
+            self.t_fn_call_analysis(target_def_id);
         }
     }
 
-    fn t_fn_call_analysis(&mut self, target_def_id: DefId, location: Location) {
+    fn t_fn_call_analysis(&mut self, target_def_id: DefId) {
         if self.summaries.borrow_mut().contains_key(&target_def_id) {
             // We already have the summary for this function
             let summary = self.summaries.borrow_mut();
@@ -205,7 +204,7 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
             } if let TyKind::FnDef(target_def_id, substs) = c.ty().kind() => {
                 self.visit_source_info(source_info);
 
-                self.t_visit_fn_call(*target_def_id, substs, location);
+                self.t_visit_fn_call(*target_def_id, substs);
             }
             _ => self.super_terminator(terminator, location),
         }
