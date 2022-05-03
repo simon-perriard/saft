@@ -13,7 +13,6 @@ extern crate rustc_middle;
 extern crate rustc_mir_dataflow;
 extern crate rustc_span;
 extern crate rustc_typeck;
-extern crate rustc_data_structures;
 
 pub mod analysis;
 pub mod sysroot;
@@ -59,11 +58,13 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
 
     // Reads/Writes count anaylsis
     for dispatchable_def_id in pallet.dispatchables.keys() {
-
         let mir = tcx.optimized_mir(dispatchable_def_id);
         // Detect loops in analyzed function
         if mir.is_cfg_cyclic() {
-            println!("Loop detected in function {}, loops are not supported", tcx.def_path_str(*dispatchable_def_id));
+            println!(
+                "Loop detected in function {}, loops are not supported",
+                tcx.def_path_str(*dispatchable_def_id)
+            );
             continue;
         }
 
@@ -76,7 +77,11 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
             .into_results_cursor(mir);
 
         if !*results.analysis().is_success.borrow() {
-            println!("Analysis failed for {}", tcx.def_path_str(*dispatchable_def_id));
+            println!(
+                "Analysis failed for {}",
+                tcx.def_path_str(*dispatchable_def_id)
+            );
+            println!();
             continue;
         }
 
@@ -89,7 +94,7 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
             };
 
         println!(
-            "{} --- {:?}",
+            "{} ---\n{}",
             tcx.def_path_str(*dispatchable_def_id),
             state.unwrap()
         );

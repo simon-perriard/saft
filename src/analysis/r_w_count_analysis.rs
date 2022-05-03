@@ -1,5 +1,6 @@
 use super::pallet::Pallet;
 use super::r_w_count_domain::RWCountDomain;
+use super::size_language::{HasSize, Size};
 use super::storage_actions::HasAccessType;
 use crate::rustc_mir_dataflow::JoinSemiLattice;
 use crate::storage_actions::AccessType;
@@ -25,7 +26,12 @@ pub(crate) struct RWCountAnalysis<'tcx, 'inter> {
 
 impl<'tcx, 'inter, 'intra> RWCountAnalysis<'tcx, 'inter> {
     pub(crate) fn new(tcx: TyCtxt<'tcx>, pallet: &'inter Pallet) -> Self {
-        Self::new_with_init(tcx, pallet, Rc::new(RefCell::new(HashTrieMap::new())), Rc::new(RefCell::new(true)))
+        Self::new_with_init(
+            tcx,
+            pallet,
+            Rc::new(RefCell::new(HashTrieMap::new())),
+            Rc::new(RefCell::new(true)),
+        )
     }
 
     fn new_with_init(
@@ -46,7 +52,13 @@ impl<'tcx, 'inter, 'intra> RWCountAnalysis<'tcx, 'inter> {
         &self,
         state: &'intra mut RWCountDomain,
     ) -> TransferFunction<'tcx, 'inter, 'intra> {
-        TransferFunction::new(self.tcx, self.pallet, self.summaries.clone(), state, self.is_success.clone())
+        TransferFunction::new(
+            self.tcx,
+            self.pallet,
+            self.summaries.clone(),
+            state,
+            self.is_success.clone(),
+        )
     }
 }
 
@@ -71,7 +83,7 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
             pallet,
             summaries,
             state,
-            is_success
+            is_success,
         }
     }
 }
@@ -80,7 +92,11 @@ impl<'visitor, 'tcx> TransferFunction<'tcx, '_, '_>
 where
     Self: Visitor<'visitor>,
 {
-    fn is_storage_call(&self, def_id: DefId, substs: &'tcx SubstsRef) -> Option<AccessType> {
+    fn is_storage_call(
+        &self,
+        def_id: DefId,
+        substs: &'tcx SubstsRef,
+    ) -> (Option<AccessType>, Size) {
         if self
             .tcx
             .def_path_str(def_id)
@@ -104,26 +120,29 @@ where
                     .map(|(field_def_id, field)| (tcx.type_of(field_def_id), field))
                 {
                     if ty == reconstructed_ty {
-                        return field.get_access_type(&tcx.def_path_str(def_id));
+                        return (
+                            field.get_access_type(&tcx.def_path_str(def_id)),
+                            field.get_size(&tcx),
+                        );
                     }
                 }
             }
         }
-        None
+        (None, Size::unit())
     }
 
     fn t_visit_fn_call(&mut self, target_def_id: DefId, substs: &'tcx SubstsRef) {
-        if let Some(field) = self.is_storage_call(target_def_id, substs) {
+        if let (Some(access_type), size) = self.is_storage_call(target_def_id, substs) {
             if let TyKind::Closure(closure_def_id, _) = substs.last().unwrap().expect_ty().kind() {
                 self.t_fn_call_analysis(*closure_def_id);
             }
 
-            match field {
-                AccessType::Read => self.state.add_reads(1),
-                AccessType::Write => self.state.add_writes(1),
+            match access_type {
+                AccessType::Read => self.state.add_reads(size),
+                AccessType::Write => self.state.add_writes(size),
                 AccessType::Both => {
-                    self.state.add_reads(1);
-                    self.state.add_writes(1)
+                    self.state.add_reads(size.clone());
+                    self.state.add_writes(size)
                 }
             }
         } else {
@@ -133,7 +152,7 @@ where
 
     fn t_fn_call_analysis(&mut self, target_def_id: DefId) {
         if self.summaries.borrow_mut().contains_key(&target_def_id) {
-            // We already have the summary for this function
+            // We already have the summary for this function, retrieve it and return
             let summary = self.summaries.borrow_mut();
             let summary = summary.get(&target_def_id).unwrap();
 
@@ -149,23 +168,33 @@ where
         }
 
         if self.tcx.is_mir_available(target_def_id) {
+            // We don't have the summary, we need to analyze the function
+
+            // Initialize the summary to None so we can detect a recursive call later
             self.summaries.borrow_mut().insert_mut(target_def_id, None);
 
             let target_mir = self.tcx.optimized_mir(target_def_id);
 
             // Detect loops in analyzed function
             if target_mir.is_cfg_cyclic() {
-                println!("Loop detected in function {}, loops are not supported", self.tcx.def_path_str(target_def_id));
+                println!(
+                    "Loop detected in function {}, loops are not supported",
+                    self.tcx.def_path_str(target_def_id)
+                );
                 *self.is_success.borrow_mut() = false;
                 return;
             }
 
-            let mut results =
-                RWCountAnalysis::new_with_init(self.tcx, self.pallet, self.summaries.clone(), self.is_success.clone())
-                    .into_engine(self.tcx, target_mir)
-                    .pass_name("r_w_count_analysis")
-                    .iterate_to_fixpoint()
-                    .into_results_cursor(target_mir);
+            let mut results = RWCountAnalysis::new_with_init(
+                self.tcx,
+                self.pallet,
+                self.summaries.clone(),
+                self.is_success.clone(),
+            )
+            .into_engine(self.tcx, target_mir)
+            .pass_name("r_w_count_analysis")
+            .iterate_to_fixpoint()
+            .into_results_cursor(target_mir);
 
             let fn_call_success_anaylsis = *results.analysis().is_success.borrow();
             *self.is_success.borrow_mut() = fn_call_success_anaylsis;

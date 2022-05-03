@@ -8,6 +8,8 @@ use rustc_span::def_id::DefId;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use super::size_language::HasSize;
+
 pub(crate) struct Dispatchable {
     pub def_id: DefId,
 }
@@ -21,6 +23,18 @@ pub(crate) struct Pallet {
 pub(crate) struct Field {
     pub def_id: DefId,
     pub kind: StorageKind,
+}
+
+impl HasSize for Field {
+    fn get_size(&self, tcx: &TyCtxt) -> super::size_language::Size {
+        match &self.kind {
+            StorageKind::StorageValue { value_type } => value_type.get_size(tcx),
+            StorageKind::StorageMap { value_type, .. } => value_type.get_size(tcx),
+            StorageKind::StorageDoubleMap { value_type, .. } => value_type.get_size(tcx),
+            StorageKind::StorageNMap { value_type, .. } => value_type.get_size(tcx),
+            StorageKind::CountedStorageMap { value_type, .. } => value_type.get_size(tcx),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]

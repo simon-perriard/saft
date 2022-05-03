@@ -1,9 +1,11 @@
+use crate::size_language::Size;
+use core::fmt;
 use rustc_mir_dataflow::{fmt::DebugWithContext, lattice::JoinSemiLattice};
 
 #[derive(Eq, PartialEq, Clone, Debug, Default)]
 pub(crate) struct RWCountDomain {
-    reads: u32,
-    writes: u32,
+    reads: Size,
+    writes: Size,
 }
 
 impl RWCountDomain {
@@ -11,28 +13,33 @@ impl RWCountDomain {
         Self::default()
     }
 
-    pub fn add_reads(&mut self, n: u32) {
-        self.reads += n;
+    pub fn add_reads(&mut self, size: Size) {
+        self.reads = self.reads.clone() + size;
     }
 
-    pub fn add_writes(&mut self, n: u32) {
-        self.writes += n;
+    pub fn add_writes(&mut self, size: Size) {
+        self.writes = self.writes.clone() + size;
     }
 }
 
 impl JoinSemiLattice for RWCountDomain {
     fn join(&mut self, other: &Self) -> bool {
-
-        if other.reads == 0 && other.writes == 0 {
+        if other.reads == Size::unit() && other.writes == Size::unit() {
             return false;
         }
 
-        self.reads += other.reads;
-        
-        self.writes += other.writes;
+        self.reads = self.reads.clone() + other.reads.clone();
+
+        self.writes = self.writes.clone() + other.writes.clone();
 
         true
     }
 }
 
 impl<C> DebugWithContext<C> for RWCountDomain {}
+
+impl fmt::Display for RWCountDomain {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "reads: {}\nwrites: {}\n", self.reads, self.writes)
+    }
+}
