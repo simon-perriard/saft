@@ -112,12 +112,13 @@ impl HasSize for Type {
                 ty::FloatTy::F64 => Size::concrete(size_of::<f64>().try_into().unwrap()),
             },
             Type::Adt(adt) => match adt {
-                Adt::Unknown(def_id) => Size::symbolic(tcx.def_path_str(*def_id)),
+                Adt::Unknown(def_id) => {
+                    // TODO: check if ::get
+                    Size::symbolic(tcx.def_path_str(*def_id))
+                }
                 Adt::Option(ty) => ty.get_size(tcx),
                 Adt::Vec(_) => todo!(),
-                Adt::BoundedVec(ty, max_size) => {
-                    Size::interval(Size::concrete(0), max_size.get_size(tcx)) * ty.get_size(tcx)
-                }
+                Adt::BoundedVec(ty, max_size) => max_size.get_size(tcx) * ty.get_size(tcx),
             },
             Type::Str => todo!(),
             Type::Array(ty, size) => Size::concrete((*size).into()) * ty.get_size(tcx),

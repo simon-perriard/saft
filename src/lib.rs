@@ -29,34 +29,6 @@ pub fn extract_juice(tcx: rustc_middle::ty::TyCtxt) {
     analysis_utils::dispatchables_getter::print_dispatchable_names(tcx, &pallet.dispatchables);
     println!();
 
-    // Storage calls analysis
-    /*for dispatchable_def_id in pallet.dispatchables.keys() {
-        let storage_calls_analysis =
-            storage_calls_analysis::StorageCallsAnalysis::new(tcx, &pallet);
-
-        let mir = tcx.optimized_mir(dispatchable_def_id);
-        let mut results = storage_calls_analysis
-            .into_engine(tcx, mir)
-            .pass_name("storage_calls_analysis")
-            .iterate_to_fixpoint()
-            .into_results_cursor(mir);
-
-        let state =
-            if let Some((last, _)) = rustc_middle::mir::traversal::reverse_postorder(mir).last() {
-                results.seek_to_block_end(last);
-                Some(results.get().clone())
-            } else {
-                None
-            };
-
-        println!(
-            "{} --- {:?}",
-            tcx.def_path_str(*dispatchable_def_id),
-            state.unwrap().storage_accesses()
-        );
-        println!();
-    }*/
-
     // Reads/Writes count anaylsis
     for dispatchable_def_id in pallet.dispatchables.keys() {
         let mir = tcx.optimized_mir(dispatchable_def_id);
@@ -100,7 +72,7 @@ pub fn extract_juice(tcx: rustc_middle::ty::TyCtxt) {
             };
 
         println!(
-            "{} ---\n{}",
+            "****************\nSummary for dispatchable {}\n{}****************",
             tcx.def_path_str(*dispatchable_def_id),
             state.unwrap()
         );

@@ -1,127 +1,131 @@
 use core::fmt;
+
+/*
+single Size thing in a single enum wiht concrete, symbolic, unit, add, mul, max
+
+have a linear multiplication Mul(u128, Size) for example
+
+for bounded vec, have the size with TYPE::get
+*/
 use rustc_middle::ty::TyCtxt;
 
 #[derive(Eq, PartialEq, Clone, Debug)]
-pub(crate) enum UnitSize {
+pub(crate) enum Size {
     Concrete(u128),
     Symbolic(String),
-    Interval(Size, Size),
     Unit,
-}
-
-#[derive(Eq, PartialEq, Clone, Debug)]
-pub(crate) enum Size {
-    UnitSize(Box<UnitSize>),
-    Operation(Box<Operation>),
-}
-
-#[derive(Eq, PartialEq, Clone, Debug)]
-pub(crate) enum Operation {
-    Add(Size, Size),
-    Mul(Size, Size),
-    Max(Size, Size),
-}
-
-impl Size {
-    pub(crate) fn concrete(c: u128) -> Self {
-        Self::UnitSize(Box::new(UnitSize::Concrete(c)))
-    }
-
-    pub(crate) fn symbolic(s: String) -> Self {
-        Self::UnitSize(Box::new(UnitSize::Symbolic(s)))
-    }
-
-    pub(crate) fn interval(a: Size, b: Size) -> Self {
-        Self::UnitSize(Box::new(UnitSize::Interval(a, b)))
-    }
-
-    pub(crate) fn unit() -> Self {
-        Self::UnitSize(Box::new(UnitSize::Unit))
-    }
-
-    pub(crate) fn is_zero(&self) -> bool {
-        match self {
-            Self::UnitSize(unit_size) => unit_size.is_zero(),
-            Self::Operation(op) => op.is_zero(),
-        }
-    }
-
-    pub(crate) fn max(&self, other: &Self) -> Self {
-        if *self == *other {
-            (*self).clone()
-        } else if self.is_zero() {
-            (*other).clone()
-        } else if other.is_zero() {
-            (*self).clone()
-        } else {
-            Self::Operation(Box::new(Operation::Max((*self).clone(), (*other).clone())))
-        }
-    }
-}
-
-impl UnitSize {
-    pub(crate) fn is_zero(&self) -> bool {
-        match self {
-            Self::Concrete(x) => *x == 0,
-            Self::Symbolic(_) => false,
-            Self::Interval(a, b) => a.is_zero() && b.is_zero(),
-            Self::Unit => true,
-        }
-    }
-}
-
-impl Operation {
-    pub(crate) fn is_zero(&self) -> bool {
-        match self {
-            Self::Add(a, b) => a.is_zero() && b.is_zero(),
-            Self::Mul(a, b) => a.is_zero() || b.is_zero(),
-            Self::Max(a, b) => a.is_zero() && b.is_zero(),
-        }
-    }
+    Add(Box<Size>, Box<Size>),
+    Mul(Box<Size>, Box<Size>),
+    LinMul(u128, Box<Size>),
+    Max(Box<Size>, Box<Size>),
 }
 
 impl Default for Size {
     fn default() -> Self {
-        Self::unit()
+        Size::Unit
     }
 }
 
-impl fmt::Display for UnitSize {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Size {
+    pub(crate) fn concrete(c: u128) -> Self {
+        Self::Concrete(c)
+    }
+
+    pub(crate) fn symbolic(s: String) -> Self {
+        Self::Symbolic(s)
+    }
+
+    pub(crate) fn unit() -> Self {
+        Self::Unit
+    }
+
+    pub(crate) fn is_zero(&self) -> bool {
         match self {
-            Self::Concrete(x) => write!(f, "{}", x),
-            Self::Symbolic(s) => write!(f, "SIZEOF({})", s),
-            Self::Interval(a, b) => write!(f, "[{},{}]", a, b),
-            Self::Unit => write!(f, "0"),
+            Self::Concrete(x) => *x == 0,
+            Self::Symbolic(_) => false,
+            Self::Unit => true,
+            Self::Add(a, b) => a.is_zero() && b.is_zero(),
+            Self::Mul(a, b) => a.is_zero() || b.is_zero(),
+            Self::LinMul(a, b) => *a == 0 || b.is_zero(),
+            Self::Max(a, b) => a.is_zero() && b.is_zero(),
         }
     }
-}
 
-impl fmt::Display for Operation {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    pub(crate) fn max(&self, rhs: &Self) -> Size {
+        if self.is_zero() {
+            return rhs.clone();
+        } else if rhs.is_zero() {
+            return (*self).clone();
+        } else if *self == *rhs {
+            return (*self).clone();
+        } else if let Size::Concrete(x) = *self && let Size::Concrete(y) = *rhs {
+            // Compact notation: max(x, y) => x > y ? x : y
+            return if x > y {(*self).clone()} else {rhs.clone()};
+        } else if let Size::Max(a, _) = (*rhs).clone() && *self == *a {
+            // Compact notation: max(a, max(a, b)) => max(a, b)
+            return rhs.clone();
+        }  else if let Size::Max(a, _) = (*self).clone() && *rhs == *a {
+            // Compact notation: max(max(a,b), a) => max(a, b)
+            return (*self).clone();
+        } else if let Size::Max(_, b) = (*rhs).clone() && *self == *b {
+            // Compact notation: max(b, max(a, b)) => max(a, b)
+            return rhs.clone();
+        } else if let Size::Max(_, b) = (*self).clone() && *rhs == *b {
+            // Compact notation: max(max(a, b), b) => max(a, b)
+            return (*self).clone();
+        }
+
+        // Try to resolve the max
+        if let Some(longest) = self.cmp_add_chain(rhs) {
+            return longest;
+        }
+
+        Self::Max(Box::new((*self).clone()), Box::new(rhs.clone()))
+    }
+
+    fn flatten_add_chain(&self) -> Vec<Self> {
+        let mut flat = Vec::new();
+
         match self {
-            Self::Add(a, b) => write!(f, "{} + {}", a, b),
-            Self::Mul(a, b) => {
-                if let Size::Operation(_) = a && let Size::Operation(_) = b {
-                    write!(f, "({}) * ({})", a, b)
-                } else if let Size::Operation(_) = a {
-                    write!(f, "({}) * {}", a, b)
-                } else if let Size::Operation(_) = b {
-                    write!(f, "{} * ({})", a, b)
-                } else {
-                    write!(f, "{} * {}", a, b)
-                }
+            Size::Add(a, b) => {
+                flat.append(&mut a.flatten_add_chain());
+                flat.append(&mut b.flatten_add_chain());
+            },
+            _ => flat.push(self.clone()),
+        }
+
+        flat
+    }
+
+    // Compare an Add or Size with another Add
+    fn cmp_add_chain(&self, other: &Self) -> Option<Self> {
+        let mut chain_1 = self.flatten_add_chain();
+        let mut chain_2 = other.flatten_add_chain();
+
+        // Remove common elements from chain_1
+        chain_1.drain_filter(|size_1| {
+            let res = chain_2.contains(size_1);
+            if res {
+                let chain_2_index = chain_2.iter().position(|size_2| *size_1 == *size_2).unwrap();
+                chain_2.remove(chain_2_index);
             }
-            Self::Max(a, b) => write!(f, "MAX({}, {})", a, b),
-        }
-    }
-}
+            res
+        });
 
-impl fmt::Display for Size {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UnitSize(unit) => write!(f, "{}", unit),
-            Self::Operation(op) => write!(f, "{}", op),
+        // We can say something only if at least one of them is empty,
+        // otherwise cannot decide which has most cost
+
+        if chain_1.is_empty() && chain_2.is_empty() {
+            // Both chains have equal value
+            Some((*other).clone())
+        } else if chain_1.is_empty() {
+            // Chain 2 is bigger
+            Some((*other).clone())
+        } else if chain_2.is_empty() {
+            // Chain 1 is bigger
+            Some((*self).clone())
+        } else {
+            None
         }
     }
 }
@@ -130,44 +134,15 @@ impl std::ops::Add for Size {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        if self.is_zero() && rhs.is_zero() {
-            Self::unit()
-        } else if self.is_zero() {
-            rhs
+        if self.is_zero() {
+            return rhs;
         } else if rhs.is_zero() {
-            self
-        } else {
-            if let Self::UnitSize(box UnitSize::Concrete(x)) = self &&
-            let Self::UnitSize(box UnitSize::Concrete(y)) = rhs {
-                return Self::concrete(x+y);
-            }
-            else if self == rhs {
-                // Compact notation: a+a = 2*a
-                return Self::concrete(2) * self;
-            } else if let Self::Operation(box Operation::Mul(a, b)) = self.clone() && (a == rhs || b == rhs)
-            {
-                // Compact notation: self+rhs = a*b + a or a*b + b => (a+1)*b or a*(b+1)
-                if let Self::UnitSize(box UnitSize::Concrete(x)) = a {
-                    return Self::concrete(x+1) * b;
-                } else if let Self::UnitSize(box UnitSize::Concrete(x)) = b {
-                    return Self::concrete(x+1) * a;
-                }
-            } else if let Self::Operation(box Operation::Mul(a, b)) = rhs.clone() && (a == self || b == self) {
-                // Compact notation: self+rhs = a + a*b or b + a*b => (a+1)*b or a*(b+1)
-                if let Self::UnitSize(box UnitSize::Concrete(x)) = a {
-                    return Self::concrete(x+1) * b;
-                } else if let Self::UnitSize(box UnitSize::Concrete(x)) = b {
-                    return Self::concrete(x+1) * a;
-                }
-            } else if let Self::Operation(box Operation::Mul(Size::UnitSize(box UnitSize::Concrete(x)), a)) = self.clone() &&
-                let Self::Operation(box Operation::Mul(Size::UnitSize(box UnitSize::Concrete(y)), b)) = rhs.clone() &&
-                a == b {
-                    // Compact notation: self+rhs = x*a + y*a = (x+y)*a
-                    return Self::concrete(x+y) * a;
-                }
-
-            Self::Operation(Box::new(Operation::Add(self, rhs)))
+            return self;
+        } else if let Self::Concrete(x) = self && let Self::Concrete(y) = rhs {
+            return Self::Concrete(x+y);
         }
+
+        Self::Add(Box::new(self), Box::new(rhs))
     }
 }
 
@@ -175,19 +150,34 @@ impl std::ops::Mul for Size {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        if self.is_zero() {
-            rhs
-        } else if rhs.is_zero() {
-            self
-        } else {
-            if let Self::UnitSize(box UnitSize::Concrete(x)) = self &&
-                let Self::Operation(box Operation::Mul(a, b)) = rhs.clone() &&
-                let Self::UnitSize(box UnitSize::Concrete(y)) = a
-            {
-                return Self::concrete(x*y) * b
-            }
+        if self.is_zero() || rhs.is_zero() {
+            return Self::unit();
+        } else if let Self::Concrete(x) = self && let Self::Concrete(y) = rhs {
+            return Self::Concrete(x*y);
+        } else if let Self::Concrete(x) = self && let Self::LinMul(y, a) = rhs {
+            return Self::LinMul(x*y, a);
+        } else if let Self::Concrete(x) = rhs && let Self::LinMul(y, a) = self {
+            return Self::LinMul(x*y, a);
+        } else if let Self::Concrete(x) = self {
+            return Self::LinMul(x, Box::new(rhs));
+        } else if let Self::Concrete(x) = rhs {
+            return Self::LinMul(x, Box::new(self));
+        }
 
-            Self::Operation(Box::new(Operation::Mul(self, rhs)))
+        Self::Mul(Box::new(self), Box::new(rhs))
+    }
+}
+
+impl fmt::Display for Size {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Concrete(x) => write!(f, "{}", x),
+            Self::Symbolic(s) => write!(f, "{}", s),
+            Self::Unit => write!(f, ""),
+            Self::Add(a, b) => write!(f, "{} + {}", a, b),
+            Self::Mul(a, b) => write!(f, "({}) * ({})", a, b),
+            Self::LinMul(a, b) => write!(f, "{} * ({})", a, b),
+            Self::Max(a, b) => write!(f, "MAX({}, {})", a, b),
         }
     }
 }

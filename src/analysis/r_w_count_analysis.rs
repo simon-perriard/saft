@@ -227,10 +227,10 @@ where
                     - deposit_event does not do storage access
                 **/
             } else {
-                println!(
+                /*println!(
                     "NO MIR AVAILABLE FOR {:?}",
                     self.tcx.def_path_str(target_def_id)
-                );
+                );*/
             }
         }
     }
