@@ -24,15 +24,15 @@ impl RWCountDomain {
 
 impl JoinSemiLattice for RWCountDomain {
     fn join(&mut self, other: &Self) -> bool {
-        if other.reads == Size::unit() && other.writes == Size::unit() {
+        if other.reads.is_zero() && other.writes.is_zero() {
             return false;
+        } else if self.reads == other.reads && self.writes == other.writes {
+            return false;
+        } else {
+            self.reads = self.reads.max(&other.reads);
+            self.writes = self.writes.max(&other.writes);
+            return true;
         }
-
-        self.reads = self.reads.clone() + other.reads.clone();
-
-        self.writes = self.writes.clone() + other.writes.clone();
-
-        true
     }
 }
 

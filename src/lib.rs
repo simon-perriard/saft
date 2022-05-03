@@ -27,6 +27,7 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
 
     println!("The following dispatchables will be analyzed :");
     analysis_utils::dispatchables_getter::print_dispatchable_names(tcx, &pallet.dispatchables);
+    println!();
 
     // Storage calls analysis
     /*for dispatchable_def_id in pallet.dispatchables.keys() {
@@ -65,6 +66,11 @@ pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
                 "Loop detected in function {}, loops are not supported",
                 tcx.def_path_str(*dispatchable_def_id)
             );
+            println!(
+                "Analysis failed for {}",
+                tcx.def_path_str(*dispatchable_def_id)
+            );
+            println!();
             continue;
         }
 

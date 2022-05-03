@@ -19,6 +19,7 @@ pub(crate) enum Size {
 pub(crate) enum Operation {
     Add(Size, Size),
     Mul(Size, Size),
+    Max(Size, Size),
 }
 
 impl Size {
@@ -44,6 +45,18 @@ impl Size {
             Self::Operation(op) => op.is_zero(),
         }
     }
+
+    pub(crate) fn max(&self, other: &Self) -> Self {
+        if *self == *other {
+            (*self).clone()
+        } else if self.is_zero() {
+            (*other).clone()
+        } else if other.is_zero() {
+            (*self).clone()
+        } else {
+            Self::Operation(Box::new(Operation::Max((*self).clone(), (*other).clone())))
+        }
+    }
 }
 
 impl UnitSize {
@@ -62,6 +75,7 @@ impl Operation {
         match self {
             Self::Add(a, b) => a.is_zero() && b.is_zero(),
             Self::Mul(a, b) => a.is_zero() || b.is_zero(),
+            Self::Max(a, b) => a.is_zero() && b.is_zero(),
         }
     }
 }
@@ -98,6 +112,7 @@ impl fmt::Display for Operation {
                     write!(f, "{} * {}", a, b)
                 }
             }
+            Self::Max(a, b) => write!(f, "MAX({}, {})", a, b),
         }
     }
 }
@@ -144,7 +159,12 @@ impl std::ops::Add for Size {
                 } else if let Self::UnitSize(box UnitSize::Concrete(x)) = b {
                     return Self::concrete(x+1) * a;
                 }
-            }
+            } else if let Self::Operation(box Operation::Mul(Size::UnitSize(box UnitSize::Concrete(x)), a)) = self.clone() &&
+                let Self::Operation(box Operation::Mul(Size::UnitSize(box UnitSize::Concrete(y)), b)) = rhs.clone() &&
+                a == b {
+                    // Compact notation: self+rhs = x*a + y*a = (x+y)*a
+                    return Self::concrete(x+y) * a;
+                }
 
             Self::Operation(Box::new(Operation::Add(self, rhs)))
         }
