@@ -23,25 +23,25 @@ pub(crate) enum Operation {
 
 impl Size {
     pub(crate) fn concrete(c: u128) -> Self {
-        Size::UnitSize(Box::new(UnitSize::Concrete(c)))
+        Self::UnitSize(Box::new(UnitSize::Concrete(c)))
     }
 
     pub(crate) fn symbolic(s: String) -> Self {
-        Size::UnitSize(Box::new(UnitSize::Symbolic(s)))
+        Self::UnitSize(Box::new(UnitSize::Symbolic(s)))
     }
 
     pub(crate) fn interval(a: Size, b: Size) -> Self {
-        Size::UnitSize(Box::new(UnitSize::Interval(a, b)))
+        Self::UnitSize(Box::new(UnitSize::Interval(a, b)))
     }
 
     pub(crate) fn unit() -> Self {
-        Size::UnitSize(Box::new(UnitSize::Unit))
+        Self::UnitSize(Box::new(UnitSize::Unit))
     }
 
     pub(crate) fn is_zero(&self) -> bool {
         match self {
-            Size::UnitSize(unit_size) => unit_size.is_zero(),
-            Size::Operation(op) => op.is_zero(),
+            Self::UnitSize(unit_size) => unit_size.is_zero(),
+            Self::Operation(op) => op.is_zero(),
         }
     }
 }
@@ -49,10 +49,10 @@ impl Size {
 impl UnitSize {
     pub(crate) fn is_zero(&self) -> bool {
         match self {
-            UnitSize::Concrete(x) => *x == 0,
-            UnitSize::Symbolic(_) => false,
-            UnitSize::Interval(a, b) => a.is_zero() && b.is_zero(),
-            UnitSize::Unit => true,
+            Self::Concrete(x) => *x == 0,
+            Self::Symbolic(_) => false,
+            Self::Interval(a, b) => a.is_zero() && b.is_zero(),
+            Self::Unit => true,
         }
     }
 }
@@ -60,8 +60,8 @@ impl UnitSize {
 impl Operation {
     pub(crate) fn is_zero(&self) -> bool {
         match self {
-            Operation::Add(a, b) => a.is_zero() && b.is_zero(),
-            Operation::Mul(a, b) => a.is_zero() || b.is_zero(),
+            Self::Add(a, b) => a.is_zero() && b.is_zero(),
+            Self::Mul(a, b) => a.is_zero() || b.is_zero(),
         }
     }
 }
@@ -75,10 +75,10 @@ impl Default for Size {
 impl fmt::Display for UnitSize {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            UnitSize::Concrete(x) => write!(f, "{}", x),
-            UnitSize::Symbolic(s) => write!(f, "SIZEOF({})", s),
-            UnitSize::Interval(a, b) => write!(f, "[{},{}]", a, b),
-            UnitSize::Unit => write!(f, "0"),
+            Self::Concrete(x) => write!(f, "{}", x),
+            Self::Symbolic(s) => write!(f, "SIZEOF({})", s),
+            Self::Interval(a, b) => write!(f, "[{},{}]", a, b),
+            Self::Unit => write!(f, "0"),
         }
     }
 }
@@ -86,8 +86,18 @@ impl fmt::Display for UnitSize {
 impl fmt::Display for Operation {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Operation::Add(a, b) => write!(f, "{} + {}", a, b),
-            Operation::Mul(a, b) => write!(f, "({}) * ({})", a, b),
+            Self::Add(a, b) => write!(f, "{} + {}", a, b),
+            Self::Mul(a, b) => {
+                if let Size::Operation(_) = a && let Size::Operation(_) = b {
+                    write!(f, "({}) * ({})", a, b)
+                } else if let Size::Operation(_) = a {
+                    write!(f, "({}) * {}", a, b)
+                } else if let Size::Operation(_) = b {
+                    write!(f, "{} * ({})", a, b)
+                } else {
+                    write!(f, "{} * {}", a, b)
+                }
+            }
         }
     }
 }
@@ -95,30 +105,54 @@ impl fmt::Display for Operation {
 impl fmt::Display for Size {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Size::UnitSize(unit) => write!(f, "{}", unit),
-            Size::Operation(op) => write!(f, "{}", op),
+            Self::UnitSize(unit) => write!(f, "{}", unit),
+            Self::Operation(op) => write!(f, "{}", op),
         }
     }
 }
 
 impl std::ops::Add for Size {
-    type Output = Size;
+    type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
         if self.is_zero() && rhs.is_zero() {
-            Size::unit()
+            Self::unit()
         } else if self.is_zero() {
             rhs
         } else if rhs.is_zero() {
             self
         } else {
-            Size::Operation(Box::new(Operation::Add(self, rhs)))
+            if let Self::UnitSize(box UnitSize::Concrete(x)) = self &&
+            let Self::UnitSize(box UnitSize::Concrete(y)) = rhs {
+                return Self::concrete(x+y);
+            }
+            else if self == rhs {
+                // Compact notation: a+a = 2*a
+                return Self::concrete(2) * self;
+            } else if let Self::Operation(box Operation::Mul(a, b)) = self.clone() && (a == rhs || b == rhs)
+            {
+                // Compact notation: self+rhs = a*b + a or a*b + b => (a+1)*b or a*(b+1)
+                if let Self::UnitSize(box UnitSize::Concrete(x)) = a {
+                    return Self::concrete(x+1) * b;
+                } else if let Self::UnitSize(box UnitSize::Concrete(x)) = b {
+                    return Self::concrete(x+1) * a;
+                }
+            } else if let Self::Operation(box Operation::Mul(a, b)) = rhs.clone() && (a == self || b == self) {
+                // Compact notation: self+rhs = a + a*b or b + a*b => (a+1)*b or a*(b+1)
+                if let Self::UnitSize(box UnitSize::Concrete(x)) = a {
+                    return Self::concrete(x+1) * b;
+                } else if let Self::UnitSize(box UnitSize::Concrete(x)) = b {
+                    return Self::concrete(x+1) * a;
+                }
+            }
+
+            Self::Operation(Box::new(Operation::Add(self, rhs)))
         }
     }
 }
 
 impl std::ops::Mul for Size {
-    type Output = Size;
+    type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
         if self.is_zero() {
@@ -126,7 +160,14 @@ impl std::ops::Mul for Size {
         } else if rhs.is_zero() {
             self
         } else {
-            Size::Operation(Box::new(Operation::Mul(self, rhs)))
+            if let Self::UnitSize(box UnitSize::Concrete(x)) = self &&
+                let Self::Operation(box Operation::Mul(a, b)) = rhs.clone() &&
+                let Self::UnitSize(box UnitSize::Concrete(y)) = a
+            {
+                return Self::concrete(x*y) * b
+            }
+
+            Self::Operation(Box::new(Operation::Mul(self, rhs)))
         }
     }
 }
