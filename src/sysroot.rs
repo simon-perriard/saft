@@ -16,10 +16,9 @@ pub fn get() -> Option<String> {
 }
 
 pub fn set_if_missing(args: &mut Vec<String>) {
-    if args
+    if !args
         .iter()
-        .find(|&arg| arg == "--sysroot" || arg.starts_with("--sysroot="))
-        .is_none()
+        .any(|arg| arg == "--sysroot" || arg.starts_with("--sysroot="))
     {
         match get() {
             Some(sysroot) => {

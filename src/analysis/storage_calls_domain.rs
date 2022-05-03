@@ -25,7 +25,7 @@ impl StorageCallsDomain {
     pub fn storage_accesses(&self) -> Vec<(BasicBlock, AccessType)> {
         self.0
             .iter()
-            .map(|(bb, access)| (bb.clone(), access.clone()))
+            .map(|(bb, access)| (*bb, access.clone()))
             .collect::<Vec<(BasicBlock, AccessType)>>()
     }
     pub fn is_empty(&self) -> bool {

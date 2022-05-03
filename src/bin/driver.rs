@@ -50,23 +50,22 @@ fn main() {
     }));
 }
 
-fn select_action(args: &Vec<String>) -> Action {
+fn select_action(args: &[String]) -> Action {
     if !should_emit_metadata(args) {
         return Compile;
     }
     if !is_cargo_primary_package(args) {
         return Compile;
     }
-    return Analyze;
+    Analyze
 }
 
-fn should_emit_metadata(args: &Vec<String>) -> bool {
+fn should_emit_metadata(args: &[String]) -> bool {
     args.iter()
-        .find(|arg| arg.starts_with("--emit=") && arg.contains("metadata"))
-        .is_some()
+        .any(|arg| arg.starts_with("--emit=") && arg.contains("metadata"))
 }
 
-fn is_cargo_primary_package(_args: &Vec<String>) -> bool {
+fn is_cargo_primary_package(_args: &[String]) -> bool {
     env::var("CARGO_PRIMARY_PACKAGE").is_ok()
 }
 

@@ -96,7 +96,7 @@ impl StorageValueActions {
     }
 
     pub fn get_access_type(action: &str) -> Option<AccessType> {
-        let action_short = action.clone().split("::").last().unwrap();
+        let action_short = action.split("::").last().unwrap();
 
         if !Self::is_storage_value_action(action_short) {
             None
@@ -217,7 +217,7 @@ impl StorageMapActions {
     }
 
     pub fn get_access_type(action: &str) -> Option<AccessType> {
-        let action_short = action.clone().split("::").last().unwrap();
+        let action_short = action.split("::").last().unwrap();
 
         if !Self::is_storage_map_action(action_short) {
             None
@@ -370,7 +370,7 @@ impl StorageDoubleMapActions {
     }
 
     pub fn get_access_type(action: &str) -> Option<AccessType> {
-        let action_short = action.clone().split("::").last().unwrap();
+        let action_short = action.split("::").last().unwrap();
 
         if !Self::is_storage_map_action(action_short) {
             None

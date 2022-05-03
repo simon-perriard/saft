@@ -19,7 +19,7 @@ pub mod sysroot;
 use crate::analysis::*;
 use rustc_mir_dataflow::Analysis;
 
-pub fn extract_juice<'tcx>(tcx: rustc_middle::ty::TyCtxt<'tcx>) {
+pub fn extract_juice(tcx: rustc_middle::ty::TyCtxt) {
     // Extract pallet
     print!("Extracting pallet information...");
     let pallet = pallet::Pallet::new(tcx);

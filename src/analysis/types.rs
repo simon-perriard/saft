@@ -128,7 +128,7 @@ impl HasSize for Type {
                 .iter()
                 .map(|ty| ty.get_size(tcx))
                 .reduce(|acc, ty_size| acc + ty_size)
-                .unwrap_or(Size::unit()),
+                .unwrap_or_else(Size::unit),
             Type::Projection(def_id) => Size::symbolic(tcx.def_path_str(*def_id)),
         }
     }

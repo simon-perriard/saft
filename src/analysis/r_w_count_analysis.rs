@@ -209,7 +209,7 @@ where
             if let Some(end_state) = end_state {
                 self.summaries
                     .borrow_mut()
-                    .insert_mut(target_def_id, Some(end_state.clone()));
+                    .insert_mut(target_def_id, Some(end_state));
             }
         } else {
             let path = self.tcx.def_path_str(target_def_id);
@@ -227,10 +227,10 @@ where
                     - deposit_event does not do storage access
                 **/
             } else {
-                /*println!(
+                println!(
                     "NO MIR AVAILABLE FOR {:?}",
                     self.tcx.def_path_str(target_def_id)
-                );*/
+                );
             }
         }
     }
