@@ -78,7 +78,7 @@ impl fmt::Display for UnitSize {
             UnitSize::Concrete(x) => write!(f, "{}", x),
             UnitSize::Symbolic(s) => write!(f, "SIZEOF({})", s),
             UnitSize::Interval(a, b) => write!(f, "[{},{}]", a, b),
-            UnitSize::Unit => write!(f, ""),
+            UnitSize::Unit => write!(f, "0"),
         }
     }
 }
