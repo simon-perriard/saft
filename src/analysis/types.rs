@@ -129,7 +129,7 @@ impl HasSize for Type {
             Type::Str => todo!(),
             Type::Array(ty, size) => Size::concrete((*size).into()) * ty.get_size(tcx),
             Type::Slice(_) => todo!(),
-            Type::Ref(_, _) => todo!(),
+            Type::Ref(ty, _) => ty.get_size(tcx),
             Type::FnPtr(_, ret_ty) => ret_ty.get_size(tcx),
             Type::Tuple(tys) => tys
                 .iter()

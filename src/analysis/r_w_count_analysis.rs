@@ -17,18 +17,22 @@ use std::rc::Rc;
 
 pub(crate) type Summary = HashTrieMap<DefId, Option<RWCountDomain>>;
 
-pub(crate) struct RWCountAnalysis<'tcx, 'inter> {
+pub(crate) struct RWCountAnalysis<'tcx, 'inter, 'intra> {
     tcx: TyCtxt<'tcx>,
     pallet: &'inter Pallet,
+    body: &'intra Body<'tcx>,
+    def_id: DefId,
     pub summaries: Rc<RefCell<Summary>>,
     pub is_success: Rc<RefCell<bool>>,
 }
 
-impl<'tcx, 'inter, 'intra> RWCountAnalysis<'tcx, 'inter> {
-    pub(crate) fn new(tcx: TyCtxt<'tcx>, pallet: &'inter Pallet) -> Self {
+impl<'tcx, 'inter, 'intra> RWCountAnalysis<'tcx, 'inter, 'intra> {
+    pub(crate) fn new(tcx: TyCtxt<'tcx>, pallet: &'inter Pallet, def_id:DefId, body: &'intra Body<'tcx>) -> Self {
         Self::new_with_init(
             tcx,
             pallet,
+            def_id,
+            body,
             Rc::new(RefCell::new(HashTrieMap::new())),
             Rc::new(RefCell::new(true)),
         )
@@ -37,12 +41,16 @@ impl<'tcx, 'inter, 'intra> RWCountAnalysis<'tcx, 'inter> {
     fn new_with_init(
         tcx: TyCtxt<'tcx>,
         pallet: &'inter Pallet,
+        def_id: DefId,
+        body: &'intra Body<'tcx>,
         summaries: Rc<RefCell<Summary>>,
         is_success: Rc<RefCell<bool>>,
     ) -> Self {
         RWCountAnalysis {
             tcx,
             pallet,
+            def_id,
+            body,
             summaries,
             is_success,
         }
@@ -56,6 +64,8 @@ impl<'tcx, 'inter, 'intra> RWCountAnalysis<'tcx, 'inter> {
             self.tcx,
             self.pallet,
             self.summaries.clone(),
+            self.def_id,
+            self.body,
             state,
             self.is_success.clone(),
         )
@@ -66,6 +76,8 @@ pub(crate) struct TransferFunction<'tcx, 'inter, 'intra> {
     tcx: TyCtxt<'tcx>,
     pallet: &'inter Pallet,
     summaries: Rc<RefCell<Summary>>,
+    _def_id: DefId,
+    _body: &'intra Body<'tcx>,
     state: &'intra mut RWCountDomain,
     is_success: Rc<RefCell<bool>>,
 }
@@ -75,6 +87,8 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
         tcx: TyCtxt<'tcx>,
         pallet: &'inter Pallet,
         summaries: Rc<RefCell<Summary>>,
+        _def_id: DefId,
+        _body: &'intra Body<'tcx>,
         state: &'intra mut RWCountDomain,
         is_success: Rc<RefCell<bool>>,
     ) -> Self {
@@ -82,6 +96,8 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
             tcx,
             pallet,
             summaries,
+            _def_id,
+            _body,
             state,
             is_success,
         }
@@ -131,10 +147,10 @@ where
         (None, Size::unit())
     }
 
-    fn t_visit_fn_call(&mut self, target_def_id: DefId, substs: &'tcx SubstsRef) {
+    fn t_visit_fn_call(&mut self, target_def_id: DefId, substs: &'tcx SubstsRef, args: Vec<Operand<'tcx>>) {
         if let (Some(access_type), size) = self.is_storage_call(target_def_id, substs) {
             if let TyKind::Closure(closure_def_id, _) = substs.last().unwrap().expect_ty().kind() {
-                self.t_fn_call_analysis(*closure_def_id);
+                self.t_fn_call_analysis(*closure_def_id, args);
             }
 
             match access_type {
@@ -146,11 +162,11 @@ where
                 }
             }
         } else {
-            self.t_fn_call_analysis(target_def_id);
+            self.t_fn_call_analysis(target_def_id, args);
         }
     }
 
-    fn t_fn_call_analysis(&mut self, target_def_id: DefId) {
+    fn t_fn_call_analysis(&mut self, target_def_id: DefId, _args: Vec<Operand<'tcx>>) {
         if self.summaries.borrow_mut().contains_key(&target_def_id) {
             // We already have the summary for this function, retrieve it and return
             let summary = self.summaries.borrow_mut();
@@ -188,6 +204,8 @@ where
             let mut results = RWCountAnalysis::new_with_init(
                 self.tcx,
                 self.pallet,
+                target_def_id,
+                target_mir,
                 self.summaries.clone(),
                 self.is_success.clone(),
             )
@@ -218,13 +236,21 @@ where
                 || path.starts_with("frame_system") && path.ends_with("ensure_signed")
                 || path.starts_with("frame_support") && path.ends_with("ensure_origin")
                 || path.starts_with("weights")
-                || path.starts_with("frame_system") && path.ends_with("deposit_event")
             {
                 /* No MIR available for those but:
                     - standard library does not do storage access
                     - ensure_signed/origin does not do storage access
                     - weights do not do storage access
-                    - deposit_event does not do storage access
+                **/
+            } else if path.starts_with("frame_system") && path.ends_with("deposit_event") {
+                //println!("{:?}", args[0].ty(self.body, self.tcx).kind());
+                //println!("{:?}", args[0].ty(self.body, self.tcx).is_sized(self.tcx.at(self.body.span), self.tcx.param_env(self.def_id)));
+                //println!("{:?}", Type::from_mir_ty(self.tcx, args[0].ty(self.body, self.tcx)));
+                
+                // We need to track type of the event on the previous statements, it gets casted around
+
+                /*
+                    Deposit event will have it own specification
                 **/
             } else {
                 /*println!(
@@ -243,18 +269,19 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
         match kind {
             TerminatorKind::Call {
                 func: Operand::Constant(c),
+                args,
                 ..
             } if let TyKind::FnDef(target_def_id, substs) = c.ty().kind() => {
                 self.visit_source_info(source_info);
 
-                self.t_visit_fn_call(*target_def_id, substs);
+                self.t_visit_fn_call(*target_def_id, substs, (*args).clone());
             }
             _ => self.super_terminator(terminator, location),
         }
     }
 }
 
-impl<'inter> AnalysisDomain<'inter> for RWCountAnalysis<'_, '_> {
+impl<'inter> AnalysisDomain<'inter> for RWCountAnalysis<'_, '_, '_> {
     type Domain = RWCountDomain;
     const NAME: &'static str = "ReadsWritesCountAnalysis";
 
@@ -269,7 +296,7 @@ impl<'inter> AnalysisDomain<'inter> for RWCountAnalysis<'_, '_> {
     }
 }
 
-impl<'tcx> Analysis<'tcx> for RWCountAnalysis<'tcx, '_> {
+impl<'tcx> Analysis<'tcx> for RWCountAnalysis<'tcx, '_, '_> {
     fn apply_statement_effect(
         &self,
         _state: &mut Self::Domain,
