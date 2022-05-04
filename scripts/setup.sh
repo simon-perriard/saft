@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-TOOLCHAIN="nightly-2022-04-21"
+TOOLCHAIN="nightly-2022-05-04"
 
 rustup update stable
 rustup update nightly

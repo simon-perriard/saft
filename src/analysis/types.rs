@@ -120,11 +120,11 @@ impl HasSize for Type {
                     match max_size {
                         Size::Symbolic(mut path, _) => {
                             path.push_str("::get()");
-                            Size::symbolic(path, true)
-                        },
-                        _ => max_size * ty.get_size(tcx)
-                    }  
-                },
+                            Size::symbolic(path, true) * ty.get_size(tcx)
+                        }
+                        _ => max_size * ty.get_size(tcx),
+                    }
+                }
             },
             Type::Str => todo!(),
             Type::Array(ty, size) => Size::concrete((*size).into()) * ty.get_size(tcx),

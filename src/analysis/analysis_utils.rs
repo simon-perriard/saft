@@ -34,9 +34,12 @@ pub(crate) mod dispatchables_getter {
 
         for item_id in tcx.hir().items() {
             let rustc_hir::Item {
-                ident, kind, vis, ..
+                ident,
+                def_id,
+                kind,
+                ..
             } = tcx.hir().item(item_id);
-            if vis.node.is_pub() {
+            if let rustc_middle::ty::Visibility::Public = tcx.visibility(def_id.to_def_id()) {
                 if let rustc_hir::ItemKind::Enum(enum_def, _) = kind {
                     if ident.as_str() == "Call" {
                         for variant in enum_def.variants.iter() {

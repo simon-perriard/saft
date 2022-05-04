@@ -188,12 +188,11 @@ impl fmt::Display for Size {
                 } else {
                     write!(f, "SIZEOF({})", s)
                 }
-            },
+            }
             Self::Unit => write!(f, ""),
             Self::Add(a, b) => write!(f, "{} + {}", a, b),
             Self::Mul(a, b) => {
-                if a.pretty_print_need_parenthesis() &&
-                b.pretty_print_need_parenthesis() {
+                if a.pretty_print_need_parenthesis() && b.pretty_print_need_parenthesis() {
                     write!(f, "({}) * ({})", a, b)
                 } else if a.pretty_print_need_parenthesis() {
                     write!(f, "({}) * {}", a, b)
@@ -202,7 +201,7 @@ impl fmt::Display for Size {
                 } else {
                     write!(f, "{} * {}", a, b)
                 }
-            },
+            }
             Self::LinMul(a, b) => write!(f, "{} * ({})", a, b),
             Self::Max(a, b) => write!(f, "MAX({}, {})", a, b),
         }
