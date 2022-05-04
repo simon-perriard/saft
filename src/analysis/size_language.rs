@@ -12,7 +12,7 @@ use rustc_middle::ty::TyCtxt;
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub(crate) enum Size {
     Concrete(u128),
-    Symbolic(String),
+    Symbolic(String, bool), // bool is to tell whether it has an associated function
     Unit,
     Add(Box<Size>, Box<Size>),
     Mul(Box<Size>, Box<Size>),
@@ -31,8 +31,8 @@ impl Size {
         Self::Concrete(c)
     }
 
-    pub(crate) fn symbolic(s: String) -> Self {
-        Self::Symbolic(s)
+    pub(crate) fn symbolic(s: String, has_function: bool) -> Self {
+        Self::Symbolic(s, has_function)
     }
 
     pub(crate) fn unit() -> Self {
@@ -42,7 +42,7 @@ impl Size {
     pub(crate) fn is_zero(&self) -> bool {
         match self {
             Self::Concrete(x) => *x == 0,
-            Self::Symbolic(_) => false,
+            Self::Symbolic(_, _) => false,
             Self::Unit => true,
             Self::Add(a, b) => a.is_zero() && b.is_zero(),
             Self::Mul(a, b) => a.is_zero() || b.is_zero(),
@@ -90,7 +90,7 @@ impl Size {
             Size::Add(a, b) => {
                 flat.append(&mut a.flatten_add_chain());
                 flat.append(&mut b.flatten_add_chain());
-            },
+            }
             _ => flat.push(self.clone()),
         }
 
@@ -106,7 +106,10 @@ impl Size {
         chain_1.drain_filter(|size_1| {
             let res = chain_2.contains(size_1);
             if res {
-                let chain_2_index = chain_2.iter().position(|size_2| *size_1 == *size_2).unwrap();
+                let chain_2_index = chain_2
+                    .iter()
+                    .position(|size_2| *size_1 == *size_2)
+                    .unwrap();
                 chain_2.remove(chain_2_index);
             }
             res
@@ -126,6 +129,13 @@ impl Size {
             Some((*self).clone())
         } else {
             None
+        }
+    }
+
+    fn pretty_print_need_parenthesis(&self) -> bool {
+        match self {
+            Self::Add(_, _) => true,
+            _ => false,
         }
     }
 }
@@ -172,10 +182,27 @@ impl fmt::Display for Size {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Concrete(x) => write!(f, "{}", x),
-            Self::Symbolic(s) => write!(f, "{}", s),
+            Self::Symbolic(s, has_function) => {
+                if *has_function {
+                    write!(f, "VALUEOF({})", s)
+                } else {
+                    write!(f, "SIZEOF({})", s)
+                }
+            },
             Self::Unit => write!(f, ""),
             Self::Add(a, b) => write!(f, "{} + {}", a, b),
-            Self::Mul(a, b) => write!(f, "({}) * ({})", a, b),
+            Self::Mul(a, b) => {
+                if a.pretty_print_need_parenthesis() &&
+                b.pretty_print_need_parenthesis() {
+                    write!(f, "({}) * ({})", a, b)
+                } else if a.pretty_print_need_parenthesis() {
+                    write!(f, "({}) * {}", a, b)
+                } else if b.pretty_print_need_parenthesis() {
+                    write!(f, "{} * ({})", a, b)
+                } else {
+                    write!(f, "{} * {}", a, b)
+                }
+            },
             Self::LinMul(a, b) => write!(f, "{} * ({})", a, b),
             Self::Max(a, b) => write!(f, "MAX({}, {})", a, b),
         }
