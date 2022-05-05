@@ -42,16 +42,9 @@ impl RWCountDomain {
     }
 
     pub fn inter_join(&mut self, other: &Self) {
-        if other.reads.is_zero() && other.writes.is_zero() && other.events.is_zero()
-            || self.reads == other.reads
-                && self.writes == other.writes
-                && self.events == other.events
-        {
-        } else {
-            self.reads = self.reads.max(&other.reads);
-            self.writes = self.writes.max(&other.writes);
-            self.events = self.events.max(&other.events);
-        }
+        self.reads = self.reads.clone() + other.reads.clone();
+        self.writes = self.writes.clone() + other.writes.clone();
+        self.events = self.events.clone() + other.events.clone();
     }
 
     pub fn reset_bb_discriminants(&mut self) {
