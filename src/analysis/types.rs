@@ -21,6 +21,7 @@ pub(crate) enum Type {
     FnPtr(Vec<Type>, Box<Type>),
     Tuple(Vec<Type>),
     Projection(DefId),
+    NOPE,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -81,7 +82,7 @@ impl Type {
                     .collect(),
             ),
             TyKind::Projection(p) => Type::Projection(p.item_def_id),
-            _ => unimplemented!(),
+            _ => Type::NOPE,
         }
     }
 }
@@ -137,6 +138,7 @@ impl HasSize for Type {
                 .reduce(|acc, ty_size| acc + ty_size)
                 .unwrap_or_else(Size::unit),
             Type::Projection(def_id) => Size::symbolic(tcx.def_path_str(*def_id), false),
+            Type::NOPE => Size::unit(),
         }
     }
 }

@@ -2,12 +2,11 @@ use super::pallet::Pallet;
 use super::r_w_count_domain::RWCountDomain;
 use super::size_language::{HasSize, Size};
 use super::storage_actions::HasAccessType;
-use crate::rustc_mir_dataflow::JoinSemiLattice;
 use crate::storage_actions::AccessType;
 use rpds::HashTrieMap;
 use rustc_middle::mir::{
-    traversal::*, visit::*, BasicBlock, Body, Location, Operand, Statement, Terminator,
-    TerminatorKind,
+    traversal::*, visit::*, BasicBlock, Body, Location, Operand, Statement, StatementKind,
+    Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
@@ -27,7 +26,12 @@ pub(crate) struct RWCountAnalysis<'tcx, 'inter, 'intra> {
 }
 
 impl<'tcx, 'inter, 'intra> RWCountAnalysis<'tcx, 'inter, 'intra> {
-    pub(crate) fn new(tcx: TyCtxt<'tcx>, pallet: &'inter Pallet, def_id:DefId, body: &'intra Body<'tcx>) -> Self {
+    pub(crate) fn new(
+        tcx: TyCtxt<'tcx>,
+        pallet: &'inter Pallet,
+        def_id: DefId,
+        body: &'intra Body<'tcx>,
+    ) -> Self {
         Self::new_with_init(
             tcx,
             pallet,
@@ -77,7 +81,7 @@ pub(crate) struct TransferFunction<'tcx, 'inter, 'intra> {
     pallet: &'inter Pallet,
     summaries: Rc<RefCell<Summary>>,
     _def_id: DefId,
-    _body: &'intra Body<'tcx>,
+    body: &'intra Body<'tcx>,
     state: &'intra mut RWCountDomain,
     is_success: Rc<RefCell<bool>>,
 }
@@ -88,7 +92,7 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
         pallet: &'inter Pallet,
         summaries: Rc<RefCell<Summary>>,
         _def_id: DefId,
-        _body: &'intra Body<'tcx>,
+        body: &'intra Body<'tcx>,
         state: &'intra mut RWCountDomain,
         is_success: Rc<RefCell<bool>>,
     ) -> Self {
@@ -97,7 +101,7 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
             pallet,
             summaries,
             _def_id,
-            _body,
+            body,
             state,
             is_success,
         }
@@ -147,7 +151,12 @@ where
         (None, Size::unit())
     }
 
-    fn t_visit_fn_call(&mut self, target_def_id: DefId, substs: &'tcx SubstsRef, args: Vec<Operand<'tcx>>) {
+    fn t_visit_fn_call(
+        &mut self,
+        target_def_id: DefId,
+        substs: &'tcx SubstsRef,
+        args: Vec<Operand<'tcx>>,
+    ) {
         if let (Some(access_type), size) = self.is_storage_call(target_def_id, substs) {
             if let TyKind::Closure(closure_def_id, _) = substs.last().unwrap().expect_ty().kind() {
                 self.t_fn_call_analysis(*closure_def_id, args);
@@ -166,20 +175,39 @@ where
         }
     }
 
-    fn t_fn_call_analysis(&mut self, target_def_id: DefId, _args: Vec<Operand<'tcx>>) {
+    fn t_fn_call_analysis(&mut self, target_def_id: DefId, args: Vec<Operand<'tcx>>) {
         if self.summaries.borrow_mut().contains_key(&target_def_id) {
             // We already have the summary for this function, retrieve it and return
             let summary = self.summaries.borrow_mut();
             let summary = summary.get(&target_def_id).unwrap();
 
             if let Some(summary) = summary {
-                self.state.join(summary);
+                self.state.inter_join(summary);
             } else {
                 // we are in a recursive call, just ignore it
                 println!("Recursive calls not supported.");
                 *self.is_success.borrow_mut() = false;
             }
 
+            return;
+        }
+
+        let path = self.tcx.def_path_str(target_def_id);
+
+        if path.starts_with("pallet::Pallet") && path.ends_with("deposit_event") {
+            if let TyKind::Adt(adt_def, _) = args[0].ty(self.body, self.tcx).kind() {
+                let variant = adt_def.variant(
+                    *self
+                        .state
+                        .bb_set_discriminant
+                        .get(&args[0].place().unwrap().local)
+                        .unwrap(),
+                );
+
+                let cost = Size::symbolic(self.tcx.def_path_str(variant.def_id), false);
+
+                self.state.add_events(cost);
+            }
             return;
         }
 
@@ -225,6 +253,8 @@ where
             };
 
             if let Some(end_state) = end_state {
+                self.state.inter_join(&end_state);
+
                 self.summaries
                     .borrow_mut()
                     .insert_mut(target_def_id, Some(end_state));
@@ -242,16 +272,6 @@ where
                     - ensure_signed/origin does not do storage access
                     - weights do not do storage access
                 **/
-            } else if path.starts_with("frame_system") && path.ends_with("deposit_event") {
-                //println!("{:?}", args[0].ty(self.body, self.tcx).kind());
-                //println!("{:?}", args[0].ty(self.body, self.tcx).is_sized(self.tcx.at(self.body.span), self.tcx.param_env(self.def_id)));
-                //println!("{:?}", Type::from_mir_ty(self.tcx, args[0].ty(self.body, self.tcx)));
-                
-                // We need to track type of the event on the previous statements, it gets casted around
-
-                /*
-                    Deposit event will have it own specification
-                **/
             } else {
                 /*println!(
                     "NO MIR AVAILABLE FOR {:?}",
@@ -263,6 +283,22 @@ where
 }
 
 impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
+    fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {
+        let Statement { source_info, kind } = statement;
+        match kind {
+            StatementKind::SetDiscriminant {
+                place,
+                variant_index,
+            } => {
+                self.visit_source_info(source_info);
+                self.state
+                    .bb_set_discriminant
+                    .insert_mut(place.local, *variant_index);
+            }
+            _ => self.super_statement(statement, location),
+        }
+    }
+
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
         let Terminator { source_info, kind } = terminator;
 
@@ -278,10 +314,13 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
             }
             _ => self.super_terminator(terminator, location),
         }
+
+        // clean basic block discriminants state for next bb
+        self.state.reset_bb_discriminants()
     }
 }
 
-impl<'inter> AnalysisDomain<'inter> for RWCountAnalysis<'_, '_, '_> {
+impl<'inter> AnalysisDomain<'inter> for RWCountAnalysis<'inter, '_, '_> {
     type Domain = RWCountDomain;
     const NAME: &'static str = "ReadsWritesCountAnalysis";
 
@@ -291,19 +330,18 @@ impl<'inter> AnalysisDomain<'inter> for RWCountAnalysis<'_, '_, '_> {
         RWCountDomain::new()
     }
 
-    fn initialize_start_block(&self, _body: &Body<'inter>, _state: &mut Self::Domain) {
-        // Function args do not affect the analysis
-    }
+    fn initialize_start_block(&self, _body: &Body<'inter>, _state: &mut Self::Domain) {}
 }
 
 impl<'tcx> Analysis<'tcx> for RWCountAnalysis<'tcx, '_, '_> {
     fn apply_statement_effect(
         &self,
-        _state: &mut Self::Domain,
-        _statement: &Statement<'tcx>,
-        _location: Location,
+        state: &mut Self::Domain,
+        statement: &Statement<'tcx>,
+        location: Location,
     ) {
-        // do nothing
+        self.transfer_function(state)
+            .visit_statement(statement, location)
     }
 
     fn apply_terminator_effect(

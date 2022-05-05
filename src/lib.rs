@@ -12,6 +12,7 @@ extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_mir_dataflow;
 extern crate rustc_span;
+extern crate rustc_target;
 extern crate rustc_typeck;
 
 pub mod analysis;
@@ -46,7 +47,8 @@ pub fn extract_juice(tcx: rustc_middle::ty::TyCtxt) {
             continue;
         }
 
-        let r_w_count_analysis = r_w_count_analysis::RWCountAnalysis::new(tcx, &pallet, *dispatchable_def_id, mir);
+        let r_w_count_analysis =
+            r_w_count_analysis::RWCountAnalysis::new(tcx, &pallet, *dispatchable_def_id, mir);
 
         let mut results = r_w_count_analysis
             .into_engine(tcx, mir)

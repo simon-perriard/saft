@@ -133,10 +133,7 @@ impl Size {
     }
 
     fn pretty_print_need_parenthesis(&self) -> bool {
-        match self {
-            Self::Add(_, _) => true,
-            _ => false,
-        }
+        matches!(self, Self::Add(_, _))
     }
 }
 
@@ -189,7 +186,7 @@ impl fmt::Display for Size {
                     write!(f, "SIZEOF({})", s)
                 }
             }
-            Self::Unit => write!(f, ""),
+            Self::Unit => write!(f, "0"),
             Self::Add(a, b) => write!(f, "{} + {}", a, b),
             Self::Mul(a, b) => {
                 if a.pretty_print_need_parenthesis() && b.pretty_print_need_parenthesis() {
