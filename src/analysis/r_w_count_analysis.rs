@@ -192,8 +192,10 @@ where
             return;
         }
 
+        // Filtering event deposit, pallet::deposit_event will later call frame_system::deposit_event,
+        // but we can only catch the variant of the Event enum now. Or we need to pass a calling context for
+        // further analysis.
         let path = self.tcx.def_path_str(target_def_id);
-
         if path.starts_with("pallet::Pallet") && path.ends_with("deposit_event") {
             if let TyKind::Adt(adt_def, _) = args[0].ty(self.body, self.tcx).kind() {
                 let variant = adt_def.variant(
@@ -229,6 +231,7 @@ where
                 return;
             }
 
+            // Analyze the target function
             let mut results = RWCountAnalysis::new_with_init(
                 self.tcx,
                 self.pallet,
@@ -242,8 +245,10 @@ where
             .iterate_to_fixpoint()
             .into_results_cursor(target_mir);
 
-            let fn_call_success_anaylsis = *results.analysis().is_success.borrow();
-            *self.is_success.borrow_mut() = fn_call_success_anaylsis;
+            // Retrieve target function analysis success flag
+            let fn_call_success_anaylsis_state = *results.analysis().is_success.borrow();
+            let self_success_state = *self.is_success.borrow();
+            *self.is_success.borrow_mut() = self_success_state && fn_call_success_anaylsis_state;
 
             let end_state = if let Some((last, _)) = reverse_postorder(target_mir).last() {
                 results.seek_to_block_end(last);
@@ -253,8 +258,10 @@ where
             };
 
             if let Some(end_state) = end_state {
+                // Update caller function state
                 self.state.inter_join(&end_state);
 
+                // Add the callee function summary to our summaries map
                 self.summaries
                     .borrow_mut()
                     .insert_mut(target_def_id, Some(end_state));
@@ -291,6 +298,9 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 variant_index,
             } => {
                 self.visit_source_info(source_info);
+
+                // Set the discriminant for the local, we need it to track
+                // the Event enum variant that will be deposited
                 self.state
                     .bb_set_discriminant
                     .insert_mut(place.local, *variant_index);
