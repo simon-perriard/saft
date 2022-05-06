@@ -2,11 +2,12 @@ use super::pallet::Pallet;
 use super::r_w_count_domain::RWCountDomain;
 use super::size_language::{HasSize, Size};
 use super::storage_actions::HasAccessType;
+use super::time_language::Time;
 use crate::storage_actions::AccessType;
 use rpds::HashTrieMap;
 use rustc_middle::mir::{
-    traversal::*, visit::*, BasicBlock, Body, Location, Operand, Statement, StatementKind,
-    Terminator, TerminatorKind,
+    traversal::*, visit::*, BasicBlock, BinOp, Body, Location, Operand, Rvalue, Statement,
+    StatementKind, Terminator, TerminatorKind, UnOp,
 };
 use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
@@ -158,7 +159,6 @@ where
         args: Vec<Operand<'tcx>>,
     ) {
         if let (Some(access_type), size) = self.is_storage_call(target_def_id, substs) {
-
             if let TyKind::Closure(closure_def_id, _) = substs.last().unwrap().expect_ty().kind() {
                 // Storage access functions may have closures as parameters, we need to analyze them
                 self.t_fn_call_analysis(*closure_def_id, args);
@@ -189,6 +189,11 @@ where
                 self.state.inter_join(summary);
             } else {
                 // we are in a recursive call, just ignore it
+                println!(
+                    "{:?} calling {:?}",
+                    self.tcx.def_path_str(self._def_id),
+                    self.tcx.def_path_str(target_def_id)
+                );
                 println!("Recursive calls not supported.");
                 *self.is_success.borrow_mut() = false;
             }
@@ -209,7 +214,7 @@ where
                         .get(&args[0].place().unwrap().local)
                         .unwrap(),
                 );
-                
+
                 // For now add the variant size as symbolic
                 let cost = Size::symbolic(self.tcx.def_path_str(variant.def_id), false);
 
@@ -296,6 +301,45 @@ where
 }
 
 impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
+    fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
+        match rvalue {
+            Rvalue::BinaryOp(bin_op, box (lhs, rhs))
+            | Rvalue::CheckedBinaryOp(bin_op, box (lhs, rhs)) => {
+                self.visit_operand(lhs, location);
+                self.visit_operand(rhs, location);
+
+                match bin_op {
+                    BinOp::Add => self.state.add_time(Time::Symbolic("Add".to_string())),
+                    BinOp::Sub => self.state.add_time(Time::Symbolic("Sub".to_string())),
+                    BinOp::Mul => self.state.add_time(Time::Symbolic("Mul".to_string())),
+                    BinOp::Div => self.state.add_time(Time::Symbolic("Div".to_string())),
+                    BinOp::Rem => self.state.add_time(Time::Symbolic("Rem".to_string())),
+                    BinOp::BitXor => self.state.add_time(Time::Symbolic("BitXor".to_string())),
+                    BinOp::BitAnd => self.state.add_time(Time::Symbolic("BitAnd".to_string())),
+                    BinOp::BitOr => self.state.add_time(Time::Symbolic("BitOr".to_string())),
+                    BinOp::Shl => self.state.add_time(Time::Symbolic("Shl".to_string())),
+                    BinOp::Shr => self.state.add_time(Time::Symbolic("Shr".to_string())),
+                    BinOp::Eq => self.state.add_time(Time::Symbolic("Eq".to_string())),
+                    BinOp::Lt => self.state.add_time(Time::Symbolic("Lt".to_string())),
+                    BinOp::Le => self.state.add_time(Time::Symbolic("Le".to_string())),
+                    BinOp::Ne => self.state.add_time(Time::Symbolic("Ne".to_string())),
+                    BinOp::Ge => self.state.add_time(Time::Symbolic("Ge".to_string())),
+                    BinOp::Gt => self.state.add_time(Time::Symbolic("Gt".to_string())),
+                    BinOp::Offset => self.state.add_time(Time::Symbolic("Offset".to_string())),
+                }
+            }
+            Rvalue::UnaryOp(un_op, op) => {
+                self.visit_operand(op, location);
+
+                match un_op {
+                    UnOp::Not => self.state.add_time(Time::symbolic("Not".to_string())),
+                    UnOp::Neg => self.state.add_time(Time::symbolic("Neg".to_string())),
+                }
+            }
+            _ => self.super_rvalue(rvalue, location),
+        }
+    }
+
     fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {
         let Statement { source_info, kind } = statement;
         match kind {
@@ -325,6 +369,10 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 ..
             } if let TyKind::FnDef(target_def_id, substs) = c.ty().kind() => {
                 self.visit_source_info(source_info);
+
+                for arg in args.iter() {
+                    self.visit_operand(arg, location);
+                }
 
                 self.t_visit_fn_call(*target_def_id, substs, (*args).clone());
             }

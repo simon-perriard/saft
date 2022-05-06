@@ -1,30 +1,29 @@
 use core::fmt;
-use rustc_middle::ty::TyCtxt;
 
 #[derive(Eq, PartialEq, Clone, Debug)]
-pub(crate) enum Size {
+pub(crate) enum Time {
     Concrete(u128),
-    Symbolic(String, bool), // bool is to tell whether it has an associated function
+    Symbolic(String),
     Unit,
-    Add(Box<Size>, Box<Size>),
-    Mul(Box<Size>, Box<Size>),
-    LinMul(u128, Box<Size>),
-    Max(Box<Size>, Box<Size>),
+    Add(Box<Time>, Box<Time>),
+    Mul(Box<Time>, Box<Time>),
+    LinMul(u128, Box<Time>),
+    Max(Box<Time>, Box<Time>),
 }
 
-impl Default for Size {
+impl Default for Time {
     fn default() -> Self {
-        Size::Unit
+        Time::Unit
     }
 }
 
-impl Size {
+impl Time {
     pub(crate) fn concrete(c: u128) -> Self {
         Self::Concrete(c)
     }
 
-    pub(crate) fn symbolic(s: String, has_function: bool) -> Self {
-        Self::Symbolic(s, has_function)
+    pub(crate) fn symbolic(s: String) -> Self {
+        Self::Symbolic(s)
     }
 
     pub(crate) fn unit() -> Self {
@@ -34,7 +33,7 @@ impl Size {
     pub(crate) fn is_zero(&self) -> bool {
         match self {
             Self::Concrete(x) => *x == 0,
-            Self::Symbolic(_, _) => false,
+            Self::Symbolic(_) => false,
             Self::Unit => true,
             Self::Add(a, b) => a.is_zero() && b.is_zero(),
             Self::Mul(a, b) => a.is_zero() || b.is_zero(),
@@ -43,28 +42,30 @@ impl Size {
         }
     }
 
-    pub(crate) fn max(&self, rhs: &Self) -> Size {
+    pub(crate) fn max(&self, rhs: &Self) -> Time {
         if self.is_zero() {
             return rhs.clone();
         } else if rhs.is_zero() {
             return (*self).clone();
         } else if *self == *rhs {
             return (*self).clone();
-        } else if let Size::Concrete(x) = *self && let Size::Concrete(y) = *rhs {
+        } else if let Time::Concrete(x) = *self && let Time::Concrete(y) = *rhs {
             // Compact notation: max(x, y) => x > y ? x : y
             return if x > y {(*self).clone()} else {rhs.clone()};
-        } else if let Size::Max(a, _) = (*rhs).clone() && *self == *a {
+        } else if let Time::Max(a, _) = (*rhs).clone() && *self == *a {
             // Compact notation: max(a, max(a, b)) => max(a, b)
             return rhs.clone();
-        }  else if let Size::Max(a, _) = (*self).clone() && *rhs == *a {
+        }  else if let Time::Max(a, _) = (*self).clone() && *rhs == *a {
             // Compact notation: max(max(a,b), a) => max(a, b)
             return (*self).clone();
-        } else if let Size::Max(_, b) = (*rhs).clone() && *self == *b {
+        } else if let Time::Max(_, b) = (*rhs).clone() && *self == *b {
             // Compact notation: max(b, max(a, b)) => max(a, b)
             return rhs.clone();
-        } else if let Size::Max(_, b) = (*self).clone() && *rhs == *b {
+        } else if let Time::Max(_, b) = (*self).clone() && *rhs == *b {
             // Compact notation: max(max(a, b), b) => max(a, b)
             return (*self).clone();
+        } else if let Time::LinMul(_, a) = rhs.clone() && *a == *self {
+            return rhs.clone()
         }
 
         // Try to resolve the max
@@ -79,7 +80,7 @@ impl Size {
         let mut flat = Vec::new();
 
         match self {
-            Size::Add(a, b) => {
+            Time::Add(a, b) => {
                 flat.append(&mut a.flatten_add_chain());
                 flat.append(&mut b.flatten_add_chain());
             }
@@ -129,7 +130,7 @@ impl Size {
     }
 }
 
-impl std::ops::Add for Size {
+impl std::ops::Add for Time {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -139,13 +140,19 @@ impl std::ops::Add for Size {
             return self;
         } else if let Self::Concrete(x) = self && let Self::Concrete(y) = rhs {
             return Self::Concrete(x+y);
+        } else if self == rhs {
+            return Self::LinMul(2, Box::new(self.clone()));
+        } else if let Self::LinMul(x, y) = self.clone() && rhs == *y {
+            return Self::LinMul(x+1, y);
+        } else if let Self::LinMul(x, a) = self.clone() && let Self::LinMul(y, b) = rhs.clone() && *a == *b {
+            return Self::LinMul(x+y, a);
         }
 
         Self::Add(Box::new(self), Box::new(rhs))
     }
 }
 
-impl std::ops::Mul for Size {
+impl std::ops::Mul for Time {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
@@ -167,16 +174,12 @@ impl std::ops::Mul for Size {
     }
 }
 
-impl fmt::Display for Size {
+impl fmt::Display for Time {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Concrete(x) => write!(f, "{}", x),
-            Self::Symbolic(s, has_function) => {
-                if *has_function {
-                    write!(f, "VALUEOF({})", s)
-                } else {
-                    write!(f, "SIZEOF({})", s)
-                }
+            Self::Symbolic(s) => {
+                write!(f, "TIMEOF({})", s)
             }
             Self::Unit => write!(f, "0"),
             Self::Add(a, b) => write!(f, "{} + {}", a, b),
@@ -195,8 +198,4 @@ impl fmt::Display for Size {
             Self::Max(a, b) => write!(f, "MAX({}, {})", a, b),
         }
     }
-}
-
-pub(crate) trait HasSize {
-    fn get_size(&self, tcx: &TyCtxt) -> Size;
 }
