@@ -158,10 +158,13 @@ where
         args: Vec<Operand<'tcx>>,
     ) {
         if let (Some(access_type), size) = self.is_storage_call(target_def_id, substs) {
+
             if let TyKind::Closure(closure_def_id, _) = substs.last().unwrap().expect_ty().kind() {
+                // Storage access functions may have closures as parameters, we need to analyze them
                 self.t_fn_call_analysis(*closure_def_id, args);
             }
 
+            // Account for the cost of calling the storage access function
             match access_type {
                 AccessType::Read => self.state.add_reads(size),
                 AccessType::Write => self.state.add_writes(size),
@@ -182,6 +185,7 @@ where
             let summary = summary.get(&target_def_id).unwrap();
 
             if let Some(summary) = summary {
+                // Add the cost of calling the target function
                 self.state.inter_join(summary);
             } else {
                 // we are in a recursive call, just ignore it
@@ -205,7 +209,8 @@ where
                         .get(&args[0].place().unwrap().local)
                         .unwrap(),
                 );
-
+                
+                // For now add the variant size as symbolic
                 let cost = Size::symbolic(self.tcx.def_path_str(variant.def_id), false);
 
                 self.state.add_events(cost);
@@ -250,6 +255,7 @@ where
             let self_success_state = *self.is_success.borrow();
             *self.is_success.borrow_mut() = self_success_state && fn_call_success_anaylsis_state;
 
+            // Retrieve last state of callee function as its summary
             let end_state = if let Some((last, _)) = reverse_postorder(target_mir).last() {
                 results.seek_to_block_end(last);
                 Some(results.get().clone())
