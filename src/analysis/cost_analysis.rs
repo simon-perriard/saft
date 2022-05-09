@@ -278,24 +278,8 @@ where
                     .insert_mut(target_def_id, Some(end_state));
             }
         } else {
-            let path = self.tcx.def_path_str(target_def_id);
-            if path.starts_with("std")
-                || path.starts_with("alloc")
-                || path.starts_with("frame_system") && path.ends_with("ensure_signed")
-                || path.starts_with("frame_support") && path.ends_with("ensure_origin")
-                || path.starts_with("weights")
-            {
-                /* No MIR available for those but:
-                    - standard library does not do storage access
-                    - ensure_signed/origin does not do storage access
-                    - weights do not do storage access
-                **/
-            } else {
-                /*println!(
-                    "NO MIR AVAILABLE FOR {:?}",
-                    self.tcx.def_path_str(target_def_id)
-                );*/
-            }
+            // No MIR available, but symbolically account for the call cost
+            self.state.add_time(Time::symbolic(self.tcx.def_path_str(target_def_id)));
         }
     }
 }
