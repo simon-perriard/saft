@@ -386,7 +386,7 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
 
 impl<'inter> AnalysisDomain<'inter> for RWCountAnalysis<'inter, '_, '_> {
     type Domain = CostDomain;
-    const NAME: &'static str = "ReadsWritesCountAnalysis";
+    const NAME: &'static str = "CostAnalysis";
 
     type Direction = Forward;
 
