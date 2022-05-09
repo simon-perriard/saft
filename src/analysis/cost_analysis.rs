@@ -1,5 +1,5 @@
 use super::pallet::Pallet;
-use super::r_w_count_domain::RWCountDomain;
+use super::cost_domain::CostDomain;
 use super::size_language::{HasSize, Size};
 use super::storage_actions::HasAccessType;
 use super::time_language::Time;
@@ -15,7 +15,7 @@ use rustc_span::def_id::DefId;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-pub(crate) type Summary = HashTrieMap<DefId, Option<RWCountDomain>>;
+pub(crate) type Summary = HashTrieMap<DefId, Option<CostDomain>>;
 
 pub(crate) struct RWCountAnalysis<'tcx, 'inter, 'intra> {
     tcx: TyCtxt<'tcx>,
@@ -63,7 +63,7 @@ impl<'tcx, 'inter, 'intra> RWCountAnalysis<'tcx, 'inter, 'intra> {
 
     pub(crate) fn transfer_function(
         &self,
-        state: &'intra mut RWCountDomain,
+        state: &'intra mut CostDomain,
     ) -> TransferFunction<'tcx, 'inter, 'intra> {
         TransferFunction::new(
             self.tcx,
@@ -83,7 +83,7 @@ pub(crate) struct TransferFunction<'tcx, 'inter, 'intra> {
     summaries: Rc<RefCell<Summary>>,
     _def_id: DefId,
     body: &'intra Body<'tcx>,
-    state: &'intra mut RWCountDomain,
+    state: &'intra mut CostDomain,
     is_success: Rc<RefCell<bool>>,
 }
 
@@ -94,7 +94,7 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
         summaries: Rc<RefCell<Summary>>,
         _def_id: DefId,
         body: &'intra Body<'tcx>,
-        state: &'intra mut RWCountDomain,
+        state: &'intra mut CostDomain,
         is_success: Rc<RefCell<bool>>,
     ) -> Self {
         TransferFunction {
@@ -251,7 +251,7 @@ where
                 self.is_success.clone(),
             )
             .into_engine(self.tcx, target_mir)
-            .pass_name("r_w_count_analysis")
+            .pass_name("cost_analysis")
             .iterate_to_fixpoint()
             .into_results_cursor(target_mir);
 
@@ -385,13 +385,13 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
 }
 
 impl<'inter> AnalysisDomain<'inter> for RWCountAnalysis<'inter, '_, '_> {
-    type Domain = RWCountDomain;
+    type Domain = CostDomain;
     const NAME: &'static str = "ReadsWritesCountAnalysis";
 
     type Direction = Forward;
 
     fn bottom_value(&self, _body: &Body<'inter>) -> Self::Domain {
-        RWCountDomain::new()
+        CostDomain::new()
     }
 
     fn initialize_start_block(&self, _body: &Body<'inter>, _state: &mut Self::Domain) {}

@@ -8,7 +8,7 @@ use rustc_target::abi::VariantIdx;
 use crate::time_language::Time;
 
 #[derive(Eq, PartialEq, Clone, Debug)]
-pub(crate) struct RWCountDomain {
+pub(crate) struct CostDomain {
     reads: Size,
     writes: Size,
     events: Size,
@@ -16,9 +16,9 @@ pub(crate) struct RWCountDomain {
     pub bb_set_discriminant: HashTrieMap<Local, VariantIdx>,
 }
 
-impl Default for RWCountDomain {
+impl Default for CostDomain {
     fn default() -> Self {
-        RWCountDomain {
+        CostDomain {
             reads: Size::default(),
             writes: Size::default(),
             events: Size::default(),
@@ -28,7 +28,7 @@ impl Default for RWCountDomain {
     }
 }
 
-impl RWCountDomain {
+impl CostDomain {
     pub fn new() -> Self {
         Self::default()
     }
@@ -60,7 +60,7 @@ impl RWCountDomain {
     }
 }
 
-impl JoinSemiLattice for RWCountDomain {
+impl JoinSemiLattice for CostDomain {
     fn join(&mut self, other: &Self) -> bool {
         self.bb_set_discriminant = other.bb_set_discriminant.clone();
 
@@ -84,9 +84,9 @@ impl JoinSemiLattice for RWCountDomain {
     }
 }
 
-impl<C> DebugWithContext<C> for RWCountDomain {}
+impl<C> DebugWithContext<C> for CostDomain {}
 
-impl fmt::Display for RWCountDomain {
+impl fmt::Display for CostDomain {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,

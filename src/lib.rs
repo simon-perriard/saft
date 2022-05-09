@@ -48,11 +48,11 @@ pub fn extract_juice(tcx: rustc_middle::ty::TyCtxt) {
         }
 
         let r_w_count_analysis =
-            r_w_count_analysis::RWCountAnalysis::new(tcx, &pallet, *dispatchable_def_id, mir);
+            cost_analysis::RWCountAnalysis::new(tcx, &pallet, *dispatchable_def_id, mir);
 
         let mut results = r_w_count_analysis
             .into_engine(tcx, mir)
-            .pass_name("r_w_count_analysis")
+            .pass_name("cost_analysis")
             .iterate_to_fixpoint()
             .into_results_cursor(mir);
 
