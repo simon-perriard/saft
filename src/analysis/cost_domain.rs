@@ -1,28 +1,26 @@
-use crate::size_language::Size;
+use crate::cost_language::Cost;
 use core::fmt;
 use rpds::HashTrieMap;
 use rustc_middle::mir::Local;
 use rustc_mir_dataflow::{fmt::DebugWithContext, lattice::JoinSemiLattice};
 use rustc_target::abi::VariantIdx;
 
-use crate::time_language::Time;
-
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub(crate) struct CostDomain {
-    reads: Size,
-    writes: Size,
-    events: Size,
-    time: Time,
+    bytes_read: Cost,
+    bytes_written: Cost,
+    bytes_deposited: Cost,
+    steps_executed: Cost,
     pub bb_set_discriminant: HashTrieMap<Local, VariantIdx>,
 }
 
 impl Default for CostDomain {
     fn default() -> Self {
         CostDomain {
-            reads: Size::default(),
-            writes: Size::default(),
-            events: Size::default(),
-            time: Time::default(),
+            bytes_read: Cost::default(),
+            bytes_written: Cost::default(),
+            bytes_deposited: Cost::default(),
+            steps_executed: Cost::default(),
             bb_set_discriminant: HashTrieMap::new(),
         }
     }
@@ -33,26 +31,26 @@ impl CostDomain {
         Self::default()
     }
 
-    pub fn add_reads(&mut self, size: Size) {
-        self.reads = self.reads.clone() + size;
+    pub fn add_reads(&mut self, size: Cost) {
+        self.bytes_read = self.bytes_read.clone() + size;
     }
 
-    pub fn add_writes(&mut self, size: Size) {
-        self.writes = self.writes.clone() + size;
+    pub fn add_writes(&mut self, size: Cost) {
+        self.bytes_written = self.bytes_written.clone() + size;
     }
 
-    pub fn add_events(&mut self, size: Size) {
-        self.events = self.events.clone() + size;
+    pub fn add_events(&mut self, size: Cost) {
+        self.bytes_deposited = self.bytes_deposited.clone() + size;
     }
-    pub fn add_time(&mut self, time: Time) {
-        self.time = self.time.clone() + time;
+    pub fn add_steps(&mut self, steps: Cost) {
+        self.steps_executed = self.steps_executed.clone() + steps;
     }
 
     pub fn inter_join(&mut self, other: &Self) {
-        self.reads = self.reads.clone() + other.reads.clone();
-        self.writes = self.writes.clone() + other.writes.clone();
-        self.events = self.events.clone() + other.events.clone();
-        self.time = self.time.clone() + other.time.clone();
+        self.bytes_read = self.bytes_read.clone() + other.bytes_read.clone();
+        self.bytes_written = self.bytes_written.clone() + other.bytes_written.clone();
+        self.bytes_deposited = self.bytes_deposited.clone() + other.bytes_deposited.clone();
+        self.steps_executed = self.steps_executed.clone() + other.steps_executed.clone();
     }
 
     pub fn reset_bb_discriminants(&mut self) {
@@ -64,21 +62,21 @@ impl JoinSemiLattice for CostDomain {
     fn join(&mut self, other: &Self) -> bool {
         self.bb_set_discriminant = other.bb_set_discriminant.clone();
 
-        if other.reads.is_zero()
-            && other.writes.is_zero()
-            && other.events.is_zero()
-            && other.time.is_zero()
-            || self.reads == other.reads
-                && self.writes == other.writes
-                && self.events == other.events
-                && self.time == other.time
+        if other.bytes_read.is_zero()
+            && other.bytes_written.is_zero()
+            && other.bytes_deposited.is_zero()
+            && other.steps_executed.is_zero()
+            || self.bytes_read == other.bytes_read
+                && self.bytes_written == other.bytes_written
+                && self.bytes_deposited == other.bytes_deposited
+                && self.steps_executed == other.steps_executed
         {
             false
         } else {
-            self.reads = self.reads.max(&other.reads);
-            self.writes = self.writes.max(&other.writes);
-            self.events = self.events.max(&other.events);
-            self.time = self.time.max(&other.time);
+            self.bytes_read = self.bytes_read.max(&other.bytes_read);
+            self.bytes_written = self.bytes_written.max(&other.bytes_written);
+            self.bytes_deposited = self.bytes_deposited.max(&other.bytes_deposited);
+            self.steps_executed = self.steps_executed.max(&other.steps_executed);
             true
         }
     }
@@ -91,7 +89,7 @@ impl fmt::Display for CostDomain {
         write!(
             f,
             "reads: {}\nwrites: {}\nevents: {}\ntime: {}\n",
-            self.reads, self.writes, self.events, self.time
+            self.bytes_read, self.bytes_written, self.bytes_deposited, self.steps_executed
         )
     }
 }

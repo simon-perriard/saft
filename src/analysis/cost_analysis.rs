@@ -1,13 +1,12 @@
+use super::cost_language::{Cost, Symbolic, HasSize};
 use super::pallet::Pallet;
 use super::cost_domain::CostDomain;
-use super::size_language::{HasSize, Size};
 use super::storage_actions::HasAccessType;
-use super::time_language::Time;
 use crate::storage_actions::AccessType;
 use rpds::HashTrieMap;
 use rustc_middle::mir::{
-    traversal::*, visit::*, BasicBlock, BinOp, Body, Location, Operand, Rvalue, Statement,
-    StatementKind, Terminator, TerminatorKind, UnOp,
+    traversal::*, visit::*, BasicBlock, Body, Location, Operand, Rvalue, Statement,
+    StatementKind, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
@@ -117,7 +116,7 @@ where
         &self,
         def_id: DefId,
         substs: &'tcx SubstsRef,
-    ) -> (Option<AccessType>, Size) {
+    ) -> (Option<AccessType>, Cost) {
         if self
             .tcx
             .def_path_str(def_id)
@@ -149,7 +148,7 @@ where
                 }
             }
         }
-        (None, Size::unit())
+        (None, Cost::default())
     }
 
     fn t_visit_fn_call(
@@ -216,7 +215,7 @@ where
                 );
 
                 // For now add the variant size as symbolic
-                let cost = Size::symbolic(self.tcx.def_path_str(variant.def_id), false);
+                let cost = Cost::Symbolic(Symbolic::SizeOf(self.tcx.def_path_str(variant.def_id)));
 
                 self.state.add_events(cost);
             }
@@ -279,7 +278,7 @@ where
             }
         } else {
             // No MIR available, but symbolically account for the call cost
-            self.state.add_time(Time::symbolic(self.tcx.def_path_str(target_def_id)));
+            self.state.add_steps(Cost::Symbolic(Symbolic::TimeOf(self.tcx.def_path_str(target_def_id))));
         }
     }
 }
@@ -287,38 +286,17 @@ where
 impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
     fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
         match rvalue {
-            Rvalue::BinaryOp(bin_op, box (lhs, rhs))
-            | Rvalue::CheckedBinaryOp(bin_op, box (lhs, rhs)) => {
+            Rvalue::BinaryOp(_, box (lhs, rhs))
+            | Rvalue::CheckedBinaryOp(_, box (lhs, rhs)) => {
                 self.visit_operand(lhs, location);
                 self.visit_operand(rhs, location);
 
-                match bin_op {
-                    BinOp::Add => self.state.add_time(Time::Symbolic("Add".to_string())),
-                    BinOp::Sub => self.state.add_time(Time::Symbolic("Sub".to_string())),
-                    BinOp::Mul => self.state.add_time(Time::Symbolic("Mul".to_string())),
-                    BinOp::Div => self.state.add_time(Time::Symbolic("Div".to_string())),
-                    BinOp::Rem => self.state.add_time(Time::Symbolic("Rem".to_string())),
-                    BinOp::BitXor => self.state.add_time(Time::Symbolic("BitXor".to_string())),
-                    BinOp::BitAnd => self.state.add_time(Time::Symbolic("BitAnd".to_string())),
-                    BinOp::BitOr => self.state.add_time(Time::Symbolic("BitOr".to_string())),
-                    BinOp::Shl => self.state.add_time(Time::Symbolic("Shl".to_string())),
-                    BinOp::Shr => self.state.add_time(Time::Symbolic("Shr".to_string())),
-                    BinOp::Eq => self.state.add_time(Time::Symbolic("Eq".to_string())),
-                    BinOp::Lt => self.state.add_time(Time::Symbolic("Lt".to_string())),
-                    BinOp::Le => self.state.add_time(Time::Symbolic("Le".to_string())),
-                    BinOp::Ne => self.state.add_time(Time::Symbolic("Ne".to_string())),
-                    BinOp::Ge => self.state.add_time(Time::Symbolic("Ge".to_string())),
-                    BinOp::Gt => self.state.add_time(Time::Symbolic("Gt".to_string())),
-                    BinOp::Offset => self.state.add_time(Time::Symbolic("Offset".to_string())),
-                }
+                self.state.add_steps(Cost::Concrete(1));
             }
-            Rvalue::UnaryOp(un_op, op) => {
+            Rvalue::UnaryOp(_, op) => {
                 self.visit_operand(op, location);
 
-                match un_op {
-                    UnOp::Not => self.state.add_time(Time::symbolic("Not".to_string())),
-                    UnOp::Neg => self.state.add_time(Time::symbolic("Neg".to_string())),
-                }
+                self.state.add_steps(Cost::Concrete(1));
             }
             _ => self.super_rvalue(rvalue, location),
         }
