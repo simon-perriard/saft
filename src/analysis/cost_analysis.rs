@@ -3,7 +3,6 @@ use super::pallet::Pallet;
 use super::cost_domain::CostDomain;
 use super::storage_actions::HasAccessType;
 use crate::storage_actions::AccessType;
-use rpds::HashTrieMap;
 use rustc_middle::mir::{
     traversal::*, visit::*, BasicBlock, Body, Location, Operand, Rvalue, Statement,
     StatementKind, Terminator, TerminatorKind,
@@ -12,9 +11,10 @@ use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
 use rustc_span::def_id::DefId;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
-pub(crate) type Summary = HashTrieMap<DefId, Option<CostDomain>>;
+pub(crate) type Summary = HashMap<DefId, Option<CostDomain>>;
 
 pub(crate) struct RWCountAnalysis<'tcx, 'inter, 'intra> {
     tcx: TyCtxt<'tcx>,
@@ -37,7 +37,7 @@ impl<'tcx, 'inter, 'intra> RWCountAnalysis<'tcx, 'inter, 'intra> {
             pallet,
             def_id,
             body,
-            Rc::new(RefCell::new(HashTrieMap::new())),
+            Rc::new(RefCell::new(HashMap::new())),
             Rc::new(RefCell::new(true)),
         )
     }
@@ -226,7 +226,7 @@ where
             // We don't have the summary, we need to analyze the function
 
             // Initialize the summary to None so we can detect a recursive call later
-            self.summaries.borrow_mut().insert_mut(target_def_id, None);
+            self.summaries.borrow_mut().insert(target_def_id, None);
 
             let target_mir = self.tcx.optimized_mir(target_def_id);
 
@@ -274,7 +274,7 @@ where
                 // Add the callee function summary to our summaries map
                 self.summaries
                     .borrow_mut()
-                    .insert_mut(target_def_id, Some(end_state));
+                    .insert(target_def_id, Some(end_state));
             }
         } else {
             // No MIR available, but symbolically account for the call cost
@@ -315,7 +315,7 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 // the Event enum variant that will be deposited
                 self.state
                     .bb_set_discriminant
-                    .insert_mut(place.local, *variant_index);
+                    .insert(place.local, *variant_index);
             }
             _ => self.super_statement(statement, location),
         }

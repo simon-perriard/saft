@@ -1,6 +1,6 @@
 use crate::cost_language::Cost;
 use core::fmt;
-use rpds::HashTrieMap;
+use std::collections::HashMap;
 use rustc_middle::mir::Local;
 use rustc_mir_dataflow::{fmt::DebugWithContext, lattice::JoinSemiLattice};
 use rustc_target::abi::VariantIdx;
@@ -11,7 +11,7 @@ pub(crate) struct CostDomain {
     bytes_written: Cost,
     bytes_deposited: Cost,
     steps_executed: Cost,
-    pub bb_set_discriminant: HashTrieMap<Local, VariantIdx>,
+    pub bb_set_discriminant: HashMap<Local, VariantIdx>,
 }
 
 impl Default for CostDomain {
@@ -21,7 +21,7 @@ impl Default for CostDomain {
             bytes_written: Cost::default(),
             bytes_deposited: Cost::default(),
             steps_executed: Cost::default(),
-            bb_set_discriminant: HashTrieMap::new(),
+            bb_set_discriminant: HashMap::new(),
         }
     }
 }
@@ -54,7 +54,7 @@ impl CostDomain {
     }
 
     pub fn reset_bb_discriminants(&mut self) {
-        self.bb_set_discriminant = HashTrieMap::new();
+        self.bb_set_discriminant = HashMap::new();
     }
 }
 
@@ -88,7 +88,7 @@ impl fmt::Display for CostDomain {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "reads: {}\nwrites: {}\nevents: {}\ntime: {}\n",
+            "bytes read: {}\nbytes written: {}\nbytes deposited: {}\nsteps_executed: {}\n",
             self.bytes_read, self.bytes_written, self.bytes_deposited, self.steps_executed
         )
     }

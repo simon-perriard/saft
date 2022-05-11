@@ -22,7 +22,6 @@ serde_json = "*"
 env_logger = "*"
 log = "*"
 regex = "*"
-rpds = "*"
 
 [package.metadata.rust-analyzer]
 # This package uses #[feature(rustc_private)]
