@@ -3,6 +3,7 @@ use rustc_middle::ty;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::def_id::DefId;
 use std::mem::size_of;
+use rustc_middle::ty::ParamEnv;
 
 use super::cost_language::{Cost, HasSize, Symbolic};
 
@@ -113,22 +114,33 @@ impl HasSize for Type {
                 ty::FloatTy::F64 => Cost::Concrete(size_of::<f64>().try_into().unwrap()),
             },
             Type::Adt(adt) => match adt {
-                Adt::Unknown(def_id) => Cost::Symbolic(Symbolic::SizeOf(tcx.def_path_str(*def_id))),
+                Adt::Unknown(def_id) => {
+                    let ty = tcx.type_of(def_id);
+                    match tcx.layout_of(tcx.param_env(def_id).and(ty)) {
+                        Ok(ty_and_layout) => Cost::Concrete(ty_and_layout.layout.size().bytes()),
+                        Err(_) => Cost::Symbolic(Symbolic::SizeOf(tcx.def_path_str(*def_id))),
+                    }
+                },
                 Adt::Option(ty) => ty.get_size(tcx),
                 Adt::Vec(_) => todo!(),
                 Adt::BoundedVec(ty, max_size) => {
-                    let max_size = max_size.get_size(tcx);
-                    match max_size {
-                        Cost::Symbolic(Symbolic::SizeOf(mut path)) => {
+                    let max_size = match **max_size {
+                        // Type defined in the pallet
+                        Type::Adt(Adt::Unknown(def_id)) |
+                        // Type defined in the runtime
+                        Type::Projection(def_id) => {
+                            let mut path = tcx.def_path_str(def_id);
                             path.push_str("::get()");
-                            Cost::Symbolic(Symbolic::ValueOf(path)) * ty.get_size(tcx)
-                        }
-                        _ => max_size * ty.get_size(tcx),
-                    }
+                            Symbolic::ValueOf(path)
+                        },
+                        _ => unreachable!(),
+                    };
+
+                    max_size.symbolic_mul(ty.get_size(tcx))
                 }
             },
             Type::Str => todo!(),
-            Type::Array(ty, size) => Cost::Concrete((*size).into()) * ty.get_size(tcx),
+            Type::Array(ty, size) => Cost::ConcreteMul((*size).into(), Box::new(ty.get_size(tcx))),
             Type::Slice(_) => todo!(),
             Type::Ref(ty, _) => ty.get_size(tcx),
             Type::FnPtr(_, ret_ty) => ret_ty.get_size(tcx),

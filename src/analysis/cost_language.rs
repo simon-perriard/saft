@@ -3,11 +3,11 @@ use rustc_middle::ty::TyCtxt;
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub(crate) enum Cost {
-    Concrete(u128),
+    Concrete(u64),
     Symbolic(Symbolic),
     Add(Box<Cost>, Box<Cost>),
-    Mul(Box<Cost>, Box<Cost>),
-    LinMul(u128, Box<Cost>),
+    ConcreteMul(u64, Box<Cost>),
+    SymbolicMul(Symbolic, Box<Cost>),
     Max(Box<Cost>, Box<Cost>),
 }
 
@@ -16,6 +16,22 @@ pub(crate) enum Symbolic {
     ValueOf(String),
     SizeOf(String),
     TimeOf(String),
+}
+
+impl Symbolic {
+    pub(crate) fn symbolic_mul(self, rhs: Cost) -> Cost {
+        Cost::SymbolicMul(self, Box::new(rhs))
+    }
+}
+
+impl fmt::Display for Symbolic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Symbolic::ValueOf(s) => write!(f, "VALUEOF({})", s),
+            Symbolic::SizeOf(s) => write!(f, "SIZEOF({})", s),
+            Symbolic::TimeOf(s) => write!(f, "TIMEOF({})", s),
+        }
+    }
 }
 
 impl Default for Cost {
@@ -30,10 +46,31 @@ impl Cost {
             Self::Concrete(x) => *x == 0,
             Self::Symbolic(_) => false,
             Self::Add(a, b) => a.is_zero() && b.is_zero(),
-            Self::Mul(a, b) => a.is_zero() || b.is_zero(),
-            Self::LinMul(a, b) => *a == 0 || b.is_zero(),
+            Self::SymbolicMul(a, b) => b.is_zero(),
+            Self::ConcreteMul(a, b) => *a == 0 || b.is_zero(),
             Self::Max(a, b) => a.is_zero() && b.is_zero(),
         }
+    }
+
+    pub(crate) fn concrete_mul(self, rhs: Self) -> Self {
+        if self.is_zero() || rhs.is_zero() {
+            // Compact notation: x*y with x=0 and/or y=0 -> 0 
+            return Self::Concrete(0);
+        } else if let Self::Concrete(x) = self && let Self::Concrete(y) = rhs {
+            // Compact notation: (x)*(y) with x and y concrete -> (x*y)
+            return Self::Concrete(x*y);
+        } else if let Self::Concrete(x) = self && let Self::ConcreteMul(y, a) = rhs {
+            // Compact notation: (x)*((y)*a) with x and y concrete -> (x*y)*a
+            return Self::ConcreteMul(x*y, a);
+        } else if let Self::Concrete(x) = rhs && let Self::ConcreteMul(y, a) = self {
+            // Compact notation: ((y)*a)*(x) with x and y concrete -> (x*y)*a
+            return Self::ConcreteMul(x*y, a);
+        } else if let Self::Concrete(x) = self {
+            return Self::ConcreteMul(x, Box::new(rhs));
+        } else if let Self::Concrete(x) = rhs {
+            return Self::ConcreteMul(x, Box::new(self));
+        }
+        unreachable!();
     }
 
     pub(crate) fn max(&self, rhs: &Self) -> Self {
@@ -132,41 +169,15 @@ impl std::ops::Add for Cost {
             return self;
         } else if let Self::Concrete(x) = self && let Self::Concrete(y) = rhs {
             return Self::Concrete(x+y);
-        } else if let Self::LinMul(x, a) = self.clone() && *a == rhs {
-            return Self::LinMul(x+1, a);
-        } else if let Self::LinMul(x, a) = rhs.clone() && *a == self {
-            return Self::LinMul(x+1, a);
-        } else if let Self::LinMul(x, a) = self.clone() && let Self::LinMul(y, b) = rhs.clone() && *a == *b{
-            return Self::LinMul(x+y, a);
+        } else if let Self::ConcreteMul(x, a) = self.clone() && *a == rhs {
+            return Self::ConcreteMul(x+1, a);
+        } else if let Self::ConcreteMul(x, a) = rhs.clone() && *a == self {
+            return Self::ConcreteMul(x+1, a);
+        } else if let Self::ConcreteMul(x, a) = self.clone() && let Self::ConcreteMul(y, b) = rhs.clone() && *a == *b{
+            return Self::ConcreteMul(x+y, a);
         }
 
         Self::Add(Box::new(self), Box::new(rhs))
-    }
-}
-
-impl std::ops::Mul for Cost {
-    type Output = Self;
-
-    fn mul(self, rhs: Self) -> Self::Output {
-        if self.is_zero() || rhs.is_zero() {
-            // Compact notation: x*y with x=0 and/or y=0 -> 0 
-            return Self::Concrete(0);
-        } else if let Self::Concrete(x) = self && let Self::Concrete(y) = rhs {
-            // Compact notation: (x)*(y) with x and y concrete -> (x*y)
-            return Self::Concrete(x*y);
-        } else if let Self::Concrete(x) = self && let Self::LinMul(y, a) = rhs {
-            // Compact notation: (x)*((y)*a) with x and y concrete -> (x*y)*a
-            return Self::LinMul(x*y, a);
-        } else if let Self::Concrete(x) = rhs && let Self::LinMul(y, a) = self {
-            // Compact notation: ((y)*a)*(x) with x and y concrete -> (x*y)*a
-            return Self::LinMul(x*y, a);
-        } else if let Self::Concrete(x) = self {
-            return Self::LinMul(x, Box::new(rhs));
-        } else if let Self::Concrete(x) = rhs {
-            return Self::LinMul(x, Box::new(self));
-        }
-
-        Self::Mul(Box::new(self), Box::new(rhs))
     }
 }
 
@@ -174,24 +185,16 @@ impl fmt::Display for Cost {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Concrete(x) => write!(f, "{}", x),
-            Self::Symbolic(symbolic) => match symbolic {
-                Symbolic::ValueOf(s) => write!(f, "VALUEOF({})", s),
-                Symbolic::SizeOf(s) => write!(f, "SIZEOF({})", s),
-                Symbolic::TimeOf(s) => write!(f, "TIMEOF({})", s),
-            },
+            Self::Symbolic(symbolic) => write!(f, "{}", symbolic),
             Self::Add(a, b) => write!(f, "{} + {}", a, b),
-            Self::Mul(a, b) => {
-                if a.pretty_print_need_parenthesis() && b.pretty_print_need_parenthesis() {
-                    write!(f, "({}) * ({})", a, b)
-                } else if a.pretty_print_need_parenthesis() {
-                    write!(f, "({}) * {}", a, b)
-                } else if b.pretty_print_need_parenthesis() {
+            Self::SymbolicMul(a, b) => {
+                if b.pretty_print_need_parenthesis() {
                     write!(f, "{} * ({})", a, b)
                 } else {
                     write!(f, "{} * {}", a, b)
                 }
             }
-            Self::LinMul(a, b) => write!(f, "{} * ({})", a, b),
+            Self::ConcreteMul(a, b) => write!(f, "{} * ({})", a, b),
             Self::Max(a, b) => write!(f, "MAX({}, {})", a, b),
         }
     }

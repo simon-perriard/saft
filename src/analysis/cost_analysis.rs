@@ -9,7 +9,7 @@ use rustc_middle::mir::{
     traversal::*, visit::*, BasicBlock, Body, Location, Operand, Rvalue, Statement, Terminator,
     TerminatorKind,
 };
-use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
+use rustc_middle::ty::{ParamEnv, subst::SubstsRef, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
 use rustc_span::def_id::DefId;
 use std::cell::RefCell;
@@ -232,10 +232,31 @@ where
 
                 match event_variants {
                     Variants::Variant(variant_id) => {
-                        let variant = adt_def.variant(*variant_id);
-                        // For now add the variant size as symbolic
-                        let cost =
-                            Cost::Symbolic(Symbolic::SizeOf(self.tcx.def_path_str(variant.def_id)));
+
+                        // TODO: 
+                        let ty = args[0].ty(self.body, self.tcx);
+
+                        let cost = match self.tcx.layout_of(self.tcx.param_env(adt_def.did()).and(ty)) {
+                            Ok(ty_and_layout) => {
+                                let layout = ty_and_layout.layout;
+                                println!("WOOPWOOP");
+                                match layout.variants() {
+                                    rustc_target::abi::Variants::Single{ .. } => {
+                                        Cost::Concrete(ty_and_layout.layout.size().bytes())
+                                    },
+                                    rustc_target::abi::Variants::Multiple{ variants, .. } => {
+                                        let variant_layout = variants[*variant_id];
+                                        Cost::Concrete(variant_layout.size().bytes())
+                                    }
+                                }
+                            },
+                            Err(_) => {
+                                let variant = adt_def.variant(*variant_id);
+                                Cost::Symbolic(Symbolic::SizeOf(self.tcx.def_path_str(variant.def_id)))
+                            }
+                        };
+
+
                         self.state.add_events(cost);
                     }
                     Variants::Or(_, _) => {
