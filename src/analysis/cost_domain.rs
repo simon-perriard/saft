@@ -1,9 +1,6 @@
 use crate::cost_language::Cost;
 use core::fmt;
-use std::collections::HashMap;
-use rustc_middle::mir::Local;
 use rustc_mir_dataflow::{fmt::DebugWithContext, lattice::JoinSemiLattice};
-use rustc_target::abi::VariantIdx;
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub(crate) struct CostDomain {
@@ -11,7 +8,6 @@ pub(crate) struct CostDomain {
     bytes_written: Cost,
     bytes_deposited: Cost,
     steps_executed: Cost,
-    pub bb_set_discriminant: HashMap<Local, VariantIdx>,
 }
 
 impl Default for CostDomain {
@@ -21,7 +17,6 @@ impl Default for CostDomain {
             bytes_written: Cost::default(),
             bytes_deposited: Cost::default(),
             steps_executed: Cost::default(),
-            bb_set_discriminant: HashMap::new(),
         }
     }
 }
@@ -52,16 +47,10 @@ impl CostDomain {
         self.bytes_deposited = self.bytes_deposited.clone() + other.bytes_deposited.clone();
         self.steps_executed = self.steps_executed.clone() + other.steps_executed.clone();
     }
-
-    pub fn reset_bb_discriminants(&mut self) {
-        self.bb_set_discriminant = HashMap::new();
-    }
 }
 
 impl JoinSemiLattice for CostDomain {
     fn join(&mut self, other: &Self) -> bool {
-        self.bb_set_discriminant = other.bb_set_discriminant.clone();
-
         if other.bytes_read.is_zero()
             && other.bytes_written.is_zero()
             && other.bytes_deposited.is_zero()

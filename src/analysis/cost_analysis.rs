@@ -1,11 +1,13 @@
-use super::cost_language::{Cost, Symbolic, HasSize};
-use super::pallet::Pallet;
 use super::cost_domain::CostDomain;
+use super::cost_language::{Cost, HasSize, Symbolic};
+use super::events_variants_domain::Variants;
+use super::pallet::Pallet;
 use super::storage_actions::HasAccessType;
+use crate::events_variants_domain::EventVariantsDomain;
 use crate::storage_actions::AccessType;
 use rustc_middle::mir::{
-    traversal::*, visit::*, BasicBlock, Body, Location, Operand, Rvalue, Statement,
-    StatementKind, Terminator, TerminatorKind,
+    traversal::*, visit::*, BasicBlock, Body, Location, Operand, Rvalue, Statement, Terminator,
+    TerminatorKind,
 };
 use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
@@ -16,25 +18,28 @@ use std::rc::Rc;
 
 pub(crate) type Summary = HashMap<DefId, Option<CostDomain>>;
 
-pub(crate) struct RWCountAnalysis<'tcx, 'inter, 'intra> {
+pub(crate) struct CostAnalysis<'tcx, 'inter, 'intra> {
     tcx: TyCtxt<'tcx>,
     pallet: &'inter Pallet,
+    events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     body: &'intra Body<'tcx>,
     def_id: DefId,
     pub summaries: Rc<RefCell<Summary>>,
     pub is_success: Rc<RefCell<bool>>,
 }
 
-impl<'tcx, 'inter, 'intra> RWCountAnalysis<'tcx, 'inter, 'intra> {
+impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter, 'intra> {
     pub(crate) fn new(
         tcx: TyCtxt<'tcx>,
         pallet: &'inter Pallet,
+        events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
         def_id: DefId,
         body: &'intra Body<'tcx>,
     ) -> Self {
         Self::new_with_init(
             tcx,
             pallet,
+            events_variants,
             def_id,
             body,
             Rc::new(RefCell::new(HashMap::new())),
@@ -45,14 +50,16 @@ impl<'tcx, 'inter, 'intra> RWCountAnalysis<'tcx, 'inter, 'intra> {
     fn new_with_init(
         tcx: TyCtxt<'tcx>,
         pallet: &'inter Pallet,
+        events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
         def_id: DefId,
         body: &'intra Body<'tcx>,
         summaries: Rc<RefCell<Summary>>,
         is_success: Rc<RefCell<bool>>,
     ) -> Self {
-        RWCountAnalysis {
+        CostAnalysis {
             tcx,
             pallet,
+            events_variants,
             def_id,
             body,
             summaries,
@@ -67,6 +74,7 @@ impl<'tcx, 'inter, 'intra> RWCountAnalysis<'tcx, 'inter, 'intra> {
         TransferFunction::new(
             self.tcx,
             self.pallet,
+            self.events_variants,
             self.summaries.clone(),
             self.def_id,
             self.body,
@@ -79,8 +87,9 @@ impl<'tcx, 'inter, 'intra> RWCountAnalysis<'tcx, 'inter, 'intra> {
 pub(crate) struct TransferFunction<'tcx, 'inter, 'intra> {
     tcx: TyCtxt<'tcx>,
     pallet: &'inter Pallet,
+    events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     summaries: Rc<RefCell<Summary>>,
-    _def_id: DefId,
+    def_id: DefId,
     body: &'intra Body<'tcx>,
     state: &'intra mut CostDomain,
     is_success: Rc<RefCell<bool>>,
@@ -90,8 +99,9 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
         pallet: &'inter Pallet,
+        events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
         summaries: Rc<RefCell<Summary>>,
-        _def_id: DefId,
+        def_id: DefId,
         body: &'intra Body<'tcx>,
         state: &'intra mut CostDomain,
         is_success: Rc<RefCell<bool>>,
@@ -99,8 +109,9 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
         TransferFunction {
             tcx,
             pallet,
+            events_variants,
             summaries,
-            _def_id,
+            def_id,
             body,
             state,
             is_success,
@@ -156,11 +167,12 @@ where
         target_def_id: DefId,
         substs: &'tcx SubstsRef,
         args: Vec<Operand<'tcx>>,
+        location: Location,
     ) {
         if let (Some(access_type), size) = self.is_storage_call(target_def_id, substs) {
             if let TyKind::Closure(closure_def_id, _) = substs.last().unwrap().expect_ty().kind() {
                 // Storage access functions may have closures as parameters, we need to analyze them
-                self.t_fn_call_analysis(*closure_def_id, args);
+                self.t_fn_call_analysis(*closure_def_id, args, location);
             }
 
             // Account for the cost of calling the storage access function
@@ -173,11 +185,16 @@ where
                 }
             }
         } else {
-            self.t_fn_call_analysis(target_def_id, args);
+            self.t_fn_call_analysis(target_def_id, args, location);
         }
     }
 
-    fn t_fn_call_analysis(&mut self, target_def_id: DefId, args: Vec<Operand<'tcx>>) {
+    fn t_fn_call_analysis(
+        &mut self,
+        target_def_id: DefId,
+        args: Vec<Operand<'tcx>>,
+        location: Location,
+    ) {
         if self.summaries.borrow_mut().contains_key(&target_def_id) {
             // We already have the summary for this function, retrieve it and return
             let summary = self.summaries.borrow_mut();
@@ -190,7 +207,7 @@ where
                 // we are in a recursive call, just ignore it
                 println!(
                     "{:?} calling {:?}",
-                    self.tcx.def_path_str(self._def_id),
+                    self.tcx.def_path_str(self.def_id),
                     self.tcx.def_path_str(target_def_id)
                 );
                 println!("Recursive calls not supported.");
@@ -206,18 +223,37 @@ where
         let path = self.tcx.def_path_str(target_def_id);
         if path.starts_with("pallet::Pallet") && path.ends_with("deposit_event") {
             if let TyKind::Adt(adt_def, _) = args[0].ty(self.body, self.tcx).kind() {
-                let variant = adt_def.variant(
-                    *self
-                        .state
-                        .bb_set_discriminant
-                        .get(&args[0].place().unwrap().local)
-                        .unwrap(),
-                );
+                let event_variants = self
+                    .events_variants
+                    .get(&self.def_id)
+                    .unwrap()
+                    .get(location)
+                    .unwrap();
 
-                // For now add the variant size as symbolic
-                let cost = Cost::Symbolic(Symbolic::SizeOf(self.tcx.def_path_str(variant.def_id)));
-
-                self.state.add_events(cost);
+                match event_variants {
+                    Variants::Variant(variant_id) => {
+                        let variant = adt_def.variant(*variant_id);
+                        // For now add the variant size as symbolic
+                        let cost =
+                            Cost::Symbolic(Symbolic::SizeOf(self.tcx.def_path_str(variant.def_id)));
+                        self.state.add_events(cost);
+                    }
+                    Variants::Or(_, _) => {
+                        let cost = event_variants
+                            .flatten_or()
+                            .iter()
+                            .map(|variant_id| {
+                                let variant = adt_def.variant(*variant_id);
+                                // For now add the variant size as symbolic
+                                Cost::Symbolic(Symbolic::SizeOf(
+                                    self.tcx.def_path_str(variant.def_id),
+                                ))
+                            })
+                            .reduce(|accum, item| accum.max(&item))
+                            .unwrap();
+                        self.state.add_events(cost);
+                    }
+                }
             }
             return;
         }
@@ -241,9 +277,10 @@ where
             }
 
             // Analyze the target function
-            let mut results = RWCountAnalysis::new_with_init(
+            let mut results = CostAnalysis::new_with_init(
                 self.tcx,
                 self.pallet,
+                self.events_variants,
                 target_def_id,
                 target_mir,
                 self.summaries.clone(),
@@ -278,7 +315,9 @@ where
             }
         } else {
             // No MIR available, but symbolically account for the call cost
-            self.state.add_steps(Cost::Symbolic(Symbolic::TimeOf(self.tcx.def_path_str(target_def_id))));
+            self.state.add_steps(Cost::Symbolic(Symbolic::TimeOf(
+                self.tcx.def_path_str(target_def_id),
+            )));
         }
     }
 }
@@ -286,8 +325,7 @@ where
 impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
     fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
         match rvalue {
-            Rvalue::BinaryOp(_, box (lhs, rhs))
-            | Rvalue::CheckedBinaryOp(_, box (lhs, rhs)) => {
+            Rvalue::BinaryOp(_, box (lhs, rhs)) | Rvalue::CheckedBinaryOp(_, box (lhs, rhs)) => {
                 self.visit_operand(lhs, location);
                 self.visit_operand(rhs, location);
 
@@ -299,25 +337,6 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 self.state.add_steps(Cost::Concrete(1));
             }
             _ => self.super_rvalue(rvalue, location),
-        }
-    }
-
-    fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {
-        let Statement { source_info, kind } = statement;
-        match kind {
-            StatementKind::SetDiscriminant {
-                place,
-                variant_index,
-            } => {
-                self.visit_source_info(source_info);
-
-                // Set the discriminant for the local, we need it to track
-                // the Event enum variant that will be deposited
-                self.state
-                    .bb_set_discriminant
-                    .insert(place.local, *variant_index);
-            }
-            _ => self.super_statement(statement, location),
         }
     }
 
@@ -336,17 +355,14 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                     self.visit_operand(arg, location);
                 }
 
-                self.t_visit_fn_call(*target_def_id, substs, (*args).clone());
+                self.t_visit_fn_call(*target_def_id, substs, (*args).clone(), location);
             }
             _ => self.super_terminator(terminator, location),
         }
-
-        // clean basic block discriminants state for next bb
-        self.state.reset_bb_discriminants()
     }
 }
 
-impl<'inter> AnalysisDomain<'inter> for RWCountAnalysis<'inter, '_, '_> {
+impl<'inter> AnalysisDomain<'inter> for CostAnalysis<'inter, '_, '_> {
     type Domain = CostDomain;
     const NAME: &'static str = "CostAnalysis";
 
@@ -359,7 +375,7 @@ impl<'inter> AnalysisDomain<'inter> for RWCountAnalysis<'inter, '_, '_> {
     fn initialize_start_block(&self, _body: &Body<'inter>, _state: &mut Self::Domain) {}
 }
 
-impl<'tcx> Analysis<'tcx> for RWCountAnalysis<'tcx, '_, '_> {
+impl<'tcx> Analysis<'tcx> for CostAnalysis<'tcx, '_, '_> {
     fn apply_statement_effect(
         &self,
         state: &mut Self::Domain,

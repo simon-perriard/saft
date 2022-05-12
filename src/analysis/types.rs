@@ -4,7 +4,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_span::def_id::DefId;
 use std::mem::size_of;
 
-use super::cost_language::{HasSize, Cost, Symbolic};
+use super::cost_language::{Cost, HasSize, Symbolic};
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum Type {

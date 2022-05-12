@@ -1,7 +1,9 @@
 pub mod analysis_utils;
-pub mod pallet;
 pub mod cost_analysis;
 pub mod cost_domain;
-pub mod storage_actions;
 pub mod cost_language;
+pub mod events_variants_analysis;
+pub mod events_variants_domain;
+pub mod pallet;
+pub mod storage_actions;
 pub mod types;

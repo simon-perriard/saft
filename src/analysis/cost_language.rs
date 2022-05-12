@@ -25,7 +25,6 @@ impl Default for Cost {
 }
 
 impl Cost {
-
     pub(crate) fn is_zero(&self) -> bool {
         match self {
             Self::Concrete(x) => *x == 0,
@@ -166,7 +165,7 @@ impl std::ops::Mul for Cost {
         } else if let Self::Concrete(x) = rhs {
             return Self::LinMul(x, Box::new(self));
         }
-        
+
         Self::Mul(Box::new(self), Box::new(rhs))
     }
 }
@@ -175,13 +174,11 @@ impl fmt::Display for Cost {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Concrete(x) => write!(f, "{}", x),
-            Self::Symbolic(symbolic) => {
-                match symbolic {
-                    Symbolic::ValueOf(s) => write!(f, "VALUEOF({})", s),
-                    Symbolic::SizeOf(s) => write!(f, "SIZEOF({})", s),
-                    Symbolic::TimeOf(s) => write!(f, "TIMEOF({})", s),
-                }
-            }
+            Self::Symbolic(symbolic) => match symbolic {
+                Symbolic::ValueOf(s) => write!(f, "VALUEOF({})", s),
+                Symbolic::SizeOf(s) => write!(f, "SIZEOF({})", s),
+                Symbolic::TimeOf(s) => write!(f, "TIMEOF({})", s),
+            },
             Self::Add(a, b) => write!(f, "{} + {}", a, b),
             Self::Mul(a, b) => {
                 if a.pretty_print_need_parenthesis() && b.pretty_print_need_parenthesis() {

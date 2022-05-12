@@ -17,6 +17,8 @@ extern crate rustc_typeck;
 
 pub mod analysis;
 pub mod sysroot;
+use std::collections::HashMap;
+
 use crate::analysis::*;
 use rustc_mir_dataflow::Analysis;
 
@@ -24,6 +26,43 @@ pub fn extract_juice(tcx: rustc_middle::ty::TyCtxt) {
     // Extract pallet
     print!("Extracting pallet information...");
     let pallet = pallet::Pallet::new(tcx);
+    println!(" Done");
+
+    print!("Extracting event variants...");
+    let mut event_variants = HashMap::new();
+
+    // Analysis to extract the variant of each deposited event
+    for crate_def_id in tcx
+        .hir()
+        .body_owners()
+        .filter(|body_owner| tcx.hir().body_owner_kind(*body_owner).is_fn_or_closure())
+        .map(|local_def_id| local_def_id.to_def_id())
+    {
+        let mir = tcx.optimized_mir(crate_def_id);
+
+        if mir.is_cfg_cyclic() {
+            // We simply do not analyze if there is a loop, the user will be alerted anyway during the cost analysis
+            continue;
+        }
+
+        let events_variants_analysis =
+            events_variants_analysis::EventsVariantsAnalysis::new(tcx, mir);
+        let mut results = events_variants_analysis
+            .into_engine(tcx, mir)
+            .pass_name("events_variants_analysis")
+            .iterate_to_fixpoint()
+            .into_results_cursor(mir);
+
+        if let Some((last, _)) = rustc_middle::mir::traversal::reverse_postorder(mir).last() {
+            results.seek_to_block_end(last);
+            let end_state = results.get().clone();
+
+            if !end_state.is_empty() {
+                event_variants.insert(crate_def_id, end_state);
+            }
+        }
+    }
+    let event_variants = event_variants;
     println!(" Done");
 
     println!("The following dispatchables will be analyzed :");
@@ -47,10 +86,15 @@ pub fn extract_juice(tcx: rustc_middle::ty::TyCtxt) {
             continue;
         }
 
-        let r_w_count_analysis =
-            cost_analysis::RWCountAnalysis::new(tcx, &pallet, *dispatchable_def_id, mir);
+        let cost_analysis = cost_analysis::CostAnalysis::new(
+            tcx,
+            &pallet,
+            &event_variants,
+            *dispatchable_def_id,
+            mir,
+        );
 
-        let mut results = r_w_count_analysis
+        let mut results = cost_analysis
             .into_engine(tcx, mir)
             .pass_name("cost_analysis")
             .iterate_to_fixpoint()
