@@ -3,7 +3,6 @@ use rustc_middle::ty;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::def_id::DefId;
 use std::mem::size_of;
-use rustc_middle::ty::ParamEnv;
 
 use super::cost_language::{Cost, HasSize, Symbolic};
 

@@ -9,7 +9,7 @@ use rustc_middle::mir::{
     traversal::*, visit::*, BasicBlock, Body, Location, Operand, Rvalue, Statement, Terminator,
     TerminatorKind,
 };
-use rustc_middle::ty::{ParamEnv, subst::SubstsRef, TyCtxt, TyKind};
+use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
 use rustc_span::def_id::DefId;
 use std::cell::RefCell;
@@ -239,7 +239,6 @@ where
                         let cost = match self.tcx.layout_of(self.tcx.param_env(adt_def.did()).and(ty)) {
                             Ok(ty_and_layout) => {
                                 let layout = ty_and_layout.layout;
-                                println!("WOOPWOOP");
                                 match layout.variants() {
                                     rustc_target::abi::Variants::Single{ .. } => {
                                         Cost::Concrete(ty_and_layout.layout.size().bytes())
