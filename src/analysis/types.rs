@@ -119,7 +119,7 @@ impl HasSize for Type {
                         Ok(ty_and_layout) => Cost::Concrete(ty_and_layout.layout.size().bytes()),
                         Err(_) => Cost::Symbolic(Symbolic::SizeOf(tcx.def_path_str(*def_id))),
                     }
-                },
+                }
                 Adt::Option(ty) => ty.get_size(tcx),
                 Adt::Vec(_) => todo!(),
                 Adt::BoundedVec(ty, max_size) => {
@@ -139,7 +139,7 @@ impl HasSize for Type {
                 }
             },
             Type::Str => todo!(),
-            Type::Array(ty, size) => Cost::ConcreteMul((*size).into(), Box::new(ty.get_size(tcx))),
+            Type::Array(ty, size) => Cost::Concrete(*size).concrete_mul(ty.get_size(tcx)),
             Type::Slice(_) => todo!(),
             Type::Ref(ty, _) => ty.get_size(tcx),
             Type::FnPtr(_, ret_ty) => ret_ty.get_size(tcx),

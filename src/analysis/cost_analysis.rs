@@ -6,15 +6,17 @@ use super::storage_actions::HasAccessType;
 use crate::events_variants_domain::EventVariantsDomain;
 use crate::storage_actions::AccessType;
 use rustc_middle::mir::{
-    traversal::*, visit::*, BasicBlock, Body, Location, Operand, Rvalue, Statement, Terminator,
-    TerminatorKind,
+    traversal::*, visit::*, BasicBlock, Body, Local, Location, Operand, Rvalue, Statement,
+    StatementKind, Terminator, TerminatorKind,
 };
+use rustc_middle::ty::Ty;
 use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
 use rustc_span::def_id::DefId;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::vec;
 
 pub(crate) type Summary = HashMap<DefId, Option<CostDomain>>;
 
@@ -24,6 +26,7 @@ pub(crate) struct CostAnalysis<'tcx, 'inter, 'intra> {
     events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     body: &'intra Body<'tcx>,
     def_id: DefId,
+    local_types: Rc<RefCell<HashMap<Local, Ty<'tcx>>>>,
     pub summaries: Rc<RefCell<Summary>>,
     pub is_success: Rc<RefCell<bool>>,
 }
@@ -42,6 +45,7 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter, 'intra> {
             events_variants,
             def_id,
             body,
+            HashMap::new(),
             Rc::new(RefCell::new(HashMap::new())),
             Rc::new(RefCell::new(true)),
         )
@@ -53,15 +57,35 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter, 'intra> {
         events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
         def_id: DefId,
         body: &'intra Body<'tcx>,
+        local_types_outter: HashMap<Local, Ty<'tcx>>,
         summaries: Rc<RefCell<Summary>>,
         is_success: Rc<RefCell<bool>>,
     ) -> Self {
+        // Fill the map with current body type
+        let mut local_types = HashMap::new();
+
+        for (local, local_decl) in body.local_decls.iter_enumerated() {
+            local_types.insert(local, local_decl.ty);
+        }
+        //println!("CALLED {}, MAP: {:?}", tcx.def_path_str(def_id), local_types.iter().map(|(k, v)| (*k,v.kind())).collect::<Vec<(Local,&TyKind)>>());
+        // Replace with more precise types from local_types_outter
+        for (local, ty) in local_types_outter.iter() {
+            local_types.insert(*local, *ty);
+        }
+        /*println!("CALLED {}, MAP: {:?}", tcx.def_path_str(def_id), local_types_outter.iter().map(|(k, v)| (*k,v.kind())).collect::<Vec<(Local,&TyKind)>>());
+        println!("CALLED {}, MAP: {:?}", tcx.def_path_str(def_id), local_types.iter().map(|(k, v)| (*k,v.kind())).collect::<Vec<(Local,&TyKind)>>());
+        println!();
+        println!();*/
+
+        let local_types = Rc::new(RefCell::new(local_types));
+
         CostAnalysis {
             tcx,
             pallet,
             events_variants,
             def_id,
             body,
+            local_types,
             summaries,
             is_success,
         }
@@ -78,6 +102,7 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter, 'intra> {
             self.summaries.clone(),
             self.def_id,
             self.body,
+            self.local_types.clone(),
             state,
             self.is_success.clone(),
         )
@@ -91,6 +116,7 @@ pub(crate) struct TransferFunction<'tcx, 'inter, 'intra> {
     summaries: Rc<RefCell<Summary>>,
     def_id: DefId,
     body: &'intra Body<'tcx>,
+    local_types: Rc<RefCell<HashMap<Local, Ty<'tcx>>>>,
     state: &'intra mut CostDomain,
     is_success: Rc<RefCell<bool>>,
 }
@@ -103,6 +129,7 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
         summaries: Rc<RefCell<Summary>>,
         def_id: DefId,
         body: &'intra Body<'tcx>,
+        local_types: Rc<RefCell<HashMap<Local, Ty<'tcx>>>>,
         state: &'intra mut CostDomain,
         is_success: Rc<RefCell<bool>>,
     ) -> Self {
@@ -113,6 +140,7 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
             summaries,
             def_id,
             body,
+            local_types,
             state,
             is_success,
         }
@@ -197,19 +225,14 @@ where
     ) {
         if self.summaries.borrow_mut().contains_key(&target_def_id) {
             // We already have the summary for this function, retrieve it and return
-            let summary = self.summaries.borrow_mut();
-            let summary = summary.get(&target_def_id).unwrap();
+            let summaries = self.summaries.borrow_mut();
+            let summary = summaries.get(&target_def_id).unwrap();
 
             if let Some(summary) = summary {
                 // Add the cost of calling the target function
                 self.state.inter_join(summary);
             } else {
                 // we are in a recursive call, just ignore it
-                println!(
-                    "{:?} calling {:?}",
-                    self.tcx.def_path_str(self.def_id),
-                    self.tcx.def_path_str(target_def_id)
-                );
                 println!("Recursive calls not supported.");
                 *self.is_success.borrow_mut() = false;
             }
@@ -232,29 +255,31 @@ where
 
                 match event_variants {
                     Variants::Variant(variant_id) => {
-
-                        // TODO: 
                         let ty = args[0].ty(self.body, self.tcx);
 
-                        let cost = match self.tcx.layout_of(self.tcx.param_env(adt_def.did()).and(ty)) {
+                        let cost = match self
+                            .tcx
+                            .layout_of(self.tcx.param_env(adt_def.did()).and(ty))
+                        {
                             Ok(ty_and_layout) => {
                                 let layout = ty_and_layout.layout;
                                 match layout.variants() {
-                                    rustc_target::abi::Variants::Single{ .. } => {
+                                    rustc_target::abi::Variants::Single { .. } => {
                                         Cost::Concrete(ty_and_layout.layout.size().bytes())
-                                    },
-                                    rustc_target::abi::Variants::Multiple{ variants, .. } => {
+                                    }
+                                    rustc_target::abi::Variants::Multiple { variants, .. } => {
                                         let variant_layout = variants[*variant_id];
                                         Cost::Concrete(variant_layout.size().bytes())
                                     }
                                 }
-                            },
+                            }
                             Err(_) => {
                                 let variant = adt_def.variant(*variant_id);
-                                Cost::Symbolic(Symbolic::SizeOf(self.tcx.def_path_str(variant.def_id)))
+                                Cost::Symbolic(Symbolic::SizeOf(
+                                    self.tcx.def_path_str(variant.def_id),
+                                ))
                             }
                         };
-
 
                         self.state.add_events(cost);
                     }
@@ -296,6 +321,32 @@ where
                 return;
             }
 
+            let mut args_ty = HashMap::new();
+            // Local 0_ will be return value, args start at 1_
+            let mut arg_count = 1;
+            for arg in args {
+                match &arg {
+                    Operand::Copy(place) | Operand::Move(place) => {
+                        args_ty.insert(
+                            Local::from_u32(arg_count),
+                            *self.local_types.borrow().get(&place.local).unwrap(),
+                        );
+                    }
+                    Operand::Constant(constant) => {
+                        if let Some((def_id, substs_ref)) = arg.const_fn_def() {
+                            args_ty.insert(Local::from_u32(arg_count),
+                            self.tcx.type_of(def_id));
+                        } else {
+                            args_ty.insert(Local::from_u32(arg_count),
+                            constant.ty());
+                        }
+                    },
+                };
+                arg_count += 1;
+            }
+
+            //println!("CALLING {}, MAP: {:?}", self.tcx.def_path_str(target_def_id), args_ty.values().map(|v| v.kind()).collect::<Vec<&TyKind>>());
+
             // Analyze the target function
             let mut results = CostAnalysis::new_with_init(
                 self.tcx,
@@ -303,6 +354,7 @@ where
                 self.events_variants,
                 target_def_id,
                 target_mir,
+                args_ty,
                 self.summaries.clone(),
                 self.is_success.clone(),
             )
@@ -333,12 +385,35 @@ where
                     .borrow_mut()
                     .insert(target_def_id, Some(end_state));
             }
+        } else if self.is_closure_call(target_def_id) {
+            // First arg is closure
+            //println!("{:?}", self.local_types.borrow().get(&args[0].place().unwrap().local).unwrap().kind());
+            let target_def_id = match self.local_types.borrow().get(&args[0].place().unwrap().local).unwrap().kind() {
+                TyKind::Closure(closure_def_id, _) => {
+                    //println!("{:?}", param_ty);
+                    Some(closure_def_id)
+                },
+                _ => None,//TODO
+            };
+
+            if let Some(target_def_id) = target_def_id {
+                self.t_fn_call_analysis(*target_def_id, args, location);
+            }
+
         } else {
+
             // No MIR available, but symbolically account for the call cost
             self.state.add_steps(Cost::Symbolic(Symbolic::TimeOf(
                 self.tcx.def_path_str(target_def_id),
             )));
         }
+    }
+
+    fn is_closure_call(&self, target_def_id: DefId) -> bool {
+        let path: &str = &self.tcx.def_path_str(target_def_id);
+        let closure_calls_list = vec!["std::ops::FnOnce::call_once"];
+
+        closure_calls_list.contains(&path)
     }
 }
 
@@ -357,6 +432,21 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 self.state.add_steps(Cost::Concrete(1));
             }
             _ => self.super_rvalue(rvalue, location),
+        }
+    }
+
+    fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {
+        let Statement { source_info, kind } = statement;
+
+        match kind {
+            StatementKind::Assign(box (place_to, rvalue)) if let Rvalue::Use(operand) = rvalue && let Some(place_from) = operand.place() => {
+                self.visit_source_info(source_info);
+
+                // In case of move of copy, update with the most precise type
+                let place_from_ty = self.local_types.borrow().get(&place_from.local).unwrap().clone();
+                self.local_types.borrow_mut().insert(place_to.local, place_from_ty);
+            },
+            _ => self.super_statement(statement, location),
         }
     }
 
