@@ -193,21 +193,8 @@ where
         args: Vec<Operand<'tcx>>,
         location: Location,
     ) {
-        if let (Some(access_type), size) = self.is_storage_call(target_def_id, substs) {
-            if let TyKind::Closure(closure_def_id, _) = substs.last().unwrap().expect_ty().kind() {
-                // Storage access functions may have closures as parameters, we need to analyze them
-                self.t_fn_call_analysis(*closure_def_id, args, location);
-            }
-
-            // Account for the cost of calling the storage access function
-            match access_type {
-                AccessType::Read => self.state.add_reads(size),
-                AccessType::Write => self.state.add_writes(size),
-                AccessType::Both => {
-                    self.state.add_reads(size.clone());
-                    self.state.add_writes(size)
-                }
-            }
+        if let (Some(access_type), cost) = self.is_storage_call(target_def_id, substs) {
+            self.analyze_storage_access(substs, args, location, access_type, cost)
         } else {
             self.t_fn_call_analysis(target_def_id, args, location);
         }
@@ -247,6 +234,28 @@ where
             self.state.add_steps(Cost::Symbolic(Symbolic::TimeOf(
                 self.tcx.def_path_str(target_def_id),
             )));
+        }
+    }
+
+    fn analyze_storage_access(&mut self,
+        substs: &'tcx SubstsRef,
+        args: Vec<Operand<'tcx>>,
+        location: Location,
+        access_type: AccessType,
+        cost: Cost) {
+        if let TyKind::Closure(closure_def_id, _) = substs.last().unwrap().expect_ty().kind() {
+            // Storage access functions may have closures as parameters, we need to analyze them
+            self.t_fn_call_analysis(*closure_def_id, args, location);
+        }
+
+        // Account for the cost of calling the storage access function
+        match access_type {
+            AccessType::Read => self.state.add_reads(cost),
+            AccessType::Write => self.state.add_writes(cost),
+            AccessType::Both => {
+                self.state.add_reads(cost.clone());
+                self.state.add_writes(cost)
+            }
         }
     }
 
