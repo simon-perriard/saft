@@ -5,8 +5,9 @@ use super::pallet::Pallet;
 use super::storage_actions::HasAccessType;
 use crate::events_variants_domain::EventVariantsDomain;
 use crate::storage_actions::AccessType;
+use rustc_index::vec::IndexVec;
 use rustc_middle::mir::{
-    traversal::*, visit::*, BasicBlock, Body, Local, Location, Operand, Rvalue, Statement,
+    traversal::*, visit::*, BasicBlock, Body, Local, Location, Operand, Place, Rvalue, Statement,
     StatementKind, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::Ty;
@@ -43,9 +44,9 @@ pub(crate) struct CostAnalysis<'tcx, 'inter> {
     pallet: &'inter Pallet,
     events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     def_id: DefId,
-    local_types: Rc<RefCell<HashMap<Local, Ty<'tcx>>>>,
+    local_types: Rc<RefCell<IndexVec<Local, Ty<'tcx>>>>,
     pub summaries: Rc<RefCell<Summary>>,
-    pub is_success: Rc<RefCell<AnalysisState>>,
+    pub analysis_state: Rc<RefCell<AnalysisState>>,
 }
 
 impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
@@ -60,7 +61,7 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
             pallet,
             events_variants,
             def_id,
-            HashMap::new(),
+            IndexVec::new(),
             Rc::new(RefCell::new(HashMap::new())),
             Rc::new(RefCell::new(AnalysisState::Success)),
         )
@@ -71,22 +72,22 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
         pallet: &'inter Pallet,
         events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
         def_id: DefId,
-        local_types_outter: HashMap<Local, Ty<'tcx>>,
+        local_types_outter: IndexVec<Local, Ty<'tcx>>,
         summaries: Rc<RefCell<Summary>>,
-        is_success: Rc<RefCell<AnalysisState>>,
+        state: Rc<RefCell<AnalysisState>>,
     ) -> Self {
         // Fill the map with current body type
-        let mut local_types = HashMap::new();
-
         let body = tcx.optimized_mir(def_id);
 
-        for (local, local_decl) in body.local_decls.iter_enumerated() {
-            local_types.insert(local, local_decl.ty);
-        }
+        let mut local_types: IndexVec<Local, Ty<'tcx>> = body
+            .local_decls
+            .iter()
+            .map(|local_decl| local_decl.ty)
+            .collect();
 
         // Replace with more precise types from local_types_outter
-        for (local, ty) in local_types_outter.iter() {
-            local_types.insert(*local, *ty);
+        for (local, ty) in local_types_outter.iter_enumerated() {
+            local_types[local] = *ty;
         }
 
         let local_types = Rc::new(RefCell::new(local_types));
@@ -98,7 +99,7 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
             def_id,
             local_types,
             summaries,
-            is_success,
+            analysis_state: state,
         }
     }
 
@@ -114,7 +115,7 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
             self.def_id,
             self.local_types.clone(),
             state,
-            self.is_success.clone(),
+            self.analysis_state.clone(),
         )
     }
 }
@@ -125,9 +126,9 @@ pub(crate) struct TransferFunction<'tcx, 'inter, 'intra> {
     events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     summaries: Rc<RefCell<Summary>>,
     def_id: DefId,
-    local_types: Rc<RefCell<HashMap<Local, Ty<'tcx>>>>,
-    state: &'intra mut CostDomain,
-    is_success: Rc<RefCell<AnalysisState>>,
+    local_types: Rc<RefCell<IndexVec<Local, Ty<'tcx>>>>,
+    domain_state: &'intra mut CostDomain,
+    analysis_state: Rc<RefCell<AnalysisState>>,
 }
 
 impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
@@ -137,9 +138,9 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
         events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
         summaries: Rc<RefCell<Summary>>,
         def_id: DefId,
-        local_types: Rc<RefCell<HashMap<Local, Ty<'tcx>>>>,
-        state: &'intra mut CostDomain,
-        is_success: Rc<RefCell<AnalysisState>>,
+        local_types: Rc<RefCell<IndexVec<Local, Ty<'tcx>>>>,
+        domain_state: &'intra mut CostDomain,
+        analysis_state: Rc<RefCell<AnalysisState>>,
     ) -> Self {
         TransferFunction {
             tcx,
@@ -148,8 +149,8 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
             summaries,
             def_id,
             local_types,
-            state,
-            is_success,
+            domain_state,
+            analysis_state,
         }
     }
 }
@@ -164,11 +165,12 @@ where
         substs: &'tcx SubstsRef,
         args: Vec<Operand<'tcx>>,
         location: Location,
+        destination: Option<(Place<'tcx>, BasicBlock)>,
     ) {
         if let (Some(access_type), cost) = self.is_storage_call(target_def_id, substs) {
-            self.analyze_storage_access(substs, args, location, access_type, cost)
+            self.analyze_storage_access(substs, args, location, access_type, cost, destination);
         } else {
-            self.t_fn_call_analysis(target_def_id, args, location);
+            self.t_fn_call_analysis(target_def_id, args, location, destination);
         }
     }
 
@@ -177,6 +179,7 @@ where
         target_def_id: DefId,
         args: Vec<Operand<'tcx>>,
         location: Location,
+        destination: Option<(Place<'tcx>, BasicBlock)>,
     ) {
         if self.summaries.borrow_mut().contains_key(&target_def_id) {
             // We already have the summary for this function, retrieve it and return
@@ -185,11 +188,11 @@ where
 
             if let Some(summary) = summary {
                 // Add the cost of calling the target function
-                self.state.inter_join(summary);
+                self.domain_state.inter_join(summary);
             } else {
                 // we are in a recursive call, just ignore it
                 println!("Recursive calls not supported.");
-                *self.is_success.borrow_mut() = AnalysisState::Failure;
+                *self.analysis_state.borrow_mut() = AnalysisState::Failure;
             }
         } else if self.is_deposit_event(target_def_id) {
             // Filtering event deposit, pallet::deposit_event will later call frame_system::deposit_event,
@@ -198,12 +201,12 @@ where
             self.analyze_deposit_event(args, location);
         } else if self.tcx.is_mir_available(target_def_id) {
             // We don't have the summary but MIR is available, we need to analyze the function
-            self.analyze_with_mir(target_def_id, args);
+            self.analyze_with_mir(target_def_id, args, destination);
         } else if self.is_closure_call(target_def_id) {
-            self.analyze_closure_call(args, location);
+            self.analyze_closure_call(args, location, destination);
         } else {
             // No MIR available, but symbolically account for the call cost
-            self.state.add_steps(Cost::Symbolic(Symbolic::TimeOf(
+            self.domain_state.add_steps(Cost::Symbolic(Symbolic::TimeOf(
                 self.tcx.def_path_str(target_def_id),
             )));
         }
@@ -216,19 +219,20 @@ where
         location: Location,
         access_type: AccessType,
         cost: Cost,
+        destination: Option<(Place<'tcx>, BasicBlock)>,
     ) {
         if let TyKind::Closure(closure_def_id, _) = substs.last().unwrap().expect_ty().kind() {
             // Storage access functions may have closures as parameters, we need to analyze them
-            self.t_fn_call_analysis(*closure_def_id, args, location);
+            self.t_fn_call_analysis(*closure_def_id, args, location, destination);
         }
 
         // Account for the cost of calling the storage access function
         match access_type {
-            AccessType::Read => self.state.add_reads(cost),
-            AccessType::Write => self.state.add_writes(cost),
+            AccessType::Read => self.domain_state.add_reads(cost),
+            AccessType::Write => self.domain_state.add_writes(cost),
             AccessType::Both => {
-                self.state.add_reads(cost.clone());
-                self.state.add_writes(cost)
+                self.domain_state.add_reads(cost.clone());
+                self.domain_state.add_writes(cost)
             }
         }
     }
@@ -270,7 +274,7 @@ where
                         }
                     };
 
-                    self.state.add_events(cost);
+                    self.domain_state.add_events(cost);
                 }
                 Variants::Or(_, _) => {
                     let cost = event_variants
@@ -283,13 +287,18 @@ where
                         })
                         .reduce(|accum, item| accum.max(&item))
                         .unwrap();
-                    self.state.add_events(cost);
+                    self.domain_state.add_events(cost);
                 }
             }
         }
     }
 
-    fn analyze_with_mir(&mut self, target_def_id: DefId, args: Vec<Operand<'tcx>>) {
+    fn analyze_with_mir(
+        &mut self,
+        target_def_id: DefId,
+        args: Vec<Operand<'tcx>>,
+        destination: Option<(Place<'tcx>, BasicBlock)>,
+    ) {
         // Initialize the summary to None so we can detect a recursive call later
         self.summaries.borrow_mut().insert(target_def_id, None);
 
@@ -301,31 +310,33 @@ where
                 "Loop detected in function {}, loops are not supported",
                 self.tcx.def_path_str(target_def_id)
             );
-            *self.is_success.borrow_mut() = AnalysisState::Failure;
+            *self.analysis_state.borrow_mut() = AnalysisState::Failure;
             return;
         }
 
         //TODO: use IndexVec instead and pass 0_ type as well
-        let mut args_ty = HashMap::new();
+        let mut local_types_outter = IndexVec::new();
         // Local 0_ will be return value, args start at 1_
-        let mut arg_count = 1;
+        if let Some((place_to, _)) = destination {
+            local_types_outter.push(self.local_types.borrow()[place_to.local]);
+        } else {
+            // If none, the call necessarily diverges.
+            // cf. https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/terminator/enum.TerminatorKind.html#variant.Call
+        }
+
         for arg in args {
             match &arg {
                 Operand::Copy(place) | Operand::Move(place) => {
-                    args_ty.insert(
-                        Local::from_u32(arg_count),
-                        *self.local_types.borrow().get(&place.local).unwrap(),
-                    );
+                    local_types_outter.push(*self.local_types.borrow().get(place.local).unwrap());
                 }
                 Operand::Constant(constant) => {
                     if let Some((def_id, substs_ref)) = arg.const_fn_def() {
-                        args_ty.insert(Local::from_u32(arg_count), self.tcx.type_of(def_id));
+                        local_types_outter.push(self.tcx.type_of(def_id));
                     } else {
-                        args_ty.insert(Local::from_u32(arg_count), constant.ty());
+                        local_types_outter.push(constant.ty());
                     }
                 }
             };
-            arg_count += 1;
         }
 
         // Analyze the target function
@@ -334,19 +345,22 @@ where
             self.pallet,
             self.events_variants,
             target_def_id,
-            args_ty,
+            local_types_outter,
             self.summaries.clone(),
-            self.is_success.clone(),
+            self.analysis_state.clone(),
         )
         .into_engine(self.tcx, target_mir)
         .pass_name("cost_analysis")
         .iterate_to_fixpoint()
         .into_results_cursor(target_mir);
 
-        // Retrieve target function analysis success flag
-        let self_success_state = self.is_success.borrow();
-        *self.is_success.borrow_mut() =
-            self_success_state.and(&results.analysis().is_success.borrow());
+        let updated_state;
+        {
+            let self_success_state = self.analysis_state.borrow();
+            // Retrieve target function analysis success flag and
+            updated_state = self_success_state.and(&results.analysis().analysis_state.borrow());
+        }
+        *self.analysis_state.borrow_mut() = updated_state;
 
         // Retrieve last state of callee function as its summary
         let end_state = if let Some((last, _)) = reverse_postorder(target_mir).last() {
@@ -358,7 +372,7 @@ where
 
         if let Some(end_state) = end_state {
             // Update caller function state
-            self.state.inter_join(&end_state);
+            self.domain_state.inter_join(&end_state);
 
             // Add the callee function summary to our summaries map
             self.summaries
@@ -367,25 +381,31 @@ where
         }
     }
 
-    fn analyze_closure_call(&mut self, args: Vec<Operand<'tcx>>, location: Location) {
+    fn analyze_closure_call(
+        &mut self,
+        args: Vec<Operand<'tcx>>,
+        location: Location,
+        destination: Option<(Place<'tcx>, BasicBlock)>,
+    ) {
         // First arg is closure
-        //println!("{:?}", self.local_types.borrow().get(&args[0].place().unwrap().local).unwrap().kind());
         let target_def_id = match self
             .local_types
             .borrow()
-            .get(&args[0].place().unwrap().local)
+            .get(args[0].place().unwrap().local)
             .unwrap()
             .kind()
         {
-            TyKind::Closure(closure_def_id, _) => {
-                //println!("{:?}", param_ty);
-                Some(closure_def_id)
-            }
-            _ => None, //TODO
+            TyKind::Closure(closure_def_id, _) => Some(closure_def_id),
+            TyKind::FnDef(def_id, _) => None,
+            TyKind::Ref(region, ty, mutability) => None,
+            _ => unreachable!(),
         };
 
         if let Some(target_def_id) = target_def_id {
-            self.t_fn_call_analysis(*target_def_id, args, location);
+            let mut closure_args = args.clone();
+            // First arg is closure, we remove it to keep only its args
+            closure_args.pop();
+            self.t_fn_call_analysis(*target_def_id, closure_args, location, destination);
         }
     }
 
@@ -452,12 +472,12 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 self.visit_operand(lhs, location);
                 self.visit_operand(rhs, location);
 
-                self.state.add_steps(Cost::Concrete(1));
+                self.domain_state.add_steps(Cost::Concrete(1));
             }
             Rvalue::UnaryOp(_, op) => {
                 self.visit_operand(op, location);
 
-                self.state.add_steps(Cost::Concrete(1));
+                self.domain_state.add_steps(Cost::Concrete(1));
             }
             _ => self.super_rvalue(rvalue, location),
         }
@@ -471,8 +491,8 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 self.visit_source_info(source_info);
 
                 // In case of move of copy, update with the most precise type
-                let place_from_ty = self.local_types.borrow().get(&place_from.local).unwrap().clone();
-                self.local_types.borrow_mut().insert(place_to.local, place_from_ty);
+                let place_from_ty = self.local_types.borrow().get(place_from.local).unwrap().clone();
+                self.local_types.borrow_mut()[place_to.local] = place_from_ty;
             },
             _ => self.super_statement(statement, location),
         }
@@ -485,6 +505,7 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
             TerminatorKind::Call {
                 func: Operand::Constant(c),
                 args,
+                destination,
                 ..
             } if let TyKind::FnDef(target_def_id, substs) = c.ty().kind() => {
                 self.visit_source_info(source_info);
@@ -493,7 +514,7 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                     self.visit_operand(arg, location);
                 }
 
-                self.t_visit_fn_call(*target_def_id, substs, (*args).clone(), location);
+                self.t_visit_fn_call(*target_def_id, substs, (*args).clone(), location, *destination);
             }
             _ => self.super_terminator(terminator, location),
         }

@@ -99,7 +99,7 @@ pub fn extract_juice(tcx: rustc_middle::ty::TyCtxt) {
             .iterate_to_fixpoint()
             .into_results_cursor(mir);
 
-        if *results.analysis().is_success.borrow() == AnalysisState::Success {
+        if *results.analysis().analysis_state.borrow() == AnalysisState::Failure {
             println!(
                 "Analysis failed for {}",
                 tcx.def_path_str(*dispatchable_def_id)
