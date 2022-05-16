@@ -67,15 +67,11 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter, 'intra> {
         for (local, local_decl) in body.local_decls.iter_enumerated() {
             local_types.insert(local, local_decl.ty);
         }
-        //println!("CALLED {}, MAP: {:?}", tcx.def_path_str(def_id), local_types.iter().map(|(k, v)| (*k,v.kind())).collect::<Vec<(Local,&TyKind)>>());
+
         // Replace with more precise types from local_types_outter
         for (local, ty) in local_types_outter.iter() {
             local_types.insert(*local, *ty);
         }
-        /*println!("CALLED {}, MAP: {:?}", tcx.def_path_str(def_id), local_types_outter.iter().map(|(k, v)| (*k,v.kind())).collect::<Vec<(Local,&TyKind)>>());
-        println!("CALLED {}, MAP: {:?}", tcx.def_path_str(def_id), local_types.iter().map(|(k, v)| (*k,v.kind())).collect::<Vec<(Local,&TyKind)>>());
-        println!();
-        println!();*/
 
         let local_types = Rc::new(RefCell::new(local_types));
 
@@ -236,172 +232,17 @@ where
                 println!("Recursive calls not supported.");
                 *self.is_success.borrow_mut() = false;
             }
-
-            return;
-        }
-
-        // Filtering event deposit, pallet::deposit_event will later call frame_system::deposit_event,
-        // but we can only catch the variant of the Event enum now. Or we need to pass a calling context for
-        // further analysis.
-        let path = self.tcx.def_path_str(target_def_id);
-        if path.starts_with("pallet::Pallet") && path.ends_with("deposit_event") {
-            if let TyKind::Adt(adt_def, _) = args[0].ty(self.body, self.tcx).kind() {
-                let event_variants = self
-                    .events_variants
-                    .get(&self.def_id)
-                    .unwrap()
-                    .get(location)
-                    .unwrap();
-
-                match event_variants {
-                    Variants::Variant(variant_id) => {
-                        let ty = args[0].ty(self.body, self.tcx);
-
-                        let cost = match self
-                            .tcx
-                            .layout_of(self.tcx.param_env(adt_def.did()).and(ty))
-                        {
-                            Ok(ty_and_layout) => {
-                                let layout = ty_and_layout.layout;
-                                match layout.variants() {
-                                    rustc_target::abi::Variants::Single { .. } => {
-                                        Cost::Concrete(ty_and_layout.layout.size().bytes())
-                                    }
-                                    rustc_target::abi::Variants::Multiple { variants, .. } => {
-                                        let variant_layout = variants[*variant_id];
-                                        Cost::Concrete(variant_layout.size().bytes())
-                                    }
-                                }
-                            }
-                            Err(_) => {
-                                let variant = adt_def.variant(*variant_id);
-                                Cost::Symbolic(Symbolic::SizeOf(
-                                    self.tcx.def_path_str(variant.def_id),
-                                ))
-                            }
-                        };
-
-                        self.state.add_events(cost);
-                    }
-                    Variants::Or(_, _) => {
-                        let cost = event_variants
-                            .flatten_or()
-                            .iter()
-                            .map(|variant_id| {
-                                let variant = adt_def.variant(*variant_id);
-                                // For now add the variant size as symbolic
-                                Cost::Symbolic(Symbolic::SizeOf(
-                                    self.tcx.def_path_str(variant.def_id),
-                                ))
-                            })
-                            .reduce(|accum, item| accum.max(&item))
-                            .unwrap();
-                        self.state.add_events(cost);
-                    }
-                }
-            }
-            return;
-        }
-
-        if self.tcx.is_mir_available(target_def_id) {
-            // We don't have the summary, we need to analyze the function
-
-            // Initialize the summary to None so we can detect a recursive call later
-            self.summaries.borrow_mut().insert(target_def_id, None);
-
-            let target_mir = self.tcx.optimized_mir(target_def_id);
-
-            // Detect loops in analyzed function
-            if target_mir.is_cfg_cyclic() {
-                println!(
-                    "Loop detected in function {}, loops are not supported",
-                    self.tcx.def_path_str(target_def_id)
-                );
-                *self.is_success.borrow_mut() = false;
-                return;
-            }
-
-            let mut args_ty = HashMap::new();
-            // Local 0_ will be return value, args start at 1_
-            let mut arg_count = 1;
-            for arg in args {
-                match &arg {
-                    Operand::Copy(place) | Operand::Move(place) => {
-                        args_ty.insert(
-                            Local::from_u32(arg_count),
-                            *self.local_types.borrow().get(&place.local).unwrap(),
-                        );
-                    }
-                    Operand::Constant(constant) => {
-                        if let Some((def_id, substs_ref)) = arg.const_fn_def() {
-                            args_ty.insert(Local::from_u32(arg_count),
-                            self.tcx.type_of(def_id));
-                        } else {
-                            args_ty.insert(Local::from_u32(arg_count),
-                            constant.ty());
-                        }
-                    },
-                };
-                arg_count += 1;
-            }
-
-            //println!("CALLING {}, MAP: {:?}", self.tcx.def_path_str(target_def_id), args_ty.values().map(|v| v.kind()).collect::<Vec<&TyKind>>());
-
-            // Analyze the target function
-            let mut results = CostAnalysis::new_with_init(
-                self.tcx,
-                self.pallet,
-                self.events_variants,
-                target_def_id,
-                target_mir,
-                args_ty,
-                self.summaries.clone(),
-                self.is_success.clone(),
-            )
-            .into_engine(self.tcx, target_mir)
-            .pass_name("cost_analysis")
-            .iterate_to_fixpoint()
-            .into_results_cursor(target_mir);
-
-            // Retrieve target function analysis success flag
-            let fn_call_success_anaylsis_state = *results.analysis().is_success.borrow();
-            let self_success_state = *self.is_success.borrow();
-            *self.is_success.borrow_mut() = self_success_state && fn_call_success_anaylsis_state;
-
-            // Retrieve last state of callee function as its summary
-            let end_state = if let Some((last, _)) = reverse_postorder(target_mir).last() {
-                results.seek_to_block_end(last);
-                Some(results.get().clone())
-            } else {
-                None
-            };
-
-            if let Some(end_state) = end_state {
-                // Update caller function state
-                self.state.inter_join(&end_state);
-
-                // Add the callee function summary to our summaries map
-                self.summaries
-                    .borrow_mut()
-                    .insert(target_def_id, Some(end_state));
-            }
+        } else if self.is_deposit_event(target_def_id) {
+            // Filtering event deposit, pallet::deposit_event will later call frame_system::deposit_event,
+            // but we can only catch the variant of the Event enum now. Or we need to pass a calling context for
+            // further analysis.
+            self.analyze_deposit_event(args, location);
+        } else if self.tcx.is_mir_available(target_def_id) {
+            // We don't have the summary but MIR is available, we need to analyze the function
+            self.analyze_with_mir(target_def_id, args);
         } else if self.is_closure_call(target_def_id) {
-            // First arg is closure
-            //println!("{:?}", self.local_types.borrow().get(&args[0].place().unwrap().local).unwrap().kind());
-            let target_def_id = match self.local_types.borrow().get(&args[0].place().unwrap().local).unwrap().kind() {
-                TyKind::Closure(closure_def_id, _) => {
-                    //println!("{:?}", param_ty);
-                    Some(closure_def_id)
-                },
-                _ => None,//TODO
-            };
-
-            if let Some(target_def_id) = target_def_id {
-                self.t_fn_call_analysis(*target_def_id, args, location);
-            }
-
+            self.analyze_closure_call(args, location);
         } else {
-
             // No MIR available, but symbolically account for the call cost
             self.state.add_steps(Cost::Symbolic(Symbolic::TimeOf(
                 self.tcx.def_path_str(target_def_id),
@@ -409,9 +250,172 @@ where
         }
     }
 
+    fn analyze_deposit_event(&mut self, args: Vec<Operand<'tcx>>, location: Location) {
+        if let TyKind::Adt(adt_def, _) = args[0].ty(self.body, self.tcx).kind() {
+            let event_variants = self
+                .events_variants
+                .get(&self.def_id)
+                .unwrap()
+                .get(location)
+                .unwrap();
+
+            match event_variants {
+                Variants::Variant(variant_id) => {
+                    let ty = args[0].ty(self.body, self.tcx);
+
+                    let cost = match self
+                        .tcx
+                        .layout_of(self.tcx.param_env(adt_def.did()).and(ty))
+                    {
+                        Ok(ty_and_layout) => {
+                            let layout = ty_and_layout.layout;
+                            match layout.variants() {
+                                rustc_target::abi::Variants::Single { .. } => {
+                                    Cost::Concrete(ty_and_layout.layout.size().bytes())
+                                }
+                                rustc_target::abi::Variants::Multiple { variants, .. } => {
+                                    let variant_layout = variants[*variant_id];
+                                    Cost::Concrete(variant_layout.size().bytes())
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            let variant = adt_def.variant(*variant_id);
+                            Cost::Symbolic(Symbolic::SizeOf(self.tcx.def_path_str(variant.def_id)))
+                        }
+                    };
+
+                    self.state.add_events(cost);
+                }
+                Variants::Or(_, _) => {
+                    let cost = event_variants
+                        .flatten_or()
+                        .iter()
+                        .map(|variant_id| {
+                            let variant = adt_def.variant(*variant_id);
+                            // For now add the variant size as symbolic
+                            Cost::Symbolic(Symbolic::SizeOf(self.tcx.def_path_str(variant.def_id)))
+                        })
+                        .reduce(|accum, item| accum.max(&item))
+                        .unwrap();
+                    self.state.add_events(cost);
+                }
+            }
+        }
+    }
+
+    fn analyze_with_mir(&mut self, target_def_id: DefId, args: Vec<Operand<'tcx>>) {
+        // Initialize the summary to None so we can detect a recursive call later
+        self.summaries.borrow_mut().insert(target_def_id, None);
+
+        let target_mir = self.tcx.optimized_mir(target_def_id);
+
+        // Detect loops in analyzed function
+        if target_mir.is_cfg_cyclic() {
+            println!(
+                "Loop detected in function {}, loops are not supported",
+                self.tcx.def_path_str(target_def_id)
+            );
+            *self.is_success.borrow_mut() = false;
+            return;
+        }
+
+        let mut args_ty = HashMap::new();
+        // Local 0_ will be return value, args start at 1_
+        let mut arg_count = 1;
+        for arg in args {
+            match &arg {
+                Operand::Copy(place) | Operand::Move(place) => {
+                    args_ty.insert(
+                        Local::from_u32(arg_count),
+                        *self.local_types.borrow().get(&place.local).unwrap(),
+                    );
+                }
+                Operand::Constant(constant) => {
+                    if let Some((def_id, substs_ref)) = arg.const_fn_def() {
+                        args_ty.insert(Local::from_u32(arg_count), self.tcx.type_of(def_id));
+                    } else {
+                        args_ty.insert(Local::from_u32(arg_count), constant.ty());
+                    }
+                }
+            };
+            arg_count += 1;
+        }
+
+        // Analyze the target function
+        let mut results = CostAnalysis::new_with_init(
+            self.tcx,
+            self.pallet,
+            self.events_variants,
+            target_def_id,
+            target_mir,
+            args_ty,
+            self.summaries.clone(),
+            self.is_success.clone(),
+        )
+        .into_engine(self.tcx, target_mir)
+        .pass_name("cost_analysis")
+        .iterate_to_fixpoint()
+        .into_results_cursor(target_mir);
+
+        // Retrieve target function analysis success flag
+        let fn_call_success_anaylsis_state = *results.analysis().is_success.borrow();
+        let self_success_state = *self.is_success.borrow();
+        *self.is_success.borrow_mut() = self_success_state && fn_call_success_anaylsis_state;
+
+        // Retrieve last state of callee function as its summary
+        let end_state = if let Some((last, _)) = reverse_postorder(target_mir).last() {
+            results.seek_to_block_end(last);
+            Some(results.get().clone())
+        } else {
+            None
+        };
+
+        if let Some(end_state) = end_state {
+            // Update caller function state
+            self.state.inter_join(&end_state);
+
+            // Add the callee function summary to our summaries map
+            self.summaries
+                .borrow_mut()
+                .insert(target_def_id, Some(end_state));
+        }
+    }
+
+    fn analyze_closure_call(&mut self, args: Vec<Operand<'tcx>>, location: Location) {
+        // First arg is closure
+        //println!("{:?}", self.local_types.borrow().get(&args[0].place().unwrap().local).unwrap().kind());
+        let target_def_id = match self
+            .local_types
+            .borrow()
+            .get(&args[0].place().unwrap().local)
+            .unwrap()
+            .kind()
+        {
+            TyKind::Closure(closure_def_id, _) => {
+                //println!("{:?}", param_ty);
+                Some(closure_def_id)
+            }
+            _ => None, //TODO
+        };
+
+        if let Some(target_def_id) = target_def_id {
+            self.t_fn_call_analysis(*target_def_id, args, location);
+        }
+    }
+
+    fn is_deposit_event(&self, target_def_id: DefId) -> bool {
+        let path = self.tcx.def_path_str(target_def_id);
+        path.starts_with("pallet::Pallet") && path.ends_with("deposit_event")
+    }
+
     fn is_closure_call(&self, target_def_id: DefId) -> bool {
         let path: &str = &self.tcx.def_path_str(target_def_id);
-        let closure_calls_list = vec!["std::ops::FnOnce::call_once"];
+        let closure_calls_list = vec![
+            "std::ops::FnOnce::call_once",
+            "std::ops::Fn::call",
+            "std::ops::FnMut::call_mut",
+        ];
 
         closure_calls_list.contains(&path)
     }
