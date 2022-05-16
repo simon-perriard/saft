@@ -237,12 +237,14 @@ where
         }
     }
 
-    fn analyze_storage_access(&mut self,
+    fn analyze_storage_access(
+        &mut self,
         substs: &'tcx SubstsRef,
         args: Vec<Operand<'tcx>>,
         location: Location,
         access_type: AccessType,
-        cost: Cost) {
+        cost: Cost,
+    ) {
         if let TyKind::Closure(closure_def_id, _) = substs.last().unwrap().expect_ty().kind() {
             // Storage access functions may have closures as parameters, we need to analyze them
             self.t_fn_call_analysis(*closure_def_id, args, location);
