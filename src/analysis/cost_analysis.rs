@@ -19,7 +19,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::vec;
 
-pub(crate) type Summary = HashMap<DefId, Option<CostDomain>>;
+pub(crate) type LocalTypes<'tcx> = IndexVec<Local, Ty<'tcx>>;
+pub(crate) type Summary<'tcx> = HashMap<(DefId, LocalTypes<'tcx>), Option<CostDomain>>;
 
 #[derive(PartialEq, Eq)]
 pub(crate) enum AnalysisState {
@@ -44,8 +45,8 @@ pub(crate) struct CostAnalysis<'tcx, 'inter> {
     pallet: &'inter Pallet,
     events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     def_id: DefId,
-    local_types: Rc<RefCell<IndexVec<Local, Ty<'tcx>>>>,
-    pub summaries: Rc<RefCell<Summary>>,
+    local_types: Rc<RefCell<LocalTypes<'tcx>>>,
+    pub summaries: Rc<RefCell<Summary<'tcx>>>,
     pub analysis_state: Rc<RefCell<AnalysisState>>,
 }
 
@@ -61,7 +62,7 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
             pallet,
             events_variants,
             def_id,
-            IndexVec::new(),
+            LocalTypes::new(),
             Rc::new(RefCell::new(HashMap::new())),
             Rc::new(RefCell::new(AnalysisState::Success)),
         )
@@ -72,14 +73,14 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
         pallet: &'inter Pallet,
         events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
         def_id: DefId,
-        local_types_outter: IndexVec<Local, Ty<'tcx>>,
-        summaries: Rc<RefCell<Summary>>,
+        local_types_outter: LocalTypes<'tcx>,
+        summaries: Rc<RefCell<Summary<'tcx>>>,
         state: Rc<RefCell<AnalysisState>>,
     ) -> Self {
         // Fill the map with current body type
         let body = tcx.optimized_mir(def_id);
 
-        let mut local_types: IndexVec<Local, Ty<'tcx>> = body
+        let mut local_types: LocalTypes<'tcx> = body
             .local_decls
             .iter()
             .map(|local_decl| local_decl.ty)
@@ -124,9 +125,9 @@ pub(crate) struct TransferFunction<'tcx, 'inter, 'intra> {
     tcx: TyCtxt<'tcx>,
     pallet: &'inter Pallet,
     events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
-    summaries: Rc<RefCell<Summary>>,
+    summaries: Rc<RefCell<Summary<'tcx>>>,
     def_id: DefId,
-    local_types: Rc<RefCell<IndexVec<Local, Ty<'tcx>>>>,
+    local_types: Rc<RefCell<LocalTypes<'tcx>>>,
     domain_state: &'intra mut CostDomain,
     analysis_state: Rc<RefCell<AnalysisState>>,
 }
@@ -136,9 +137,9 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
         tcx: TyCtxt<'tcx>,
         pallet: &'inter Pallet,
         events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
-        summaries: Rc<RefCell<Summary>>,
+        summaries: Rc<RefCell<Summary<'tcx>>>,
         def_id: DefId,
-        local_types: Rc<RefCell<IndexVec<Local, Ty<'tcx>>>>,
+        local_types: Rc<RefCell<LocalTypes<'tcx>>>,
         domain_state: &'intra mut CostDomain,
         analysis_state: Rc<RefCell<AnalysisState>>,
     ) -> Self {
@@ -181,10 +182,16 @@ where
         location: Location,
         destination: Option<(Place<'tcx>, BasicBlock)>,
     ) {
-        if self.summaries.borrow_mut().contains_key(&target_def_id) {
+        if self
+            .summaries
+            .borrow_mut()
+            .contains_key(&(target_def_id, (*self.local_types.borrow()).clone()))
+        {
             // We already have the summary for this function, retrieve it and return
             let summaries = self.summaries.borrow_mut();
-            let summary = summaries.get(&target_def_id).unwrap();
+            let summary = summaries
+                .get(&(target_def_id, (*self.local_types.borrow()).clone()))
+                .unwrap();
 
             if let Some(summary) = summary {
                 // Add the cost of calling the target function
@@ -300,7 +307,9 @@ where
         destination: Option<(Place<'tcx>, BasicBlock)>,
     ) {
         // Initialize the summary to None so we can detect a recursive call later
-        self.summaries.borrow_mut().insert(target_def_id, None);
+        self.summaries
+            .borrow_mut()
+            .insert((target_def_id, (*self.local_types.borrow()).clone()), None);
 
         let target_mir = self.tcx.optimized_mir(target_def_id);
 
@@ -314,8 +323,7 @@ where
             return;
         }
 
-        //TODO: use IndexVec instead and pass 0_ type as well
-        let mut local_types_outter = IndexVec::new();
+        let mut local_types_outter = LocalTypes::new();
         // Local 0_ will be return value, args start at 1_
         if let Some((place_to, _)) = destination {
             local_types_outter.push(self.local_types.borrow()[place_to.local]);
@@ -375,9 +383,10 @@ where
             self.domain_state.inter_join(&end_state);
 
             // Add the callee function summary to our summaries map
-            self.summaries
-                .borrow_mut()
-                .insert(target_def_id, Some(end_state));
+            self.summaries.borrow_mut().insert(
+                (target_def_id, (*self.local_types.borrow()).clone()),
+                Some(end_state),
+            );
         }
     }
 
