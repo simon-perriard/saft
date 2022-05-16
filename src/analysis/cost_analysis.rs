@@ -147,45 +147,6 @@ impl<'visitor, 'tcx> TransferFunction<'tcx, '_, '_>
 where
     Self: Visitor<'visitor>,
 {
-    fn is_storage_call(
-        &self,
-        def_id: DefId,
-        substs: &'tcx SubstsRef,
-    ) -> (Option<AccessType>, Cost) {
-        if self
-            .tcx
-            .def_path_str(def_id)
-            .starts_with("frame_support::pallet_prelude::Storage")
-        {
-            let pallet = self.pallet;
-            let tcx = self.tcx;
-            let key = tcx.def_key(def_id);
-            let parent_def_id = DefId {
-                index: key.parent.unwrap(),
-                ..def_id
-            };
-            let generics = tcx.generics_of(def_id);
-            let parent_substs = &substs[..generics.parent_count.min(substs.len())];
-
-            if let TyKind::Adt(adt_def_data, _) = tcx.type_of(parent_def_id).kind() {
-                let reconstructed_ty = tcx.mk_adt(*adt_def_data, tcx.intern_substs(parent_substs));
-                for (ty, field) in pallet
-                    .fields
-                    .iter()
-                    .map(|(field_def_id, field)| (tcx.type_of(field_def_id), field))
-                {
-                    if ty == reconstructed_ty {
-                        return (
-                            field.get_access_type(&tcx.def_path_str(def_id)),
-                            field.get_size(&tcx),
-                        );
-                    }
-                }
-            }
-        }
-        (None, Cost::default())
-    }
-
     fn t_visit_fn_call(
         &mut self,
         target_def_id: DefId,
@@ -413,6 +374,45 @@ where
         if let Some(target_def_id) = target_def_id {
             self.t_fn_call_analysis(*target_def_id, args, location);
         }
+    }
+
+    fn is_storage_call(
+        &self,
+        def_id: DefId,
+        substs: &'tcx SubstsRef,
+    ) -> (Option<AccessType>, Cost) {
+        if self
+            .tcx
+            .def_path_str(def_id)
+            .starts_with("frame_support::pallet_prelude::Storage")
+        {
+            let pallet = self.pallet;
+            let tcx = self.tcx;
+            let key = tcx.def_key(def_id);
+            let parent_def_id = DefId {
+                index: key.parent.unwrap(),
+                ..def_id
+            };
+            let generics = tcx.generics_of(def_id);
+            let parent_substs = &substs[..generics.parent_count.min(substs.len())];
+
+            if let TyKind::Adt(adt_def_data, _) = tcx.type_of(parent_def_id).kind() {
+                let reconstructed_ty = tcx.mk_adt(*adt_def_data, tcx.intern_substs(parent_substs));
+                for (ty, field) in pallet
+                    .fields
+                    .iter()
+                    .map(|(field_def_id, field)| (tcx.type_of(field_def_id), field))
+                {
+                    if ty == reconstructed_ty {
+                        return (
+                            field.get_access_type(&tcx.def_path_str(def_id)),
+                            field.get_size(&tcx),
+                        );
+                    }
+                }
+            }
+        }
+        (None, Cost::default())
     }
 
     fn is_deposit_event(&self, target_def_id: DefId) -> bool {
