@@ -20,34 +20,49 @@ use std::vec;
 
 pub(crate) type Summary = HashMap<DefId, Option<CostDomain>>;
 
-pub(crate) struct CostAnalysis<'tcx, 'inter, 'intra> {
+#[derive(PartialEq, Eq)]
+pub(crate) enum AnalysisState {
+    Success,
+    Failure,
+}
+
+impl AnalysisState {
+    pub fn and(&self, rhs: &Self) -> Self {
+        match self {
+            AnalysisState::Success => match rhs {
+                AnalysisState::Success => AnalysisState::Success,
+                AnalysisState::Failure => AnalysisState::Failure,
+            },
+            AnalysisState::Failure => AnalysisState::Failure,
+        }
+    }
+}
+
+pub(crate) struct CostAnalysis<'tcx, 'inter> {
     tcx: TyCtxt<'tcx>,
     pallet: &'inter Pallet,
     events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
-    body: &'intra Body<'tcx>,
     def_id: DefId,
     local_types: Rc<RefCell<HashMap<Local, Ty<'tcx>>>>,
     pub summaries: Rc<RefCell<Summary>>,
-    pub is_success: Rc<RefCell<bool>>,
+    pub is_success: Rc<RefCell<AnalysisState>>,
 }
 
-impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter, 'intra> {
+impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
     pub(crate) fn new(
         tcx: TyCtxt<'tcx>,
         pallet: &'inter Pallet,
         events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
         def_id: DefId,
-        body: &'intra Body<'tcx>,
     ) -> Self {
         Self::new_with_init(
             tcx,
             pallet,
             events_variants,
             def_id,
-            body,
             HashMap::new(),
             Rc::new(RefCell::new(HashMap::new())),
-            Rc::new(RefCell::new(true)),
+            Rc::new(RefCell::new(AnalysisState::Success)),
         )
     }
 
@@ -56,13 +71,14 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter, 'intra> {
         pallet: &'inter Pallet,
         events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
         def_id: DefId,
-        body: &'intra Body<'tcx>,
         local_types_outter: HashMap<Local, Ty<'tcx>>,
         summaries: Rc<RefCell<Summary>>,
-        is_success: Rc<RefCell<bool>>,
+        is_success: Rc<RefCell<AnalysisState>>,
     ) -> Self {
         // Fill the map with current body type
         let mut local_types = HashMap::new();
+
+        let body = tcx.optimized_mir(def_id);
 
         for (local, local_decl) in body.local_decls.iter_enumerated() {
             local_types.insert(local, local_decl.ty);
@@ -80,7 +96,6 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter, 'intra> {
             pallet,
             events_variants,
             def_id,
-            body,
             local_types,
             summaries,
             is_success,
@@ -97,7 +112,6 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter, 'intra> {
             self.events_variants,
             self.summaries.clone(),
             self.def_id,
-            self.body,
             self.local_types.clone(),
             state,
             self.is_success.clone(),
@@ -111,10 +125,9 @@ pub(crate) struct TransferFunction<'tcx, 'inter, 'intra> {
     events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     summaries: Rc<RefCell<Summary>>,
     def_id: DefId,
-    body: &'intra Body<'tcx>,
     local_types: Rc<RefCell<HashMap<Local, Ty<'tcx>>>>,
     state: &'intra mut CostDomain,
-    is_success: Rc<RefCell<bool>>,
+    is_success: Rc<RefCell<AnalysisState>>,
 }
 
 impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
@@ -124,10 +137,9 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
         events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
         summaries: Rc<RefCell<Summary>>,
         def_id: DefId,
-        body: &'intra Body<'tcx>,
         local_types: Rc<RefCell<HashMap<Local, Ty<'tcx>>>>,
         state: &'intra mut CostDomain,
-        is_success: Rc<RefCell<bool>>,
+        is_success: Rc<RefCell<AnalysisState>>,
     ) -> Self {
         TransferFunction {
             tcx,
@@ -135,7 +147,6 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
             events_variants,
             summaries,
             def_id,
-            body,
             local_types,
             state,
             is_success,
@@ -178,7 +189,7 @@ where
             } else {
                 // we are in a recursive call, just ignore it
                 println!("Recursive calls not supported.");
-                *self.is_success.borrow_mut() = false;
+                *self.is_success.borrow_mut() = AnalysisState::Failure;
             }
         } else if self.is_deposit_event(target_def_id) {
             // Filtering event deposit, pallet::deposit_event will later call frame_system::deposit_event,
@@ -223,7 +234,9 @@ where
     }
 
     fn analyze_deposit_event(&mut self, args: Vec<Operand<'tcx>>, location: Location) {
-        if let TyKind::Adt(adt_def, _) = args[0].ty(self.body, self.tcx).kind() {
+        let body = self.tcx.optimized_mir(self.def_id);
+
+        if let TyKind::Adt(adt_def, _) = args[0].ty(body, self.tcx).kind() {
             let event_variants = self
                 .events_variants
                 .get(&self.def_id)
@@ -233,7 +246,7 @@ where
 
             match event_variants {
                 Variants::Variant(variant_id) => {
-                    let ty = args[0].ty(self.body, self.tcx);
+                    let ty = args[0].ty(body, self.tcx);
 
                     let cost = match self
                         .tcx
@@ -288,10 +301,11 @@ where
                 "Loop detected in function {}, loops are not supported",
                 self.tcx.def_path_str(target_def_id)
             );
-            *self.is_success.borrow_mut() = false;
+            *self.is_success.borrow_mut() = AnalysisState::Failure;
             return;
         }
 
+        //TODO: use IndexVec instead and pass 0_ type as well
         let mut args_ty = HashMap::new();
         // Local 0_ will be return value, args start at 1_
         let mut arg_count = 1;
@@ -320,7 +334,6 @@ where
             self.pallet,
             self.events_variants,
             target_def_id,
-            target_mir,
             args_ty,
             self.summaries.clone(),
             self.is_success.clone(),
@@ -331,9 +344,9 @@ where
         .into_results_cursor(target_mir);
 
         // Retrieve target function analysis success flag
-        let fn_call_success_anaylsis_state = *results.analysis().is_success.borrow();
-        let self_success_state = *self.is_success.borrow();
-        *self.is_success.borrow_mut() = self_success_state && fn_call_success_anaylsis_state;
+        let self_success_state = self.is_success.borrow();
+        *self.is_success.borrow_mut() =
+            self_success_state.and(&results.analysis().is_success.borrow());
 
         // Retrieve last state of callee function as its summary
         let end_state = if let Some((last, _)) = reverse_postorder(target_mir).last() {
@@ -487,7 +500,7 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
     }
 }
 
-impl<'inter> AnalysisDomain<'inter> for CostAnalysis<'inter, '_, '_> {
+impl<'inter> AnalysisDomain<'inter> for CostAnalysis<'inter, '_> {
     type Domain = CostDomain;
     const NAME: &'static str = "CostAnalysis";
 
@@ -500,7 +513,7 @@ impl<'inter> AnalysisDomain<'inter> for CostAnalysis<'inter, '_, '_> {
     fn initialize_start_block(&self, _body: &Body<'inter>, _state: &mut Self::Domain) {}
 }
 
-impl<'tcx> Analysis<'tcx> for CostAnalysis<'tcx, '_, '_> {
+impl<'tcx> Analysis<'tcx> for CostAnalysis<'tcx, '_> {
     fn apply_statement_effect(
         &self,
         state: &mut Self::Domain,

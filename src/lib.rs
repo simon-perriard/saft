@@ -19,7 +19,7 @@ pub mod analysis;
 pub mod sysroot;
 use std::collections::HashMap;
 
-use crate::analysis::*;
+use crate::analysis::{cost_analysis::AnalysisState, *};
 use rustc_mir_dataflow::Analysis;
 
 pub fn extract_juice(tcx: rustc_middle::ty::TyCtxt) {
@@ -90,13 +90,8 @@ pub fn extract_juice(tcx: rustc_middle::ty::TyCtxt) {
             continue;
         }
 
-        let cost_analysis = cost_analysis::CostAnalysis::new(
-            tcx,
-            &pallet,
-            &event_variants,
-            *dispatchable_def_id,
-            mir,
-        );
+        let cost_analysis =
+            cost_analysis::CostAnalysis::new(tcx, &pallet, &event_variants, *dispatchable_def_id);
 
         let mut results = cost_analysis
             .into_engine(tcx, mir)
@@ -104,7 +99,7 @@ pub fn extract_juice(tcx: rustc_middle::ty::TyCtxt) {
             .iterate_to_fixpoint()
             .into_results_cursor(mir);
 
-        if !*results.analysis().is_success.borrow() {
+        if *results.analysis().is_success.borrow() == AnalysisState::Success {
             println!(
                 "Analysis failed for {}",
                 tcx.def_path_str(*dispatchable_def_id)
