@@ -1,4 +1,4 @@
-use crate::cost_language::Cost;
+use crate::analysis::cost_language::Cost;
 use core::fmt;
 use rustc_mir_dataflow::{fmt::DebugWithContext, lattice::JoinSemiLattice};
 

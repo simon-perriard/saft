@@ -3,8 +3,8 @@ use super::cost_language::{Cost, HasSize, Symbolic};
 use super::events_variants_domain::Variants;
 use super::pallet::Pallet;
 use super::storage_actions::HasAccessType;
-use crate::events_variants_domain::EventVariantsDomain;
-use crate::storage_actions::AccessType;
+use crate::analysis::events_variants_domain::EventVariantsDomain;
+use crate::analysis::storage_actions::AccessType;
 use rustc_index::vec::IndexVec;
 use rustc_middle::mir::{
     traversal::*, visit::*, BasicBlock, Body, Local, Location, Operand, Place, Rvalue, Statement,
