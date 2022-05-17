@@ -339,7 +339,9 @@ where
                 }
                 Operand::Constant(constant) => {
                     if let Some((def_id, substs_ref)) = arg.const_fn_def() {
-                        local_types_outter.push(self.tcx.type_of(def_id));
+                        // Constant function,
+                        // cf. https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/enum.Operand.html#method.const_fn_def
+                        local_types_outter.push(self.tcx.mk_fn_def(def_id, substs_ref));
                     } else {
                         local_types_outter.push(constant.ty());
                     }
