@@ -71,10 +71,6 @@ pub fn extract_juice(tcx: rustc_middle::ty::TyCtxt) {
 
     // Reads/Writes count anaylsis
     for dispatchable_def_id in pallet.dispatchables.keys() {
-        /*if !tcx.def_path_str(*dispatchable_def_id).contains("add_registrar") {
-            continue;
-        }*/
-
         let mir = tcx.optimized_mir(dispatchable_def_id);
         // Detect loops in analyzed function
         if mir.is_cfg_cyclic() {

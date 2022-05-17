@@ -396,7 +396,7 @@ where
         location: Location,
         destination: Option<(Place<'tcx>, BasicBlock)>,
     ) {
-        // First arg is closure
+        // First arg is closure or action
         let target_def_id = match self
             .local_types
             .borrow()
@@ -405,8 +405,9 @@ where
             .kind()
         {
             TyKind::Closure(closure_def_id, _) => Some(closure_def_id),
-            TyKind::FnDef(def_id, _) => None,
-            TyKind::Ref(region, ty, mutability) => None,
+            TyKind::FnDef(def_id, _) => Some(def_id),
+            TyKind::Ref(_, _, _) => None,
+            TyKind::Projection(_) => None,
             _ => unreachable!(),
         };
 
