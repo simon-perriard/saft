@@ -2,23 +2,12 @@ use crate::analysis::cost_language::Cost;
 use core::fmt;
 use rustc_mir_dataflow::{fmt::DebugWithContext, lattice::JoinSemiLattice};
 
-#[derive(Eq, PartialEq, Clone, Debug)]
+#[derive(Eq, PartialEq, Clone, Debug, Default)]
 pub(crate) struct CostDomain {
     bytes_read: Cost,
     bytes_written: Cost,
     bytes_deposited: Cost,
     steps_executed: Cost,
-}
-
-impl Default for CostDomain {
-    fn default() -> Self {
-        CostDomain {
-            bytes_read: Cost::default(),
-            bytes_written: Cost::default(),
-            bytes_deposited: Cost::default(),
-            steps_executed: Cost::default(),
-        }
-    }
 }
 
 impl CostDomain {

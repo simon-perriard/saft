@@ -21,7 +21,7 @@ pub(crate) enum Type {
     FnPtr(Vec<Type>, Box<Type>),
     Tuple(Vec<Type>),
     Projection(DefId),
-    NOPE,
+    Unsupported,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -82,7 +82,7 @@ impl Type {
                     .collect(),
             ),
             TyKind::Projection(p) => Type::Projection(p.item_def_id),
-            _ => Type::NOPE,
+            _ => Type::Unsupported,
         }
     }
 }
@@ -147,9 +147,9 @@ impl HasSize for Type {
                 .iter()
                 .map(|ty| ty.get_size(tcx))
                 .reduce(|acc, ty_size| acc + ty_size)
-                .unwrap_or(Cost::default()),
+                .unwrap_or_default(),
             Type::Projection(def_id) => Cost::Symbolic(Symbolic::SizeOf(tcx.def_path_str(*def_id))),
-            Type::NOPE => Cost::default(),
+            Type::Unsupported => panic!(), /*Cost::default()*/
         }
     }
 }

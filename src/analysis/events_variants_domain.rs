@@ -33,17 +33,9 @@ impl Variants {
     }
 }
 
-#[derive(Eq, PartialEq, Clone, Debug)]
+#[derive(Eq, PartialEq, Clone, Debug, Default)]
 pub(crate) struct EventVariantsDomain {
     event_variant_at_location: HashMap<Location, Variants>,
-}
-
-impl Default for EventVariantsDomain {
-    fn default() -> Self {
-        EventVariantsDomain {
-            event_variant_at_location: HashMap::new(),
-        }
-    }
 }
 
 impl EventVariantsDomain {
@@ -52,16 +44,18 @@ impl EventVariantsDomain {
     }
 
     pub fn add_variant(&mut self, location: Location, variant_id: VariantIdx) {
-        if self.event_variant_at_location.contains_key(&location) {
-            unreachable!();
+        if let std::collections::hash_map::Entry::Vacant(e) =
+            self.event_variant_at_location.entry(location)
+        {
+            e.insert(Variants::Variant(variant_id));
         } else {
-            self.event_variant_at_location
-                .insert(location, Variants::Variant(variant_id));
+            // Since we have no loop or recursion, location should be visited at most once
+            unreachable!();
         }
     }
 
     pub fn get(&self, location: Location) -> Option<&Variants> {
-        return self.event_variant_at_location.get(&location);
+        self.event_variant_at_location.get(&location)
     }
 
     pub fn is_empty(&self) -> bool {

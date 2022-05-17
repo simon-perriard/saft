@@ -46,7 +46,7 @@ impl Cost {
             Self::Concrete(x) => *x == 0,
             Self::Symbolic(_) => false,
             Self::Add(a, b) => a.is_zero() && b.is_zero(),
-            Self::SymbolicMul(a, b) => b.is_zero(),
+            Self::SymbolicMul(_, b) => b.is_zero(),
             Self::ConcreteMul(a, b) => *a == 0 || b.is_zero(),
             Self::Max(a, b) => a.is_zero() && b.is_zero(),
         }
@@ -76,9 +76,7 @@ impl Cost {
     pub(crate) fn max(&self, rhs: &Self) -> Self {
         if self.is_zero() {
             return rhs.clone();
-        } else if rhs.is_zero() {
-            return (*self).clone();
-        } else if *self == *rhs {
+        } else if rhs.is_zero() || *self == *rhs {
             return (*self).clone();
         } else if let Self::Concrete(x) = *self && let Self::Concrete(y) = *rhs {
             // Compact notation: max(x, y) => x > y ? x : y
@@ -140,10 +138,8 @@ impl Cost {
         // We can say something only if at least one of them is empty,
         // otherwise cannot decide which has most cost
 
-        if chain_1.is_empty() && chain_2.is_empty() {
-            // Both chains have equal value
-            Some((*other).clone())
-        } else if chain_1.is_empty() {
+        if chain_1.is_empty() && chain_2.is_empty() || chain_1.is_empty() {
+            // Both chains have equal value OR
             // Chain 2 is bigger
             Some((*other).clone())
         } else if chain_2.is_empty() {

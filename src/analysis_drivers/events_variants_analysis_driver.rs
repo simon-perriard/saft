@@ -39,7 +39,5 @@ pub(crate) fn events_variants_analysis(tcx: TyCtxt) -> HashMap<DefId, EventVaria
         }
     }
 
-    let event_variants = event_variants;
-
     event_variants
 }

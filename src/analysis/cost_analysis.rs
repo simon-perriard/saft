@@ -475,7 +475,7 @@ where
     }
 }
 
-impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
+impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
     fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
         match rvalue {
             Rvalue::BinaryOp(_, box (lhs, rhs)) | Rvalue::CheckedBinaryOp(_, box (lhs, rhs)) => {
@@ -501,7 +501,7 @@ impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 self.visit_source_info(source_info);
 
                 // In case of move of copy, update with the most precise type
-                let place_from_ty = self.local_types.borrow().get(place_from.local).unwrap().clone();
+                let place_from_ty = *self.local_types.borrow().get(place_from.local).unwrap();
                 self.local_types.borrow_mut()[place_to.local] = place_from_ty;
             },
             _ => self.super_statement(statement, location),

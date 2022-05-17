@@ -64,7 +64,7 @@ impl<'tcx, 'intra> TransferFunction<'tcx, 'intra> {
     }
 }
 
-impl<'intra, 'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_> {
+impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_> {
     fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {
         let Statement { source_info, kind } = statement;
         match kind {
