@@ -7,8 +7,8 @@ use crate::analysis::events_variants_domain::EventVariantsDomain;
 use crate::analysis::storage_actions::AccessType;
 use rustc_index::vec::IndexVec;
 use rustc_middle::mir::{
-    traversal::*, visit::*, BasicBlock, Body, Local, Location, Operand, Place, ProjectionElem, Rvalue, Statement,
-    StatementKind, Terminator, TerminatorKind,
+    traversal::*, visit::*, BasicBlock, Body, Local, Location, Operand, Place, ProjectionElem,
+    Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::Ty;
 use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
@@ -189,7 +189,6 @@ where
         location: Location,
         destination: Option<(Place<'tcx>, BasicBlock)>,
     ) {
-        
         if self
             .summaries
             .borrow_mut()
@@ -213,10 +212,10 @@ where
             // We don't have the summary but MIR is available, we need to analyze the function
             self.analyze_with_mir(target_def_id, args, destination);
         } else if self.is_bounded_vec_call(target_def_id) {
-
         } else if self.is_closure_call(target_def_id) {
             self.analyze_closure_call(args, location, destination);
-        } /*else if self.is_std_ops_call(target_def_id) {
+        }
+        /*else if self.is_std_ops_call(target_def_id) {
             /*println!("{}", self.tcx.def_path_str(target_def_id));
             println!("{:?}", args.iter().map(|op| self.local_types.borrow()[op.place().unwrap().local]).collect::<Vec<_>>());
             println!();*/
@@ -224,7 +223,8 @@ where
             //println!("{:?}", args);
         } else if self.is_std_convert_call(target_def_id) {
 
-        }*/ else {
+        }*/
+        else {
             // No MIR available, but symbolically account for the call cost
             self.domain_state.add_steps(Cost::Symbolic(Symbolic::TimeOf(
                 self.tcx.def_path_str(target_def_id),
@@ -495,7 +495,7 @@ where
         path.starts_with("pallet::Pallet") && path.ends_with("deposit_event")
     }
 
-    fn is_bounded_vec_call(&self, target_def_id: DefId) -> bool{
+    fn is_bounded_vec_call(&self, target_def_id: DefId) -> bool {
         let path = self.tcx.def_path_str(target_def_id);
         path.starts_with("frame_support::BoundedVec::")
     }
