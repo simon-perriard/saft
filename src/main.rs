@@ -19,7 +19,7 @@ fn main() {
     Command::new("cargo")
         .env("RUSTC_WORKSPACE_WRAPPER", driver_path) // analyze only crates in the workspace
         .env("RUSTCFLAGS", "-Z always-encode-mir") // emit mir for all dependencies
-        .arg("check")
+        .arg("build")
         .arg("--lib")
         .args(env::args().skip(2))
         .spawn()

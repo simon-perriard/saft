@@ -7,7 +7,7 @@ use crate::analysis::events_variants_domain::EventVariantsDomain;
 use crate::analysis::storage_actions::AccessType;
 use rustc_index::vec::IndexVec;
 use rustc_middle::mir::{
-    traversal::*, visit::*, BasicBlock, Body, Local, Location, Operand, Place, Rvalue, Statement,
+    traversal::*, visit::*, BasicBlock, Body, Local, Location, Operand, Place, ProjectionElem, Rvalue, Statement,
     StatementKind, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::Ty;
@@ -169,7 +169,14 @@ where
         destination: Option<(Place<'tcx>, BasicBlock)>,
     ) {
         if let (Some(access_type), cost) = self.is_storage_call(target_def_id, substs) {
+            // Filtering storage access, we need to catch it now otherwise we lose information about which
+            // field is accessed.
             self.analyze_storage_access(substs, args, location, access_type, cost, destination);
+        } else if self.is_deposit_event(target_def_id) {
+            // Filtering event deposit, pallet::deposit_event will later call frame_system::deposit_event,
+            // but we can only catch the variant of the Event enum now. Or we need to pass a calling context for
+            // further analysis.
+            self.analyze_deposit_event(args, location);
         } else {
             self.t_fn_call_analysis(target_def_id, args, location, destination);
         }
@@ -182,6 +189,7 @@ where
         location: Location,
         destination: Option<(Place<'tcx>, BasicBlock)>,
     ) {
+        
         if self
             .summaries
             .borrow_mut()
@@ -201,21 +209,43 @@ where
                 println!("Recursive calls not supported.");
                 *self.analysis_state.borrow_mut() = AnalysisState::Failure;
             }
-        } else if self.is_deposit_event(target_def_id) {
-            // Filtering event deposit, pallet::deposit_event will later call frame_system::deposit_event,
-            // but we can only catch the variant of the Event enum now. Or we need to pass a calling context for
-            // further analysis.
-            self.analyze_deposit_event(args, location);
         } else if self.tcx.is_mir_available(target_def_id) {
             // We don't have the summary but MIR is available, we need to analyze the function
             self.analyze_with_mir(target_def_id, args, destination);
+        } else if self.is_bounded_vec_call(target_def_id) {
+
         } else if self.is_closure_call(target_def_id) {
             self.analyze_closure_call(args, location, destination);
-        } else {
+        } /*else if self.is_std_ops_call(target_def_id) {
+            /*println!("{}", self.tcx.def_path_str(target_def_id));
+            println!("{:?}", args.iter().map(|op| self.local_types.borrow()[op.place().unwrap().local]).collect::<Vec<_>>());
+            println!();*/
+        } else if self.is_std_cmp_call(target_def_id) {
+            //println!("{:?}", args);
+        } else if self.is_std_convert_call(target_def_id) {
+
+        }*/ else {
             // No MIR available, but symbolically account for the call cost
             self.domain_state.add_steps(Cost::Symbolic(Symbolic::TimeOf(
                 self.tcx.def_path_str(target_def_id),
             )));
+
+            /*let body = self.tcx.optimized_mir(self.def_id);
+            println!("CALLER {} at {:?}", self.tcx.def_path_str(self.def_id), location);
+            println!("STATEMENT {:?}", body.stmt_at(location).right().unwrap());
+            let body = self.tcx.optimized_mir(self.def_id);
+            match &body.stmt_at(location).right().unwrap().kind {
+                TerminatorKind::Call{
+                    func,
+                    ..
+                } if let Some((def_id, substs_ref)) = func.const_fn_def() => {
+                    println!("{:?}", self.tcx.mk_fn_def(def_id, substs_ref));
+                },
+                _ => panic!(),
+            }
+            println!("{}", self.tcx.def_path_str(target_def_id));
+            println!("{:?}", args.iter().map(|op| self.local_types.borrow()[op.place().unwrap().local]).collect::<Vec<_>>());
+            println!();*/
         }
     }
 
@@ -465,6 +495,11 @@ where
         path.starts_with("pallet::Pallet") && path.ends_with("deposit_event")
     }
 
+    fn is_bounded_vec_call(&self, target_def_id: DefId) -> bool{
+        let path = self.tcx.def_path_str(target_def_id);
+        path.starts_with("frame_support::BoundedVec::")
+    }
+
     fn is_closure_call(&self, target_def_id: DefId) -> bool {
         let path: &str = &self.tcx.def_path_str(target_def_id);
         let closure_calls_list = vec![
@@ -474,6 +509,21 @@ where
         ];
 
         closure_calls_list.contains(&path)
+    }
+
+    fn is_std_ops_call(&self, target_def_id: DefId) -> bool {
+        let path = self.tcx.def_path_str(target_def_id);
+        path.starts_with("std::ops::")
+    }
+
+    fn is_std_cmp_call(&self, target_def_id: DefId) -> bool {
+        let path = self.tcx.def_path_str(target_def_id);
+        path.starts_with("std::cmp::")
+    }
+
+    fn is_std_convert_call(&self, target_def_id: DefId) -> bool {
+        let path = self.tcx.def_path_str(target_def_id);
+        path.starts_with("std::convert::")
     }
 }
 
@@ -499,12 +549,38 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
         let Statement { source_info, kind } = statement;
 
         match kind {
-            StatementKind::Assign(box (place_to, rvalue)) if let Rvalue::Use(operand) = rvalue && let Some(place_from) = operand.place() => {
+            StatementKind::Assign(box (place_to, rvalue)) if let Rvalue::Use(operand) = rvalue && place_to.projection.is_empty() => {
                 self.visit_source_info(source_info);
 
-                // In case of move of copy, update with the most precise type
-                let place_from_ty = *self.local_types.borrow().get(place_from.local).unwrap();
-                self.local_types.borrow_mut()[place_to.local] = place_from_ty;
+                match operand {
+                    Operand::Copy(place_from) |
+                    Operand::Move(place_from) => {
+
+                        // In case of move of copy, update with the most precise type from our type map
+
+                        if place_from.projection.is_empty() {
+                            // Move or copy the whole place
+                            let place_from_ty = *self.local_types.borrow().get(place_from.local).unwrap();
+                            self.local_types.borrow_mut()[place_to.local] = place_from_ty;
+                        } else {
+                            // We consider the last projection only
+                            //      cf. https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Place.html
+                            // and we only care if it's a field
+                            if let ProjectionElem::Field(_, ty) = place_from.projection.last().unwrap() {
+                                self.local_types.borrow_mut()[place_to.local] = *ty;
+                            }
+                        }
+                    },
+                    Operand::Constant(_) => {
+                        if let Some((def_id, substs_ref)) = operand.const_fn_def() {
+                            // In case of constant function, update with the function type
+                            self.local_types.borrow_mut()[place_to.local] = self.tcx.mk_fn_def(def_id, substs_ref);
+                        } else if let Some(constant) = operand.constant() {
+                            // In case of standard constant, update with its type
+                            self.local_types.borrow_mut()[place_to.local] = constant.ty();
+                        }
+                    }
+                }
             },
             _ => self.super_statement(statement, location),
         }
