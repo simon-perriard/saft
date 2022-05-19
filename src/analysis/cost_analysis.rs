@@ -10,8 +10,7 @@ use rustc_middle::mir::{
     traversal::*, visit::*, BasicBlock, Body, Local, Location, Operand, Place, ProjectionElem,
     Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
 };
-use rustc_middle::ty::Ty;
-use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
+use rustc_middle::ty::{subst::SubstsRef, Instance, Ty, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
 use rustc_span::def_id::DefId;
 use std::cell::RefCell;
@@ -46,6 +45,7 @@ pub(crate) struct CostAnalysis<'tcx, 'inter> {
     events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     def_id: DefId,
     local_types: Rc<RefCell<LocalTypes<'tcx>>>,
+    instance: Option<Instance<'tcx>>,
     pub summaries: Rc<RefCell<Summary<'tcx>>>,
     pub analysis_state: Rc<RefCell<AnalysisState>>,
 }
@@ -63,6 +63,7 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
             events_variants,
             def_id,
             LocalTypes::new(),
+            None,
             Rc::new(RefCell::new(HashMap::new())),
             Rc::new(RefCell::new(AnalysisState::Success)),
         )
@@ -74,6 +75,7 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
         events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
         def_id: DefId,
         local_types_outter: LocalTypes<'tcx>,
+        instance: Option<Instance<'tcx>>,
         summaries: Rc<RefCell<Summary<'tcx>>>,
         state: Rc<RefCell<AnalysisState>>,
     ) -> Self {
@@ -99,6 +101,7 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
             events_variants,
             def_id,
             local_types,
+            instance,
             summaries,
             analysis_state: state,
         }
@@ -171,7 +174,8 @@ where
         if let (Some(access_type), cost) = self.is_storage_call(target_def_id, substs) {
             // Filtering storage access, we need to catch it now otherwise we lose information about which
             // field is accessed.
-            self.analyze_storage_access(substs, args, location, access_type, cost, destination);
+            //self.analyze_storage_access(substs, args, location, access_type, cost, destination);
+            self.t_fn_call_analysis(target_def_id, args, location, destination);
         } else if self.is_deposit_event(target_def_id) {
             // Filtering event deposit, pallet::deposit_event will later call frame_system::deposit_event,
             // but we can only catch the variant of the Event enum now. Or we need to pass a calling context for
@@ -210,25 +214,45 @@ where
             }
         } else if self.tcx.is_mir_available(target_def_id) {
             // We don't have the summary but MIR is available, we need to analyze the function
-            self.analyze_with_mir(target_def_id, args, destination);
-        } else if self.is_bounded_vec_call(target_def_id) {
+            self.analyze_with_available_mir(target_def_id, args, destination, location);
         } else if self.is_closure_call(target_def_id) {
             self.analyze_closure_call(args, location, destination);
-        }
-        /*else if self.is_std_ops_call(target_def_id) {
-            /*println!("{}", self.tcx.def_path_str(target_def_id));
-            println!("{:?}", args.iter().map(|op| self.local_types.borrow()[op.place().unwrap().local]).collect::<Vec<_>>());
-            println!();*/
-        } else if self.is_std_cmp_call(target_def_id) {
-            //println!("{:?}", args);
-        } else if self.is_std_convert_call(target_def_id) {
-
-        }*/
-        else {
+        } else {
             // No MIR available, but symbolically account for the call cost
-            self.domain_state.add_steps(Cost::Symbolic(Symbolic::TimeOf(
+            let body = self.tcx.optimized_mir(self.def_id);
+            let terminator = body.stmt_at(location).right().unwrap();
+
+            let func = match &terminator.kind {
+                TerminatorKind::Call { func, .. } => Some(func),
+                _ => None,
+            }
+            .unwrap();
+
+            //println!("{:?}", func);
+
+            /*self.domain_state.add_steps(Cost::Symbolic(Symbolic::TimeOf(
                 self.tcx.def_path_str(target_def_id),
-            )));
+            )));*/
+
+            /*let body = self.tcx.optimized_mir(self.def_id);
+            let terminator = body.stmt_at(location).right().unwrap();
+
+            let func = match &terminator.kind {
+                TerminatorKind::Call{func,..} => Some(func),
+                _ => None,
+            }.unwrap();
+
+            let (_, substs_ref) = func.const_fn_def().unwrap();
+            let instance = Instance::resolve(self.tcx, self.tcx.param_env(self.def_id), target_def_id, substs_ref);*/
+            /*if let Ok(Some(instance)) = instance {
+                //println!("CALLER {} at {:?}", self.tcx.def_path_str(self.def_id), location);
+                //println!("CALEE {:?}", func);
+                println!("CALLEE {:?}", instance.ty(self.tcx, self.tcx.param_env(self.def_id)));
+                println!("{:?}", self.tcx.generics_of(target_def_id));
+                //println!("{} --- {:?}", self.tcx.def_path_str(target_def_id), func);
+                //println!("{:?}", args.iter().map(|op| self.local_types.borrow()[op.place().unwrap().local]).collect::<Vec<_>>());
+                println!();
+            }*/
 
             /*let body = self.tcx.optimized_mir(self.def_id);
             println!("CALLER {} at {:?}", self.tcx.def_path_str(self.def_id), location);
@@ -330,11 +354,12 @@ where
         }
     }
 
-    fn analyze_with_mir(
+    fn analyze_with_available_mir(
         &mut self,
         target_def_id: DefId,
         args: Vec<Operand<'tcx>>,
         destination: Option<(Place<'tcx>, BasicBlock)>,
+        location: Location,
     ) {
         // Initialize the summary to None so we can detect a recursive call later
         self.summaries
@@ -353,6 +378,52 @@ where
             return;
         }
 
+        // Try to get the mononorphized InstanceDef for the target
+
+        let body = self.tcx.optimized_mir(self.def_id);
+        let terminator = body.stmt_at(location).right().unwrap();
+
+        let func = match &terminator.kind {
+            TerminatorKind::Call { func, .. } => Some(func),
+            _ => None,
+        }
+        .unwrap();
+
+        let (_, substs_ref) = func.const_fn_def().unwrap();
+        let instance_res = Instance::resolve(
+            self.tcx,
+            self.tcx.param_env_reveal_all_normalized(self.def_id),
+            target_def_id,
+            substs_ref,
+        );
+
+        if let Ok(Some(instance)) = instance_res && !instance.substs.is_empty() {
+            let new_target_mir = &instance.subst_mir_and_normalize_erasing_regions(
+                self.tcx,
+                self.tcx.param_env_reveal_all_normalized(self.def_id),
+                (*target_mir).clone(),
+            );
+            /*println!("{:?}", instance);
+            println!("ENV of {} --- {:?}", self.tcx.def_path_str(self.def_id), self.tcx.param_env_reveal_all_normalized(self.def_id));
+            println!("BEFORE {:?}", target_mir);
+            println!("AFTER {:?}", new_target_mir);
+            println!();*/
+            // Analyze the target function with mononorphized MIR
+            self.analyze_with_mir(target_def_id, new_target_mir, args, destination, Some(instance));
+        } else {
+            // No available instance
+            self.analyze_with_mir(target_def_id, target_mir, args, destination, None);
+        }
+    }
+
+    fn analyze_with_mir(
+        &mut self,
+        target_def_id: DefId,
+        target_mir: &Body<'tcx>,
+        args: Vec<Operand<'tcx>>,
+        destination: Option<(Place<'tcx>, BasicBlock)>,
+        instance: Option<Instance<'tcx>>,
+    ) {
         let mut local_types_outter = LocalTypes::new();
         // Local 0_ will be return value, args start at 1_
         if let Some((place_to, _)) = destination {
@@ -386,6 +457,7 @@ where
             self.events_variants,
             target_def_id,
             local_types_outter,
+            instance,
             self.summaries.clone(),
             self.analysis_state.clone(),
         )
@@ -495,35 +567,17 @@ where
         path.starts_with("pallet::Pallet") && path.ends_with("deposit_event")
     }
 
-    fn is_bounded_vec_call(&self, target_def_id: DefId) -> bool {
-        let path = self.tcx.def_path_str(target_def_id);
-        path.starts_with("frame_support::BoundedVec::")
-    }
-
     fn is_closure_call(&self, target_def_id: DefId) -> bool {
         let path: &str = &self.tcx.def_path_str(target_def_id);
-        let closure_calls_list = vec![
-            "std::ops::FnOnce::call_once",
-            "std::ops::Fn::call",
-            "std::ops::FnMut::call_mut",
-        ];
+        let closure_calls_list = vec!["std::ops::FnOnce", "std::ops::Fn", "std::ops::FnMut"];
 
-        closure_calls_list.contains(&path)
-    }
+        for closure_call in closure_calls_list {
+            if path.contains(closure_call) {
+                return true;
+            }
+        }
 
-    fn is_std_ops_call(&self, target_def_id: DefId) -> bool {
-        let path = self.tcx.def_path_str(target_def_id);
-        path.starts_with("std::ops::")
-    }
-
-    fn is_std_cmp_call(&self, target_def_id: DefId) -> bool {
-        let path = self.tcx.def_path_str(target_def_id);
-        path.starts_with("std::cmp::")
-    }
-
-    fn is_std_convert_call(&self, target_def_id: DefId) -> bool {
-        let path = self.tcx.def_path_str(target_def_id);
-        path.starts_with("std::convert::")
+        false
     }
 }
 
