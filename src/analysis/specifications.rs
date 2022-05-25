@@ -3,6 +3,7 @@ use crate::analysis::specifications::std_ops_specs::std_ops_dispatch;
 use crate::analysis::cost_analysis::{CalleeInfo, TransferFunction};
 use rustc_middle::ty::TyCtxt;
 
+use self::frame_support_bounded_vec_specs::frame_support_bounded_vec_dispatch;
 use self::frame_support_traits_specs::frame_support_traits_dispatch;
 use self::sp_runtime_traits_specs::sp_runtime_traits_dispatch;
 use self::std_convert_specs::std_convert_dispatch;
@@ -25,6 +26,8 @@ pub(crate) fn dispatch_to_specifications<'tcx>(
         frame_support_traits_dispatch(tcx, transfer_function, callee_info);
     } else if path.starts_with("sp_runtime::traits::") {
         sp_runtime_traits_dispatch(tcx, transfer_function, callee_info);
+    } else if path.starts_with("frame_support::BoundedVec::") {
+        frame_support_bounded_vec_dispatch(tcx, transfer_function, callee_info);
     } else if path.starts_with("weights::WeightInfo::") {
         // Ignore
     } else {
@@ -301,10 +304,68 @@ pub(crate) mod sp_runtime_traits_specs {
     }
 }
 
+pub(crate) mod frame_support_bounded_vec_specs {
+
+    use crate::analysis::{
+        cost_analysis::{CalleeInfo, TransferFunction},
+        cost_language::{Cost, Symbolic},
+    };
+    use rustc_middle::ty::{Instance, ParamEnv, TyCtxt};
+
+    pub(crate) fn frame_support_bounded_vec_dispatch<'tcx>(
+        tcx: TyCtxt<'tcx>,
+        transfer_function: &mut TransferFunction,
+        callee_info: CalleeInfo<'tcx>,
+    ) {
+        let path = tcx.def_path_str(callee_info.callee_def_id);
+        let path = path.as_str();
+
+        match path {
+            "frame_support::BoundedVec::<T, S>::try_push" => {
+                println!("{:?}", callee_info.substs_ref);
+                // call try_push                                                    https://docs.substrate.io/rustdocs/latest/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.try_push
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                //      call to len() /!\ INLINED
+                //      call to Self::bound
+                    transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                //          call to substs_ref[1]::get
+                        transfer_function.domain_state.add_steps(Cost::Symbolic(Symbolic::TimeOf(format!("{}::get()", callee_info.substs_ref.type_at(1).to_string()))));
+                //      comparison
+                    transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                //      call to push /!\ INLINED
+                //          call to self.buf.capacity /!\ INLINED
+                //              call to size_of /!\ INLINED
+                //              comparison
+                            transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                //      comparison
+                        transfer_function.domain_state.add_steps(Cost::Concrete(1));
+
+                //      call reserve_for_push
+                        transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                //          call grow_amortized(additional=1)
+                            transfer_function.domain_state.add_steps(Cost::Symbolic(Symbolic::TimeOf(format!("grow_amortized"))));
+                //          call handle_reserve /!\ INLINED    
+                //      call as_mut_ptr /!\ INLINED
+                //          all underlying calls are inlined
+                //      call add /!\ INLINED
+                //          all underlying calls are inlined until "intrisics::offset", could not go further
+                //              len may be at most substs_ref[1]::get
+                        transfer_function.domain_state.add_steps(Cost::Symbolic(Symbolic::TimeOf(format!("intrisics::offset({}::get())", callee_info.substs_ref.type_at(1).to_string()))));
+                //      call write /!\ INLINED
+                        transfer_function.domain_state.add_steps(Cost::Symbolic(Symbolic::TimeOf(format!("ptr::write({})", callee_info.substs_ref.type_at(0).to_string()))));
+                //      addition
+                        transfer_function.domain_state.add_steps(Cost::Concrete(1));
+
+            },
+            _ => println!("{}", path),
+        }
+    }
+}
+
 pub(crate) mod storage_actions_specs {
 
     use crate::analysis::{
-        cost_language::{Cost, Symbolic, HasSize},
+        cost_language::{Cost, HasSize, Symbolic},
         pallet::{Field, StorageKind},
     };
     use rustc_middle::ty::{TyCtxt, TyKind};
@@ -420,12 +481,12 @@ pub(crate) mod storage_actions_specs {
             if !Self::is_storage_value_action(action_short) {
                 None
             } else {
-
-                let substs_ref = if let TyKind::Adt(_, substs_ref) = tcx.type_of(field.def_id).kind() {
-                    substs_ref
-                } else {
-                    unreachable!()
-                };
+                let substs_ref =
+                    if let TyKind::Adt(_, substs_ref) = tcx.type_of(field.def_id).kind() {
+                        substs_ref
+                    } else {
+                        unreachable!()
+                    };
 
                 let mut steps = Cost::default();
                 let mut reads = Cost::default();
@@ -436,36 +497,53 @@ pub(crate) mod storage_actions_specs {
                     StorageValueActions::DecodeLen => todo!(),
                     StorageValueActions::Exists => todo!(),
                     StorageValueActions::Get => {
-                            steps = steps + Cost::Concrete(1);
-                            // compute storage key
-                                steps = steps + Cost::Symbolic(Symbolic::TimeOf(format!("{}::storage_value_final_key()", tcx.def_path_str(field.def_id))));
-                                // get data from storage
-                                reads = reads + field.get_size(&tcx);
-                                // decode the whole data
-                                steps = steps + Cost::Symbolic(Symbolic::TimeOf(format!("decode({:?})", substs_ref[1])));
-                                // from_optional_to_query_value
-                                steps = steps + Cost::Concrete(1);
-                    },
+                        steps = steps + Cost::Concrete(1);
+                        // compute storage key
+                        steps = steps
+                            + Cost::Symbolic(Symbolic::TimeOf(format!(
+                                "{}::storage_value_final_key()",
+                                tcx.def_path_str(field.def_id)
+                            )));
+                        // get data from storage
+                        reads = reads + field.get_size(&tcx);
+                        // decode the whole data
+                        steps = steps
+                            + Cost::Symbolic(Symbolic::TimeOf(format!(
+                                "decode({:?})",
+                                substs_ref[1]
+                            )));
+                        // from_optional_to_query_value
+                        steps = steps + Cost::Concrete(1);
+                    }
                     StorageValueActions::Kill => {
                         // call "kill"
                         steps = steps + Cost::Concrete(1);
                         // compute storage key
-                        steps = steps + Cost::Symbolic(Symbolic::TimeOf(format!("{}::storage_value_final_key()", tcx.def_path_str(field.def_id))));
-                        steps = steps + Cost::Symbolic(Symbolic::TimeOf(format!("unhashed::kill()",)));
+                        steps = steps
+                            + Cost::Symbolic(Symbolic::TimeOf(format!(
+                                "{}::storage_value_final_key()",
+                                tcx.def_path_str(field.def_id)
+                            )));
+                        steps =
+                            steps + Cost::Symbolic(Symbolic::TimeOf(format!("unhashed::kill()",)));
                         // Write None to database
                         writes = writes + Cost::Concrete(1);
-
-                    },
+                    }
                     StorageValueActions::Mutate => todo!(),
                     StorageValueActions::Put => {
                         // call "put"
                         steps = steps + Cost::Concrete(1);
-                            // compute storage key
-                            steps = steps + Cost::Symbolic(Symbolic::TimeOf(format!("{}::storage_value_final_key()", tcx.def_path_str(field.def_id))));
-                            // call unhashed::put
-                            steps = steps + Cost::Symbolic(Symbolic::TimeOf(format!("unhashed::put()",)));
-                            writes = writes + field.get_size(&tcx);
-                    },
+                        // compute storage key
+                        steps = steps
+                            + Cost::Symbolic(Symbolic::TimeOf(format!(
+                                "{}::storage_value_final_key()",
+                                tcx.def_path_str(field.def_id)
+                            )));
+                        // call unhashed::put
+                        steps =
+                            steps + Cost::Symbolic(Symbolic::TimeOf(format!("unhashed::put()",)));
+                        writes = writes + field.get_size(&tcx);
+                    }
                     StorageValueActions::Set => todo!(),
                     StorageValueActions::Take => todo!(),
                     StorageValueActions::Translate => todo!(),
@@ -474,27 +552,25 @@ pub(crate) mod storage_actions_specs {
                     StorageValueActions::TryMutate => {
                         // call try_mutate https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.try_mutate
                         steps = steps + Cost::Concrete(1);
-                            // call get https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/value.rs#63
-                            let get_access_cost = Self::get_access_cost(tcx, field, "get")?;
-                            reads = reads + get_access_cost.reads;
-                            writes = writes + get_access_cost.writes;
-                            steps = steps + get_access_cost.steps;
-                            // apply closure (done in analyze_storage_access)
-                            // "if" branch is more costly, account for call to is_ok()
-                            steps = steps + Cost::Concrete(1);
-                            // call from_query_to_optional_value
-                            steps = steps + Cost::Concrete(1);
+                        // call get https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/value.rs#63
+                        let get_access_cost = Self::get_access_cost(tcx, field, "get")?;
+                        reads = reads + get_access_cost.reads;
+                        writes = writes + get_access_cost.writes;
+                        steps = steps + get_access_cost.steps;
+                        // apply closure (done in analyze_storage_access)
+                        // "if" branch is more costly, account for call to is_ok()
+                        steps = steps + Cost::Concrete(1);
+                        // call from_query_to_optional_value
+                        steps = steps + Cost::Concrete(1);
 
-                            // "put" has greater cost than "kill"
-                            let put_access_cost = Self::get_access_cost(tcx, field, "put")?;
-                            reads = reads + put_access_cost.reads;
-                            writes = writes + put_access_cost.writes;
-                            steps = steps + put_access_cost.steps;
-
-                    },
+                        // "put" has greater cost than "kill"
+                        let put_access_cost = Self::get_access_cost(tcx, field, "put")?;
+                        reads = reads + put_access_cost.reads;
+                        writes = writes + put_access_cost.writes;
+                        steps = steps + put_access_cost.steps;
+                    }
                 };
                 Some(AccessCost::new(reads, writes, steps))
-
             }
         }
     }
@@ -601,12 +677,12 @@ pub(crate) mod storage_actions_specs {
             if !Self::is_storage_map_action(action_short) {
                 None
             } else {
-
-                let substs_ref = if let TyKind::Adt(_, substs_ref) = tcx.type_of(field.def_id).kind() {
-                    substs_ref
-                } else {
-                    unreachable!()
-                };
+                let substs_ref =
+                    if let TyKind::Adt(_, substs_ref) = tcx.type_of(field.def_id).kind() {
+                        substs_ref
+                    } else {
+                        unreachable!()
+                    };
 
                 let mut steps = Cost::default();
                 let mut reads = Cost::default();
@@ -766,12 +842,12 @@ pub(crate) mod storage_actions_specs {
             if !Self::is_storage_map_action(action_short) {
                 None
             } else {
-
-                let substs_ref = if let TyKind::Adt(_, substs_ref) = tcx.type_of(field.def_id).kind() {
-                    substs_ref
-                } else {
-                    unreachable!()
-                };
+                let substs_ref =
+                    if let TyKind::Adt(_, substs_ref) = tcx.type_of(field.def_id).kind() {
+                        substs_ref
+                    } else {
+                        unreachable!()
+                    };
 
                 let mut steps = Cost::default();
                 let mut reads = Cost::default();

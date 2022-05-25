@@ -2,7 +2,7 @@ use super::cost_domain::CostDomain;
 use super::cost_language::{Cost, Symbolic};
 use super::events_variants_domain::Variants;
 use super::pallet::Pallet;
-use super::specifications::storage_actions_specs::{HasAccessCost, AccessCost};
+use super::specifications::storage_actions_specs::{AccessCost, HasAccessCost};
 use crate::analysis::events_variants_domain::EventVariantsDomain;
 use crate::analysis::specifications::dispatch_to_specifications;
 use rustc_index::vec::IndexVec;
@@ -174,6 +174,9 @@ where
         if let Some(access_cost) =
             self.is_storage_call(callee_info.callee_def_id, callee_info.substs_ref)
         {
+            // Account for the call on the implementation of the storage struct
+            self.domain_state.add_steps(Cost::Concrete(1));
+
             // Filtering storage access, we need to catch it now otherwise we lose information about which
             // field is accessed.
             self.analyze_storage_access(callee_info, access_cost);
@@ -220,11 +223,7 @@ where
         }
     }
 
-    fn analyze_storage_access(
-        &mut self,
-        callee_info: CalleeInfo<'tcx>,
-        access_cost: AccessCost,
-    ) {
+    fn analyze_storage_access(&mut self, callee_info: CalleeInfo<'tcx>, access_cost: AccessCost) {
         if let TyKind::Closure(closure_def_id, _) =
             callee_info.substs_ref.last().unwrap().expect_ty().kind()
         {
@@ -439,11 +438,7 @@ where
         }
     }
 
-    fn is_storage_call(
-        &self,
-        def_id: DefId,
-        substs: SubstsRef<'tcx>,
-    ) -> Option<AccessCost> {
+    fn is_storage_call(&self, def_id: DefId, substs: SubstsRef<'tcx>) -> Option<AccessCost> {
         if self
             .tcx
             .def_path_str(def_id)
@@ -466,7 +461,6 @@ where
                     .iter()
                     .map(|(field_def_id, field)| (tcx.type_of(field_def_id), field))
                 {
-                    
                     if ty == reconstructed_ty {
                         return field.get_access_cost(tcx, &tcx.def_path_str(def_id));
                     }
