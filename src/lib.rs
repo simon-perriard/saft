@@ -3,6 +3,7 @@
 #![feature(let_chains)]
 #![feature(drain_filter)]
 #![feature(if_let_guard)]
+#![feature(let_else)]
 
 extern crate rustc_ast;
 extern crate rustc_expand;

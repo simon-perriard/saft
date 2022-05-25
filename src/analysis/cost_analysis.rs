@@ -1,10 +1,10 @@
 use super::cost_domain::CostDomain;
-use super::cost_language::{Cost, HasSize, Symbolic};
+use super::cost_language::{Cost, Symbolic};
 use super::events_variants_domain::Variants;
 use super::pallet::Pallet;
-use super::storage_actions::HasAccessType;
+use super::specifications::storage_actions_specs::{HasAccessCost, AccessCost};
 use crate::analysis::events_variants_domain::EventVariantsDomain;
-use crate::analysis::storage_actions::AccessType;
+use crate::analysis::specifications::dispatch_to_specifications;
 use rustc_index::vec::IndexVec;
 use rustc_middle::mir::{
     traversal::*, visit::*, BasicBlock, Body, Local, Location, Operand, Place, ProjectionElem,
@@ -40,12 +40,12 @@ impl AnalysisState {
 }
 
 pub(crate) struct CalleeInfo<'tcx> {
-    location: Location,
-    func: Operand<'tcx>,
-    args: Vec<Operand<'tcx>>,
-    destination: Option<(Place<'tcx>, BasicBlock)>,
-    callee_def_id: DefId,
-    substs_ref: SubstsRef<'tcx>,
+    pub location: Location,
+    pub func: Operand<'tcx>,
+    pub args: Vec<Operand<'tcx>>,
+    pub destination: Option<(Place<'tcx>, BasicBlock)>,
+    pub callee_def_id: DefId,
+    pub substs_ref: SubstsRef<'tcx>,
 }
 
 pub(crate) struct CostAnalysis<'tcx, 'inter> {
@@ -135,8 +135,8 @@ pub(crate) struct TransferFunction<'tcx, 'inter, 'intra> {
     events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     summaries: Rc<RefCell<Summary<'tcx>>>,
     def_id: DefId,
-    local_types: Rc<RefCell<LocalTypes<'tcx>>>,
-    domain_state: &'intra mut CostDomain,
+    pub local_types: Rc<RefCell<LocalTypes<'tcx>>>,
+    pub domain_state: &'intra mut CostDomain,
     analysis_state: Rc<RefCell<AnalysisState>>,
 }
 
@@ -171,13 +171,12 @@ where
     fn t_visit_fn_call(&mut self, location: Location) {
         let callee_info = self.get_callee_info(location);
 
-        if let (Some(access_type), cost) =
+        if let Some(access_cost) =
             self.is_storage_call(callee_info.callee_def_id, callee_info.substs_ref)
         {
             // Filtering storage access, we need to catch it now otherwise we lose information about which
             // field is accessed.
-            self.analyze_storage_access(callee_info, access_type, cost);
-            //self.t_fn_call_analysis(target_def_id, args, location, destination);
+            self.analyze_storage_access(callee_info, access_cost);
         } else if self.is_deposit_event(callee_info.callee_def_id) {
             // Filtering event deposit, pallet::deposit_event will later call frame_system::deposit_event,
             // but we can only catch the variant of the Event enum now. Or we need to pass a calling context for
@@ -217,15 +216,14 @@ where
             self.analyze_closure_call(callee_info);
         } else {
             // No MIR available, but symbolically account for the call cost
-            println!("{:?}", callee_info.func);
+            dispatch_to_specifications(self.tcx, self, callee_info);
         }
     }
 
     fn analyze_storage_access(
         &mut self,
         callee_info: CalleeInfo<'tcx>,
-        access_type: AccessType,
-        cost: Cost,
+        access_cost: AccessCost,
     ) {
         if let TyKind::Closure(closure_def_id, _) =
             callee_info.substs_ref.last().unwrap().expect_ty().kind()
@@ -244,17 +242,15 @@ where
         }
 
         // Account for the cost of calling the storage access function
-        match access_type {
-            AccessType::Read => self.domain_state.add_reads(cost),
-            AccessType::Write => self.domain_state.add_writes(cost),
-            AccessType::Both => {
-                self.domain_state.add_reads(cost.clone());
-                self.domain_state.add_writes(cost)
-            }
-        }
+        self.domain_state.add_reads(access_cost.reads);
+        self.domain_state.add_writes(access_cost.writes);
+        self.domain_state.add_steps(access_cost.steps);
     }
 
     fn analyze_deposit_event(&mut self, callee_info: CalleeInfo<'tcx>) {
+        // Account for function call
+        self.domain_state.add_steps(Cost::Concrete(1));
+
         let args = callee_info.args;
         let location = callee_info.location;
 
@@ -339,6 +335,9 @@ where
     }
 
     fn analyze_with_mir(&mut self, callee_info: CalleeInfo<'tcx>, target_mir: &Body<'tcx>) {
+        // Account for function call
+        self.domain_state.add_steps(Cost::Concrete(1));
+
         let mut local_types_outter = LocalTypes::new();
         // Local 0_ will be return value, args start at 1_
         if let Some((place_to, _)) = callee_info.destination {
@@ -393,7 +392,7 @@ where
             results.seek_to_block_end(last);
             Some(results.get().clone())
         } else {
-            None
+            unreachable!();
         };
 
         if let Some(end_state) = end_state {
@@ -444,7 +443,7 @@ where
         &self,
         def_id: DefId,
         substs: SubstsRef<'tcx>,
-    ) -> (Option<AccessType>, Cost) {
+    ) -> Option<AccessCost> {
         if self
             .tcx
             .def_path_str(def_id)
@@ -467,16 +466,14 @@ where
                     .iter()
                     .map(|(field_def_id, field)| (tcx.type_of(field_def_id), field))
                 {
+                    
                     if ty == reconstructed_ty {
-                        return (
-                            field.get_access_type(&tcx.def_path_str(def_id)),
-                            field.get_size(&tcx),
-                        );
+                        return field.get_access_cost(tcx, &tcx.def_path_str(def_id));
                     }
                 }
             }
         }
-        (None, Cost::default())
+        None
     }
 
     fn is_deposit_event(&self, target_def_id: DefId) -> bool {
@@ -616,8 +613,10 @@ impl<'tcx> Analysis<'tcx> for CostAnalysis<'tcx, '_> {
         statement: &Statement<'tcx>,
         location: Location,
     ) {
-        self.transfer_function(state)
-            .visit_statement(statement, location)
+        if *self.analysis_state.borrow() == AnalysisState::Success {
+            self.transfer_function(state)
+                .visit_statement(statement, location)
+        }
     }
 
     fn apply_terminator_effect(
@@ -626,8 +625,10 @@ impl<'tcx> Analysis<'tcx> for CostAnalysis<'tcx, '_> {
         terminator: &Terminator<'tcx>,
         location: Location,
     ) {
-        self.transfer_function(state)
-            .visit_terminator(terminator, location);
+        if *self.analysis_state.borrow() == AnalysisState::Success {
+            self.transfer_function(state)
+                .visit_terminator(terminator, location);
+        }
     }
 
     fn apply_call_return_effect(
