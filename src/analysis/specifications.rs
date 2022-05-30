@@ -310,7 +310,7 @@ pub(crate) mod frame_support_bounded_vec_specs {
         cost_analysis::{CalleeInfo, TransferFunction},
         cost_language::{Cost, Symbolic},
     };
-    use rustc_middle::ty::{Instance, ParamEnv, TyCtxt};
+    use rustc_middle::ty::TyCtxt;
 
     pub(crate) fn frame_support_bounded_vec_dispatch<'tcx>(
         tcx: TyCtxt<'tcx>,
@@ -322,41 +322,58 @@ pub(crate) mod frame_support_bounded_vec_specs {
 
         match path {
             "frame_support::BoundedVec::<T, S>::try_push" => {
-                println!("{:?}", callee_info.substs_ref);
                 // call try_push                                                    https://docs.substrate.io/rustdocs/latest/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.try_push
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
                 //      call to len() /!\ INLINED
                 //      call to Self::bound
-                    transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
                 //          call to substs_ref[1]::get
-                        transfer_function.domain_state.add_steps(Cost::Symbolic(Symbolic::TimeOf(format!("{}::get()", callee_info.substs_ref.type_at(1).to_string()))));
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::TimeOf(format!(
+                        "{}::get()",
+                        callee_info.substs_ref.type_at(1)
+                    ))));
                 //      comparison
-                    transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
                 //      call to push /!\ INLINED
                 //          call to self.buf.capacity /!\ INLINED
                 //              call to size_of /!\ INLINED
                 //              comparison
-                            transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
                 //      comparison
-                        transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
 
                 //      call reserve_for_push
-                        transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
                 //          call grow_amortized(additional=1)
-                            transfer_function.domain_state.add_steps(Cost::Symbolic(Symbolic::TimeOf(format!("grow_amortized"))));
-                //          call handle_reserve /!\ INLINED    
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::TimeOf(
+                        "grow_amortized".to_string(),
+                    )));
+                //          call handle_reserve /!\ INLINED
                 //      call as_mut_ptr /!\ INLINED
                 //          all underlying calls are inlined
                 //      call add /!\ INLINED
                 //          all underlying calls are inlined until "intrisics::offset", could not go further
                 //              len may be at most substs_ref[1]::get
-                        transfer_function.domain_state.add_steps(Cost::Symbolic(Symbolic::TimeOf(format!("intrisics::offset({}::get())", callee_info.substs_ref.type_at(1).to_string()))));
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::TimeOf(format!(
+                        "intrisics::offset({}::get())",
+                        callee_info.substs_ref.type_at(1)
+                    ))));
                 //      call write /!\ INLINED
-                        transfer_function.domain_state.add_steps(Cost::Symbolic(Symbolic::TimeOf(format!("ptr::write({})", callee_info.substs_ref.type_at(0).to_string()))));
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::TimeOf(format!(
+                        "ptr::write({})",
+                        callee_info.substs_ref.type_at(0)
+                    ))));
                 //      addition
-                        transfer_function.domain_state.add_steps(Cost::Concrete(1));
-
-            },
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+            }
             _ => println!("{}", path),
         }
     }
@@ -398,13 +415,13 @@ pub(crate) mod storage_actions_specs {
         fn get_access_cost(&self, tcx: TyCtxt, action: &str) -> Option<AccessCost> {
             match &self.kind {
                 StorageKind::StorageValue { .. } => {
-                    StorageValueActions::get_access_cost(tcx, &self, action)
+                    StorageValueActions::get_access_cost(tcx, self, action)
                 }
                 StorageKind::StorageMap { .. } => {
-                    StorageMapActions::get_access_cost(tcx, &self, action)
+                    StorageMapActions::get_access_cost(tcx, self, action)
                 }
                 StorageKind::StorageDoubleMap { .. } => {
-                    StorageDoubleMapActions::get_access_cost(tcx, &self, action)
+                    StorageDoubleMapActions::get_access_cost(tcx, self, action)
                 }
                 StorageKind::StorageNMap { .. } => todo!(),
                 StorageKind::CountedStorageMap { .. } => todo!(),
@@ -505,6 +522,11 @@ pub(crate) mod storage_actions_specs {
                                 tcx.def_path_str(field.def_id)
                             )));
                         // get data from storage
+                        steps = steps
+                            + Cost::Symbolic(Symbolic::TimeOf(format!(
+                                "sp_io::storage::get({:?})",
+                                substs_ref[1]
+                            )));
                         reads = reads + field.get_size(&tcx);
                         // decode the whole data
                         steps = steps
@@ -524,8 +546,8 @@ pub(crate) mod storage_actions_specs {
                                 "{}::storage_value_final_key()",
                                 tcx.def_path_str(field.def_id)
                             )));
-                        steps =
-                            steps + Cost::Symbolic(Symbolic::TimeOf(format!("unhashed::kill()",)));
+                        steps = steps
+                            + Cost::Symbolic(Symbolic::TimeOf("unhashed::kill()".to_string()));
                         // Write None to database
                         writes = writes + Cost::Concrete(1);
                     }
@@ -540,8 +562,19 @@ pub(crate) mod storage_actions_specs {
                                 tcx.def_path_str(field.def_id)
                             )));
                         // call unhashed::put
-                        steps =
-                            steps + Cost::Symbolic(Symbolic::TimeOf(format!("unhashed::put()",)));
+                        steps = steps + Cost::Concrete(1);
+                        // encode the value
+                        steps = steps
+                            + Cost::Symbolic(Symbolic::TimeOf(format!(
+                                "encode({:?})",
+                                substs_ref[1]
+                            )));
+                        // write data to storage
+                        steps = steps
+                            + Cost::Symbolic(Symbolic::TimeOf(format!(
+                                "sp_io::storage::set({:?})",
+                                substs_ref[1]
+                            )));
                         writes = writes + field.get_size(&tcx);
                     }
                     StorageValueActions::Set => todo!(),
@@ -677,16 +710,16 @@ pub(crate) mod storage_actions_specs {
             if !Self::is_storage_map_action(action_short) {
                 None
             } else {
-                let substs_ref =
+                let _substs_ref =
                     if let TyKind::Adt(_, substs_ref) = tcx.type_of(field.def_id).kind() {
                         substs_ref
                     } else {
                         unreachable!()
                     };
 
-                let mut steps = Cost::default();
-                let mut reads = Cost::default();
-                let mut writes = Cost::default();
+                let mut _steps = Cost::default();
+                let mut _reads = Cost::default();
+                let mut _writes = Cost::default();
 
                 match Self::from(action_short) {
                     StorageMapActions::Append => todo!(),
@@ -714,7 +747,7 @@ pub(crate) mod storage_actions_specs {
                     StorageMapActions::TryMutate => todo!(),
                     StorageMapActions::TryMutateExists => todo!(),
                 };
-                Some(AccessCost::new(reads, writes, steps))
+                Some(AccessCost::new(_reads, _writes, _steps))
             }
         }
     }
@@ -842,16 +875,16 @@ pub(crate) mod storage_actions_specs {
             if !Self::is_storage_map_action(action_short) {
                 None
             } else {
-                let substs_ref =
+                let _substs_ref =
                     if let TyKind::Adt(_, substs_ref) = tcx.type_of(field.def_id).kind() {
                         substs_ref
                     } else {
                         unreachable!()
                     };
 
-                let mut steps = Cost::default();
-                let mut reads = Cost::default();
-                let mut writes = Cost::default();
+                let mut _steps = Cost::default();
+                let mut _reads = Cost::default();
+                let mut _writes = Cost::default();
 
                 match Self::from(action_short) {
                     StorageDoubleMapActions::Append => todo!(),
@@ -886,7 +919,7 @@ pub(crate) mod storage_actions_specs {
                     StorageDoubleMapActions::TryMutate => todo!(),
                     StorageDoubleMapActions::TryMutateExists => todo!(),
                 };
-                Some(AccessCost::new(reads, writes, steps))
+                Some(AccessCost::new(_reads, _writes, _steps))
             }
         }
     }

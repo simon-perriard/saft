@@ -51,10 +51,10 @@ impl JoinSemiLattice for CostDomain {
         {
             false
         } else {
-            self.bytes_read = self.bytes_read.max(&other.bytes_read);
-            self.bytes_written = self.bytes_written.max(&other.bytes_written);
-            self.bytes_deposited = self.bytes_deposited.max(&other.bytes_deposited);
-            self.steps_executed = self.steps_executed.max(&other.steps_executed);
+            self.bytes_read = self.bytes_read.max(other.bytes_read.clone());
+            self.bytes_written = self.bytes_written.max(other.bytes_written.clone());
+            self.bytes_deposited = self.bytes_deposited.max(other.bytes_deposited.clone());
+            self.steps_executed = self.steps_executed.max(other.steps_executed.clone());
             true
         }
     }
@@ -67,7 +67,10 @@ impl fmt::Display for CostDomain {
         write!(
             f,
             "bytes read: {}\nbytes written: {}\nbytes deposited: {}\nsteps_executed: {}\n",
-            self.bytes_read, self.bytes_written, self.bytes_deposited, self.steps_executed
+            self.bytes_read,
+            self.bytes_written,
+            self.bytes_deposited,
+            self.steps_executed.reduce_add_chain()
         )
     }
 }

@@ -300,7 +300,7 @@ where
                             // For now add the variant size as symbolic
                             Cost::Symbolic(Symbolic::SizeOf(self.tcx.def_path_str(variant.def_id)))
                         })
-                        .reduce(|accum, item| accum.max(&item))
+                        .reduce(|accum, item| accum.max(item))
                         .unwrap();
                     self.domain_state.add_events(cost);
                 }

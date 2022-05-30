@@ -61,46 +61,50 @@ impl Cost {
             return Self::Concrete(x*y);
         } else if let Self::Concrete(x) = self && let Self::ConcreteMul(y, a) = rhs {
             // Compact notation: (x)*((y)*a) with x and y concrete -> (x*y)*a
-            return Self::ConcreteMul(x*y, a);
+            return Self::ConcreteMul(x*y, Box::new(a.reduce_add_chain()));
         } else if let Self::Concrete(x) = rhs && let Self::ConcreteMul(y, a) = self {
             // Compact notation: ((y)*a)*(x) with x and y concrete -> (x*y)*a
-            return Self::ConcreteMul(x*y, a);
+            return Self::ConcreteMul(x*y, Box::new(a.reduce_add_chain()));
         } else if let Self::Concrete(x) = self {
-            return Self::ConcreteMul(x, Box::new(rhs));
+            return Self::ConcreteMul(x, Box::new(rhs.reduce_add_chain()));
         } else if let Self::Concrete(x) = rhs {
-            return Self::ConcreteMul(x, Box::new(self));
+            return Self::ConcreteMul(x, Box::new(self.reduce_add_chain()));
         }
         unreachable!();
     }
 
-    pub(crate) fn max(&self, rhs: &Self) -> Self {
+    pub(crate) fn max(&self, rhs: Self) -> Self {
         if self.is_zero() {
-            return rhs.clone();
-        } else if rhs.is_zero() || *self == *rhs {
-            return (*self).clone();
-        } else if let Self::Concrete(x) = *self && let Self::Concrete(y) = *rhs {
+            return rhs.reduce_add_chain();
+        } else if rhs.is_zero() || *self == rhs {
+            return self.reduce_add_chain();
+        } else if let Self::Concrete(x) = *self && let Self::Concrete(y) = rhs {
             // Compact notation: max(x, y) => x > y ? x : y
-            return if x > y {(*self).clone()} else {rhs.clone()};
-        } else if let Self::Max(a, _) = (*rhs).clone() && *self == *a {
+            return if x > y {self.reduce_add_chain()} else {rhs.reduce_add_chain()};
+        } else if let Self::Max(a, _) = rhs.clone() && *self == *a {
             // Compact notation: max(a, max(a, b)) => max(a, b)
-            return rhs.clone();
-        }  else if let Self::Max(a, _) = (*self).clone() && *rhs == *a {
+            return rhs.reduce_add_chain();
+        }  else if let Self::Max(a, _) = (*self).clone() && rhs == *a {
             // Compact notation: max(max(a,b), a) => max(a, b)
-            return (*self).clone();
-        } else if let Self::Max(_, b) = (*rhs).clone() && *self == *b {
+            return self.reduce_add_chain();
+        } else if let Self::Max(_, b) = rhs.clone() && *self == *b {
             // Compact notation: max(b, max(a, b)) => max(a, b)
-            return rhs.clone();
-        } else if let Self::Max(_, b) = (*self).clone() && *rhs == *b {
+            return rhs.reduce_add_chain();
+        } else if let Self::Max(_, b) = (*self).clone() && rhs == *b {
             // Compact notation: max(max(a, b), b) => max(a, b)
-            return (*self).clone();
+            return self.reduce_add_chain();
         }
 
         // Try to resolve the max
-        if let Some(longest) = self.cmp_add_chain(rhs) {
+        if let Some(longest) = self.cmp_add_chain(&rhs.reduce_add_chain()) {
             return longest;
         }
 
-        Self::Max(Box::new((*self).clone()), Box::new(rhs.clone()))
+        Self::Max(
+            Box::new(self.reduce_add_chain()),
+            Box::new(rhs.reduce_add_chain()),
+        )
+        .extract_max_add_common()
     }
 
     fn flatten_add_chain(&self) -> Vec<Self> {
@@ -121,6 +125,27 @@ impl Cost {
     fn cmp_add_chain(&self, other: &Self) -> Option<Self> {
         let mut chain_1 = self.flatten_add_chain();
         let mut chain_2 = other.flatten_add_chain();
+
+        // Extract concretes and compute the diff
+        let aggregated_concretes_1 = chain_1
+            .drain_filter(|c| matches!(c, Cost::Concrete(_)))
+            .reduce(|accum, item| accum + item)
+            .unwrap_or_default();
+
+        let aggregated_concretes_2 = chain_2
+            .drain_filter(|c| matches!(c, Cost::Concrete(_)))
+            .reduce(|accum, item| accum + item)
+            .unwrap_or_default();
+
+        if let Cost::Concrete(concrete_1) = aggregated_concretes_1 && let Cost::Concrete(concrete_2) = aggregated_concretes_2 {
+            match concrete_1.cmp(&concrete_2) {
+                std::cmp::Ordering::Less => chain_2.push(Cost::Concrete(concrete_2-concrete_1)),
+                std::cmp::Ordering::Equal => (),
+                std::cmp::Ordering::Greater => chain_1.push(Cost::Concrete(concrete_1-concrete_2)),
+            }
+        } else {
+            unreachable!();
+        }
 
         // Remove common elements from chain_1
         chain_1.drain_filter(|cost_1| {
@@ -152,6 +177,73 @@ impl Cost {
 
     fn pretty_print_need_parenthesis(&self) -> bool {
         matches!(self, Self::Add(_, _))
+    }
+
+    pub fn reduce_add_chain(&self) -> Self {
+        match self {
+            Cost::Add(_, _) => {
+                let mut flat = self.flatten_add_chain();
+
+                let aggregated_concretes = flat
+                    .drain_filter(|c| matches!(c, Cost::Concrete(_)))
+                    .reduce(|accum, item| accum + item)
+                    .unwrap_or_default();
+
+                // Push back the aggregated concretes
+                flat.push(aggregated_concretes);
+
+                // drain instead of iter because we need the object, not the reference
+                flat.drain(0..)
+                    .reduce(|accum, item| accum + item)
+                    .unwrap_or_default()
+            }
+            Cost::Max(a, b) => a.reduce_add_chain().max(b.reduce_add_chain()),
+            _ => (*self).clone(),
+        }
+    }
+
+    fn extract_max_add_common(&self) -> Self {
+        match self {
+            Cost::Max(a, b) => {
+                let mut chain_1 = a.reduce_add_chain().flatten_add_chain();
+                let mut chain_2 = b.reduce_add_chain().flatten_add_chain();
+
+                let extracted_common_add_chain = chain_1
+                    .drain_filter(|cost_1| {
+                        let res = chain_2.contains(cost_1);
+                        if res {
+                            let chain_2_index = chain_2
+                                .iter()
+                                .position(|cost_2| *cost_1 == *cost_2)
+                                .unwrap();
+                            chain_2.remove(chain_2_index);
+                        }
+                        res
+                    })
+                    .reduce(|accum, item| accum + item)
+                    .unwrap_or_default();
+
+                // drain instead of iter because we need the object, not the reference
+                let lhs = Box::new(
+                    chain_1
+                        .drain(0..)
+                        .reduce(|accum, item| accum + item)
+                        .unwrap_or_default(),
+                );
+                let rhs = Box::new(
+                    chain_2
+                        .drain(0..)
+                        .reduce(|accum, item| accum + item)
+                        .unwrap_or_default(),
+                );
+
+                Cost::Add(
+                    Box::new(extracted_common_add_chain),
+                    Box::new(Cost::Max(lhs, rhs)),
+                )
+            }
+            _ => unreachable!("This must only be applied on Cost::Max"),
+        }
     }
 }
 
@@ -198,4 +290,77 @@ impl fmt::Display for Cost {
 
 pub(crate) trait HasSize {
     fn get_size(&self, tcx: &TyCtxt) -> Cost;
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::analysis::cost_language::Symbolic;
+
+    use super::Cost;
+
+    #[test]
+    fn concrete_add_chain_reduction() {
+        let a = Cost::Concrete(1);
+        let b = Cost::Concrete(1);
+
+        assert_eq!(a + b, Cost::Concrete(2))
+    }
+
+    #[test]
+    fn concrete_max_add_chain_reduction() {
+        let a = Cost::Concrete(1);
+        let b = Cost::Concrete(1);
+        let c = Cost::Concrete(2);
+        let d = Cost::Concrete(2);
+
+        let max = (a + b).max(c + d);
+
+        assert_eq!(max, Cost::Concrete(4));
+    }
+
+    #[test]
+    fn mixed_add_chain_reduction() {
+        let a = Cost::Concrete(1);
+        let b = Cost::Concrete(1);
+        let s = Cost::Symbolic(Symbolic::TimeOf(format!("sym")));
+
+        let chain = a + s.clone() + b;
+
+        assert_eq!(chain.reduce_add_chain(), s + Cost::Concrete(2));
+    }
+
+    #[test]
+    fn mixed_max_add_chain() {
+        let a = Cost::Concrete(1);
+        let b = Cost::Concrete(1);
+        let c = Cost::Concrete(2);
+        let d = Cost::Concrete(2);
+        let s = Cost::Symbolic(Symbolic::TimeOf(format!("sym")));
+
+        let chain1 = a + s.clone() + b;
+        let chain2 = c + s.clone() + d;
+
+        assert_eq!(
+            Cost::Max(Box::new(chain1), Box::new(chain2)).reduce_add_chain(),
+            s + Cost::Concrete(4)
+        );
+    }
+
+    #[test]
+    fn extract_max_add_common() {
+        let s1 = Cost::Symbolic(Symbolic::TimeOf(format!("sym1")));
+        let s2 = Cost::Symbolic(Symbolic::TimeOf(format!("sym2")));
+        let s3 = Cost::Symbolic(Symbolic::TimeOf(format!("sym3")));
+
+        let chain1 = s1.clone() + s2.clone();
+        let chain2 = s2.clone() + s3.clone();
+
+        assert_eq!(
+            Cost::Max(Box::new(chain1), Box::new(chain2)).extract_max_add_common(),
+            Cost::Add(
+                Box::new(s2),
+                Box::new(Cost::Max(Box::new(s1), Box::new(s3)))
+            )
+        )
+    }
 }
