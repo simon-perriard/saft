@@ -67,7 +67,7 @@ impl fmt::Display for CostDomain {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "bytes read: {}\nbytes written: {}\nbytes deposited: {}\nsteps_executed: \n{}\n",
+            "== bytes read ==\n{}\n\n== bytes written ==\n{}\n\n== bytes deposited ==\n{}\n\n== steps executed ==\n{}\n",
             self.bytes_read,
             self.bytes_written,
             self.bytes_deposited,

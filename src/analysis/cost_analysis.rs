@@ -175,9 +175,6 @@ where
         if let Some(access_cost) =
             self.is_storage_call(callee_info.callee_def_id, callee_info.substs_ref)
         {
-            // Account for the call on the implementation of the storage struct
-            self.domain_state.add_steps(Cost::Concrete(1));
-
             // Filtering storage access, we need to catch it now otherwise we lose information about which
             // field is accessed.
             self.analyze_storage_access(callee_info, access_cost);
@@ -230,15 +227,16 @@ where
                 let arg_ty_kind = self
                     .local_types
                     .borrow()
-                    .get(arg.place().unwrap().local)
+                    .get(
+                        arg.place()
+                            .expect("Call unwinds, this is not allowed for substrate chains")
+                            .local,
+                    )
                     .unwrap()
                     .kind();
 
-                match arg_ty_kind {
-                    TyKind::Closure(closure_def_id, _) => {
-                        self.analyze_closure_as_argument(callee_info.clone(), *closure_def_id, false);
-                    }
-                    _ => (),
+                if let TyKind::Closure(closure_def_id, _) = arg_ty_kind {
+                    self.analyze_closure_as_argument(callee_info.clone(), *closure_def_id, false);
                 }
             }
 
@@ -246,7 +244,14 @@ where
         }
     }
 
-    fn analyze_closure_as_argument(&mut self, callee_info: CalleeInfo<'tcx>, closure_def_id: DefId, account_for_cost_now: bool) {
+    fn analyze_closure_as_argument(
+        &mut self,
+        callee_info: CalleeInfo<'tcx>,
+        closure_def_id: DefId,
+        account_for_cost_now: bool,
+    ) {
+        //println!("{:?}", self.local_types);
+
         let closure_info = CalleeInfo {
             callee_def_id: closure_def_id,
             // precise enough args type will be inferred by the closure body
@@ -274,9 +279,6 @@ where
     }
 
     fn analyze_deposit_event(&mut self, callee_info: CalleeInfo<'tcx>) {
-        // Account for function call
-        self.domain_state.add_steps(Cost::Concrete(1));
-
         let args = callee_info.args;
         let location = callee_info.location;
 
@@ -390,6 +392,8 @@ where
             };
         }
 
+        //println!("{} calls {} {:?}", self.tcx.def_path_str(self.def_id), self.tcx.def_path_str(callee_info.callee_def_id), local_types_outter);
+
         // Analyze the target function
         let mut results = CostAnalysis::new_with_init(
             self.tcx,
@@ -449,7 +453,15 @@ where
             TyKind::FnDef(def_id, _) => Some(*def_id),
             TyKind::Ref(_, _, _) => None,  //No further analysis needed
             TyKind::Projection(_) => None, //No further analysis needed
-            _ => unreachable!(),
+            _ => unreachable!(
+                "{} --- {:?}",
+                self.tcx.def_path_str(self.def_id),
+                self.local_types
+                    .borrow()
+                    .get(callee_info.args[0].place().unwrap().local)
+                    .unwrap()
+                    .kind()
+            ),
         };
 
         if let Some(callee_def_id) = callee_def_id {

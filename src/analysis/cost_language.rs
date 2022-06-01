@@ -1,7 +1,8 @@
 use core::fmt;
 use rustc_middle::ty::TyCtxt;
+use std::collections::HashSet;
 
-#[derive(Eq, PartialEq, Clone, Debug)]
+#[derive(Eq, PartialEq, Clone, Debug, Hash)]
 pub(crate) enum Cost {
     Concrete(u64),
     Symbolic(Symbolic),
@@ -11,11 +12,14 @@ pub(crate) enum Cost {
     Max(Box<Cost>, Box<Cost>),
 }
 
-#[derive(Eq, PartialEq, Clone, Debug)]
+#[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Debug, Hash)]
 pub(crate) enum Symbolic {
     ValueOf(String),
     SizeOf(String),
-    TimeOf(String),
+    ReadsOf(String),
+    WritesOf(String),
+    EventsOf(String),
+    StepsOf(String),
     BigO(String),
 }
 
@@ -30,7 +34,10 @@ impl fmt::Display for Symbolic {
         match self {
             Symbolic::ValueOf(s) => write!(f, "VALUEOF({})", s),
             Symbolic::SizeOf(s) => write!(f, "SIZEOF({})", s),
-            Symbolic::TimeOf(s) => write!(f, "TIMEOF({})", s),
+            Symbolic::ReadsOf(s) => write!(f, "READSOF({})", s),
+            Symbolic::WritesOf(s) => write!(f, "WRITESOF({})", s),
+            Symbolic::EventsOf(s) => write!(f, "EVENTSOF({})", s),
+            Symbolic::StepsOf(s) => write!(f, "STEPSOF({})", s),
             Symbolic::BigO(s) => write!(f, "O({})", s),
         }
     }
@@ -186,13 +193,28 @@ impl Cost {
             Cost::Add(_, _) => {
                 let mut flat = self.flatten_add_chain();
 
+                // Extract and aggregate concretes
                 let aggregated_concretes = flat
                     .drain_filter(|c| matches!(c, Cost::Concrete(_)))
                     .reduce(|accum, item| accum + item)
                     .unwrap_or_default();
 
+                // Extract and reduce the BigO elements
+                let big_os = flat
+                    .drain_filter(|c| matches!(c, Cost::Symbolic(Symbolic::BigO(_))))
+                    .fold(HashSet::new(), |mut acc, item| {
+                        acc.insert(item);
+                        acc
+                    })
+                    .drain()
+                    .reduce(|accum, item| accum + item)
+                    .unwrap_or_default();
+
                 // Push back the aggregated concretes
                 flat.push(aggregated_concretes);
+
+                // Push back the reduced BigO formulae
+                flat.push(big_os);
 
                 // drain instead of iter because we need the object, not the reference
                 flat.drain(0..)
@@ -241,7 +263,7 @@ impl Cost {
 
                 Cost::Add(
                     Box::new(extracted_common_add_chain),
-                    Box::new(Cost::Max(lhs, rhs)),
+                    Box::new(Cost::Max(lhs, rhs) /*lhs.max(*rhs)*/),
                 )
             }
             _ => unreachable!("This must only be applied on Cost::Max"),
@@ -290,6 +312,23 @@ impl fmt::Display for Cost {
     }
 }
 
+pub(crate) fn get_big_o_from_storage_size(size: Cost) -> Cost {
+    match size.clone() {
+        Cost::Concrete(_) => size,
+        Cost::Symbolic(s) => match s {
+            Symbolic::ValueOf(_) | Symbolic::SizeOf(_) => {
+                Cost::Symbolic(Symbolic::BigO(format!("{}", s)))
+            }
+            _ => panic!("Invalid storage size format {}", size),
+        },
+        Cost::Add(a, b) => get_big_o_from_storage_size(*a) + get_big_o_from_storage_size(*b),
+        // Storage sizes are constructed such that lhs of mul is the number of elements, rhs is their size
+        Cost::ConcreteMul(a, _) => Cost::Concrete(a),
+        Cost::SymbolicMul(a, _) => get_big_o_from_storage_size(Cost::Symbolic(a)),
+        Cost::Max(a, b) => get_big_o_from_storage_size(*a).max(get_big_o_from_storage_size(*b)),
+    }
+}
+
 pub(crate) trait HasSize {
     fn get_size(&self, tcx: &TyCtxt) -> Cost;
 }
@@ -324,7 +363,7 @@ mod tests {
     fn mixed_add_chain_reduction() {
         let a = Cost::Concrete(1);
         let b = Cost::Concrete(1);
-        let s = Cost::Symbolic(Symbolic::TimeOf(format!("sym")));
+        let s = Cost::Symbolic(Symbolic::ValueOf(format!("sym")));
 
         let chain = a + s.clone() + b;
 
@@ -337,7 +376,7 @@ mod tests {
         let b = Cost::Concrete(1);
         let c = Cost::Concrete(2);
         let d = Cost::Concrete(2);
-        let s = Cost::Symbolic(Symbolic::TimeOf(format!("sym")));
+        let s = Cost::Symbolic(Symbolic::ValueOf(format!("sym")));
 
         let chain1 = a + s.clone() + b;
         let chain2 = c + s.clone() + d;
@@ -350,9 +389,9 @@ mod tests {
 
     #[test]
     fn extract_max_add_common() {
-        let s1 = Cost::Symbolic(Symbolic::TimeOf(format!("sym1")));
-        let s2 = Cost::Symbolic(Symbolic::TimeOf(format!("sym2")));
-        let s3 = Cost::Symbolic(Symbolic::TimeOf(format!("sym3")));
+        let s1 = Cost::Symbolic(Symbolic::ValueOf(format!("sym1")));
+        let s2 = Cost::Symbolic(Symbolic::ValueOf(format!("sym2")));
+        let s3 = Cost::Symbolic(Symbolic::ValueOf(format!("sym3")));
 
         let chain1 = s1.clone() + s2.clone();
         let chain2 = s2.clone() + s3.clone();

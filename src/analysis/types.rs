@@ -28,7 +28,6 @@ pub(crate) enum Type {
 pub(crate) enum Adt {
     Unknown(DefId),
     Option(Box<Type>),
-    Vec(Box<Type>),
     BoundedVec(Box<Type>, Box<Type>),
 }
 
@@ -118,22 +117,21 @@ impl HasSize for Type {
                     match tcx.layout_of(tcx.param_env(def_id).and(ty)) {
                         Ok(ty_and_layout) => Cost::Concrete(ty_and_layout.layout.size().bytes()),
                         Err(_) => {
-                            let path = tcx.def_path_str(*def_id).to_string();
+                            let path = tcx.def_path_str(*def_id);
                             // extract the name of the type for readability
                             let path = path.split("::").last().unwrap().to_string();
                             Cost::Symbolic(Symbolic::SizeOf(path))
-                        },
+                        }
                     }
                 }
                 Adt::Option(ty) => ty.get_size(tcx),
-                Adt::Vec(_) => todo!(),
                 Adt::BoundedVec(ty, max_size) => {
                     let max_size = match **max_size {
                         // Type defined in the pallet
                         Type::Adt(Adt::Unknown(def_id)) |
                         // Type defined in the runtime
                         Type::Projection(def_id) => {
-                            let path = tcx.def_path_str(def_id).to_string();
+                            let path = tcx.def_path_str(def_id);
                             // extract the name of the type for readability
                             let path = path.split("::").last().unwrap();
                             Symbolic::ValueOf(format!("{}::get()", path))
@@ -155,11 +153,11 @@ impl HasSize for Type {
                 .reduce(|acc, ty_size| acc + ty_size)
                 .unwrap_or_default(),
             Type::Projection(def_id) => {
-                let path = tcx.def_path_str(*def_id).to_string();
-                            // extract the name of the type for readability
-                            let path = path.split("::").last().unwrap().to_string();
-                            Cost::Symbolic(Symbolic::SizeOf(path))
-            },
+                let path = tcx.def_path_str(*def_id);
+                // extract the name of the type for readability
+                let path = path.split("::").last().unwrap().to_string();
+                Cost::Symbolic(Symbolic::SizeOf(path))
+            }
             Type::Unsupported => panic!(), /*Cost::default()*/
         }
     }

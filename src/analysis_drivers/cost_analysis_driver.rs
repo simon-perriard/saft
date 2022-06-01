@@ -15,12 +15,10 @@ pub(crate) fn cost_analysis(
 ) {
     // Reads/Writes count anaylsis
     for dispatchable_def_id in pallet.dispatchables.keys() {
-        if !tcx
-            .def_path_str(*dispatchable_def_id)
-            .contains("add_registrar")
-        {
-            continue;
-        }
+        /*if !tcx.def_path_str(*dispatchable_def_id).contains("set_balance") {
+            continue
+        }*/
+
         let mir = tcx.optimized_mir(dispatchable_def_id);
         // Detect loops in analyzed function
         if mir.is_cfg_cyclic() {
@@ -63,7 +61,7 @@ pub(crate) fn cost_analysis(
             };
 
         println!(
-            "****************\nSummary for dispatchable {}\n{}****************",
+            "********************************\nSummary for dispatchable {}\n{}********************************",
             tcx.def_path_str(*dispatchable_def_id),
             state.unwrap()
         );
