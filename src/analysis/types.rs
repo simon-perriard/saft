@@ -117,7 +117,12 @@ impl HasSize for Type {
                     let ty = tcx.type_of(def_id);
                     match tcx.layout_of(tcx.param_env(def_id).and(ty)) {
                         Ok(ty_and_layout) => Cost::Concrete(ty_and_layout.layout.size().bytes()),
-                        Err(_) => Cost::Symbolic(Symbolic::SizeOf(tcx.def_path_str(*def_id))),
+                        Err(_) => {
+                            let path = tcx.def_path_str(*def_id).to_string();
+                            // extract the name of the type for readability
+                            let path = path.split("::").last().unwrap().to_string();
+                            Cost::Symbolic(Symbolic::SizeOf(path))
+                        },
                     }
                 }
                 Adt::Option(ty) => ty.get_size(tcx),
@@ -128,9 +133,10 @@ impl HasSize for Type {
                         Type::Adt(Adt::Unknown(def_id)) |
                         // Type defined in the runtime
                         Type::Projection(def_id) => {
-                            let mut path = tcx.def_path_str(def_id);
-                            path.push_str("::get()");
-                            Symbolic::ValueOf(path)
+                            let path = tcx.def_path_str(def_id).to_string();
+                            // extract the name of the type for readability
+                            let path = path.split("::").last().unwrap();
+                            Symbolic::ValueOf(format!("{}::get()", path))
                         },
                         _ => unreachable!(),
                     };
@@ -148,7 +154,12 @@ impl HasSize for Type {
                 .map(|ty| ty.get_size(tcx))
                 .reduce(|acc, ty_size| acc + ty_size)
                 .unwrap_or_default(),
-            Type::Projection(def_id) => Cost::Symbolic(Symbolic::SizeOf(tcx.def_path_str(*def_id))),
+            Type::Projection(def_id) => {
+                let path = tcx.def_path_str(*def_id).to_string();
+                            // extract the name of the type for readability
+                            let path = path.split("::").last().unwrap().to_string();
+                            Cost::Symbolic(Symbolic::SizeOf(path))
+            },
             Type::Unsupported => panic!(), /*Cost::default()*/
         }
     }

@@ -26,6 +26,7 @@ impl CostDomain {
     pub fn add_events(&mut self, size: Cost) {
         self.bytes_deposited = self.bytes_deposited.clone() + size;
     }
+
     pub fn add_steps(&mut self, steps: Cost) {
         self.steps_executed = self.steps_executed.clone() + steps;
     }
@@ -66,7 +67,7 @@ impl fmt::Display for CostDomain {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "bytes read: {}\nbytes written: {}\nbytes deposited: {}\nsteps_executed: {}\n",
+            "bytes read: {}\nbytes written: {}\nbytes deposited: {}\nsteps_executed: \n{}\n",
             self.bytes_read,
             self.bytes_written,
             self.bytes_deposited,

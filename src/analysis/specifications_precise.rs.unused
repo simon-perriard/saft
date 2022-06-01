@@ -60,17 +60,92 @@ pub(crate) mod std_ops_specs {
         let path = path.as_str();
         match path {
             "std::ops::Try::branch" => {
-                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                let ty_path = callee_info
+                    .substs_ref
+                    .type_at(0)
+                    .sort_string(transfer_function.tcx)
+                    .into_owned();
+                match ty_path.as_str() {
+                    "enum `std::result::Result`" => {
+                        /* Account for function call /!\ INLINED                                        https://doc.rust-lang.org/nightly/std/result/enum.Result.html#method.branch
+                            -> no cost
+                        **/
+                    }
+                    _ => {
+                        let ty_path = callee_info.substs_ref.type_at(0).to_string();
+                        let normalized_fn_path = ty_path + "::branch()";
+                        transfer_function
+                            .domain_state
+                            .add_steps(Cost::Symbolic(Symbolic::TimeOf(normalized_fn_path)));
+                    }
+                }
             }
             "std::ops::FromResidual::from_residual" => {
-                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                let ty_path = callee_info.substs_ref.type_at(0).to_string();
+                let ty_path = ty_path.as_str();
+                match ty_path {
+                    "std::result::Result<frame_support::dispatch::PostDispatchInfo, sp_runtime::DispatchErrorWithPostInfo<frame_support::dispatch::PostDispatchInfo>>"
+                    if vec!["std::result::Result<std::convert::Infallible, frame_support::error::BadOrigin>", "std::result::Result<std::convert::Infallible, sp_runtime::DispatchError>"]
+                        .contains(&callee_info.substs_ref.type_at(1).to_string().as_str())  => {
+
+                        if callee_info.substs_ref.type_at(1).to_string().as_str() == "std::result::Result<std::convert::Infallible, frame_support::error::BadOrigin>" {
+                            /* Account for function call /!\ INLINED +                                  https://doc.rust-lang.org/nightly/std/result/enum.Result.html#method.from_residual-2
+                                DispatchErrorWithPostInfo::from(BadOrigin as Into<DispatchError>) +     https://docs.substrate.io/rustdocs/latest/sp_runtime/struct.DispatchErrorWithPostInfo.html#method.from
+                                    BadOrigin::into(DispatchError) +                                    https://docs.substrate.io/rustdocs/latest/sp_runtime/traits/struct.BadOrigin.html#method.into
+                                        DispatchError::From(BadOrigin)                                  https://docs.substrate.io/rustdocs/latest/sp_runtime/enum.DispatchError.html#method.from-2
+                            */
+                            transfer_function.domain_state.add_steps(Cost::Concrete(3));
+                        } else {
+                            /* Account for function call /!\ INLINED +                                  https://doc.rust-lang.org/nightly/std/result/enum.Result.html#method.from_residual-2
+                                DispatchErrorWithPostInfo::from(DispatchErroras Into<DispatchError>) +  https://docs.substrate.io/rustdocs/latest/sp_runtime/struct.DispatchErrorWithPostInfo.html#method.from
+                                    DispatchError::into(DispatchError) +                                https://docs.substrate.io/rustdocs/latest/frame_support/dispatch/enum.DispatchError.html#method.into
+                                        DispatchError::From(DispatchError)                              https://docs.substrate.io/rustdocs/latest/frame_support/dispatch/enum.DispatchError.html#method.from-7
+                            */
+                            transfer_function.domain_state.add_steps(Cost::Concrete(3));
+                        }
+                    },
+                    _ => {
+                        let ty_path = callee_info.substs_ref.type_at(0).to_string();
+                        let arg_ty_path = callee_info.substs_ref.type_at(1).to_string();
+                        let normalized_fn_path = format!("{}::from_residual({})", ty_path, arg_ty_path);
+                        transfer_function
+                            .domain_state
+                            .add_steps(Cost::Symbolic(Symbolic::TimeOf(normalized_fn_path)));
+                    }
+                }
             }
             "std::ops::Deref::deref" => {
-                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                let ty_path = callee_info
+                    .substs_ref
+                    .type_at(0)
+                    .sort_string(transfer_function.tcx)
+                    .into_owned();
+
+                match ty_path.as_str() {
+                    "struct `frame_support::BoundedVec`" => {
+                        // Account for function call                                                    https://docs.substrate.io/rustdocs/latest/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.deref
+                        transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                    }
+                    _ => {
+                        let ty_path = callee_info.substs_ref.type_at(0).to_string();
+                        let normalized_fn_path = ty_path + "::deref()";
+                        transfer_function
+                            .domain_state
+                            .add_steps(Cost::Symbolic(Symbolic::TimeOf(normalized_fn_path)));
+                    }
+                }
             }
             "std::ops::Mul::mul" => {
-                println!("{} --- {:?}", path, callee_info.substs_ref);
-                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                let mul_ty = transfer_function
+                    .local_types
+                    .borrow()
+                    .get(callee_info.args[0].place().unwrap().local)
+                    .unwrap()
+                    .to_string();
+
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::TimeOf(format!("{}::mul", mul_ty))));
             }
             _ => {
                 unimplemented!("{} --- {:?}", path, callee_info.func);
@@ -92,9 +167,14 @@ pub(crate) mod std_cmp_specs {
         let path = transfer_function
             .tcx
             .def_path_str(callee_info.callee_def_id);
-        let path = path.as_str();
-        println!("{} --- {:?}", path, callee_info.substs_ref);
-        transfer_function.domain_state.add_steps(Cost::Concrete(1));
+        let func_name = path.split("::").last().unwrap();
+        let ty = callee_info.substs_ref.type_at(0).to_string();
+        transfer_function
+            .domain_state
+            .add_steps(Cost::Symbolic(Symbolic::TimeOf(format!(
+                "{}::cmp::{}",
+                ty, func_name
+            ))));
     }
 }
 
@@ -114,12 +194,80 @@ pub(crate) mod std_convert_specs {
         let path = path.as_str();
         match path {
             "std::convert::Into::into" => {
-                println!("{} --- {:?}", path, callee_info.substs_ref);
-                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                let ty_path_from = callee_info.substs_ref.type_at(0).to_string();
+                let ty_path_from = ty_path_from.as_str();
+
+                let ty_path_into = callee_info.substs_ref.type_at(1).to_string();
+                let ty_path_into = ty_path_into.as_str();
+
+                match (ty_path_from, ty_path_into) {
+                    ("std::option::Option<u64>", "frame_support::dispatch::PostDispatchInfo") => {
+                        /* Account for function call +                                              https://doc.rust-lang.org/std/option/enum.Option.html#method.into
+                            PostDispatchInfo::from(Option<u64>)                                     https://docs.substrate.io/rustdocs/latest/frame_support/weights/struct.PostDispatchInfo.html#method.from-2
+                                Pays::default                                                       https://docs.substrate.io/rustdocs/latest/frame_support/weights/enum.Pays.html#method.default
+                        **/
+                        transfer_function.domain_state.add_steps(Cost::Concrete(3));
+                    }
+                    _ => {
+                        let normalized_fn_path =
+                            format!("{}::into({})", ty_path_from, ty_path_into);
+                        transfer_function
+                            .domain_state
+                            .add_steps(Cost::Symbolic(Symbolic::TimeOf(normalized_fn_path)));
+                    }
+                }
             }
             "std::convert::From::from" => {
-                println!("{} --- {:?}", path, callee_info.substs_ref);
-                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                let ty_path_from = callee_info.substs_ref.type_at(1).to_string();
+                let ty_path_from = ty_path_from.as_str();
+
+                let ty_path_into = callee_info.substs_ref.type_at(0).to_string();
+                let ty_path_into = ty_path_into.as_str();
+
+                match (ty_path_from, ty_path_into) {
+                    ("pallet::Error<T>", "sp_runtime::DispatchError") => {
+                        // call "index"
+                        transfer_function
+                            .domain_state
+                            .add_steps(Cost::Symbolic(Symbolic::TimeOf(
+                                "PalletInfo::index()".to_string(),
+                            )));
+                        // call "expect" https://doc.rust-lang.org/nightly/core/option/enum.Option.html#method.expect /!\ INLINED
+                        //      call to "expect_failed", if so, calls panic!s
+                        transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                        // call "from"
+                        /* Code generated by the pallet macros
+                            impl<T: Config> From<Error<T>> for frame_support::sp_runtime::DispatchError {
+                                fn from(err: Error<T>) -> Self {
+                                    let index = < < T as frame_system :: Config > :: PalletInfo as frame_support :: traits :: PalletInfo > :: index :: < Pallet < T > > () . expect ("Every active module has an index in the runtime; qed") as u8 ;
+                                    frame_support::sp_runtime::DispatchError::Module(
+                                        frame_support::sp_runtime::ModuleError {
+                                            index,
+                                            error: err.as_u8(),
+                                            message: Some(err.as_str()),
+                                        },
+                                    )
+                                }
+                            }
+                        */
+                        transfer_function.domain_state.add_steps(Cost::Concrete(1));
+
+                        // call "as_u8" for pallet::Error
+                        // it is a simple pattern matching, mapping to a u8
+                        transfer_function.domain_state.add_steps(Cost::Concrete(1));
+
+                        // call "as_str" for pallet::Error
+                        // it is a simple pattern matching, mapping to a string
+                        transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                    }
+                    _ => {
+                        let normalized_fn_path =
+                            format!("{}::from({})", ty_path_into, ty_path_from);
+                        transfer_function
+                            .domain_state
+                            .add_steps(Cost::Symbolic(Symbolic::TimeOf(normalized_fn_path)));
+                    }
+                }
             }
             _ => {
                 unimplemented!("{} --- {:?}", path, callee_info.func);
@@ -144,7 +292,23 @@ pub(crate) mod std_default_specs {
         let path = path.as_str();
         match path {
             "std::default::Default::default" => {
-                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                let ty_path = callee_info.substs_ref.type_at(0).to_string();
+
+                match ty_path.as_str() {
+                    "types::IdentityFields" => {
+                        /* Account for function call /!\ INLINED +                                  https://docs.substrate.io/rustdocs/latest/pallet_identity/struct.IdentityFields.html#method.default
+                            BitFlags::default /!\ INLINED                                           https://docs.rs/enumflags2/latest/enumflags2/struct.BitFlags.html#method.default
+                            -> no cost
+                        **/
+                    }
+                    _ => {
+                        let ty_path = callee_info.substs_ref.type_at(0).to_string();
+                        let normalized_fn_path = ty_path + "::default()";
+                        transfer_function
+                            .domain_state
+                            .add_steps(Cost::Symbolic(Symbolic::TimeOf(normalized_fn_path)));
+                    }
+                }
             }
             _ => {
                 unimplemented!("{} --- {:?}", path, callee_info.func);
@@ -214,7 +378,7 @@ pub(crate) mod std_slice_specs {
 pub(crate) mod frame_system_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, TransferFunction},
-        cost_language::Cost,
+        cost_language::{Cost, Symbolic},
     };
 
     pub(crate) fn frame_system_dispatch<'tcx>(
@@ -227,8 +391,18 @@ pub(crate) mod frame_system_specs {
         let path = path.as_str();
         match path {
             "frame_system::ensure_signed" => {
-                println!("{} --- {:?}", path, callee_info.substs_ref);
-                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                // call "ensure_signed" https://docs.substrate.io/rustdocs/latest/frame_system/fn.ensure_signed.html
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::TimeOf(format!(
+                        "ensure_signed({})",
+                        transfer_function
+                            .local_types
+                            .borrow()
+                            .get(callee_info.args[0].place().unwrap().local)
+                            .unwrap()
+                            .to_string()
+                    ))))
             }
             _ => unimplemented!("{}", path),
         }
@@ -238,7 +412,7 @@ pub(crate) mod frame_system_specs {
 pub(crate) mod frame_support_traits_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, TransferFunction},
-        cost_language::Cost,
+        cost_language::{Cost, Symbolic},
     };
 
     pub(crate) fn frame_support_traits_dispatch<'tcx>(
@@ -251,19 +425,44 @@ pub(crate) mod frame_support_traits_specs {
         let path = path.as_str();
         match path {
             "frame_support::traits::EnsureOrigin::ensure_origin" => {
-                // https://docs.substrate.io/rustdocs/latest/frame_support/traits/trait.EnsureOrigin.html#method.ensure_origin
+                /* Account for function call +                                                         https://docs.substrate.io/rustdocs/latest/frame_support/traits/trait.EnsureOrigin.html#method.ensure_origin
+                    try_origin
+                */
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                account_for_try_origin(transfer_function, callee_info);
             }
             "frame_support::traits::EnsureOrigin::try_origin" => {
-                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                account_for_try_origin(transfer_function, callee_info);
             }
             "frame_support::traits::Get::get" => {
-                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::TimeOf(format!(
+                        "{}::get()",
+                        callee_info.substs_ref.type_at(0).to_string()
+                    ))));
             }
             _ => {
                 unimplemented!("{} --- {:?}", path, callee_info.func);
             }
         }
+    }
+
+    fn account_for_try_origin<'tcx>(
+        transfer_function: &mut TransferFunction,
+        callee_info: CalleeInfo<'tcx>,
+    ) {
+        let ty_high_order = callee_info.substs_ref.type_at(0).to_string();
+        let ty_arg = transfer_function.local_types.borrow()
+            [callee_info.args[0].place().unwrap().local]
+            .to_string();
+
+        transfer_function
+            .domain_state
+            .add_steps(Cost::Symbolic(Symbolic::TimeOf(format!(
+                "{}::try_origin({})",
+                ty_high_order, ty_arg
+            ))));
     }
 }
 
@@ -286,10 +485,22 @@ pub(crate) mod sp_runtime_traits_specs {
 
         match path {
             "sp_runtime::traits::Zero::zero" => {
-                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                let ty_path = callee_info.substs_ref.type_at(0).to_string();
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::TimeOf(format!(
+                        "{}::zero()",
+                        ty_path
+                    ))));
             }
             "sp_runtime::traits::StaticLookup::lookup" => {
-                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                let ty_path = callee_info.substs_ref.type_at(0).to_string();
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::TimeOf(format!(
+                        "lookup({})",
+                        ty_path
+                    ))));
 
                 // get the destination type to know what type is read from storage
                 // return type is Result<read_type, error_type>
@@ -321,10 +532,13 @@ pub(crate) mod sp_runtime_traits_specs {
 
 pub(crate) mod frame_support_bounded_vec_specs {
 
+    use rustc_index::vec::IndexVec;
+
     use crate::analysis::{
         cost_analysis::{CalleeInfo, TransferFunction},
         cost_language::{Cost, Symbolic},
     };
+    use rustc_middle::ty::TyKind;
 
     pub(crate) fn frame_support_bounded_vec_dispatch<'tcx>(
         transfer_function: &mut TransferFunction,
@@ -338,33 +552,133 @@ pub(crate) mod frame_support_bounded_vec_specs {
         match path {
             "frame_support::BoundedVec::<T, S>::try_push" => {
                 // call try_push                                                    https://docs.substrate.io/rustdocs/latest/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.try_push
-                // upperbound grow amortized by max size
-
-                // extract the name of the type for readability
-                let ty_name = callee_info.substs_ref.type_at(1).to_string();
-                let ty_name = ty_name.split("::").last().unwrap();
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                //      call to len() /!\ INLINED
+                //      call to Self::bound
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                //          call to substs_ref[1]::get
                 transfer_function
                     .domain_state
-                    .add_steps(Cost::Symbolic(Symbolic::BigO(format!(
+                    .add_steps(Cost::Symbolic(Symbolic::TimeOf(format!(
                         "{}::get()",
-                        ty_name
+                        callee_info.substs_ref.type_at(1)
                     ))));
-            }
-            "frame_support::BoundedVec::<T, S>::get_mut" => {
+                //      comparison
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                //      call to push /!\ INLINED
+                //          call to self.buf.capacity /!\ INLINED
+                //              call to size_of /!\ INLINED
+                //              comparison
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                //      comparison
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+
+                //      call reserve_for_push
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                //          call grow_amortized(additional=1)
+                //TODO: upperbound by MAX SIZE of vector
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::TimeOf(
+                        "grow_amortized".to_string(),
+                    )));
+                //          call handle_reserve /!\ INLINED
+                //      call as_mut_ptr /!\ INLINED
+                //          all underlying calls are inlined
+                //      call add /!\ INLINED
+                //          all underlying calls are inlined until "intrisics::offset", could not go further
+                //              len may be at most substs_ref[1]::get
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::TimeOf(format!(
+                        "intrisics::offset({}::get())",
+                        callee_info.substs_ref.type_at(1)
+                    ))));
+                //      call write /!\ INLINED
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::TimeOf(format!(
+                        "ptr::write({})",
+                        callee_info.substs_ref.type_at(0)
+                    ))));
+                //      addition
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
+            "frame_support::BoundedVec::<T, S>::get_mut" => {
+                // call "get_mut"   https://docs.substrate.io/rustdocs/latest/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.get_mut
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                //      call "Vec::get_mut" https://doc.rust-lang.org/nightly/std/vec/struct.Vec.html#method.get_mut /!\ INLINED
+                //      which resolves to "slice::get_mut" https://doc.rust-lang.org/nightly/std/primitive.slice.html#method.get_mut
+                //      the upcoming call depends on the Index type
+                let index_type = callee_info
+                    .substs_ref
+                    .last()
+                    .unwrap()
+                    .expect_ty()
+                    .to_string();
+
+                match index_type.as_str() {
+                    "usize" => {
+                        // https://doc.rust-lang.org/nightly/std/primitive.slice.html#method.get_mut-5
+                        //      call to "len" /!\ INLINED https://doc.rust-lang.org/nightly/std/primitive.slice.html#method.len
+                        //      comparison
+                        transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                        //      call to "get_unchecked_mut" /!\ INLINED https://doc.rust-lang.org/nightly/std/primitive.slice.html#method.get_unchecked_mut-5
+                        //          call to "len" /!\ INLINED https://doc.rust-lang.org/nightly/std/primitive.slice.html#method.len
+                        //          comparison
+                        transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                        //      call as_mut_ptr /!\ INLINED
+                        //          all underlying calls are inlined
+                        //      call add /!\ INLINED
+                        //          all underlying calls are inlined until "intrisics::offset", could not go further
+                        //              len may be at most substs_ref[1]::get
+                        transfer_function
+                            .domain_state
+                            .add_steps(Cost::Symbolic(Symbolic::TimeOf(format!(
+                                "intrisics::offset({}::get())",
+                                callee_info.substs_ref.type_at(1)
+                            ))));
+                    }
+                    _ => {
+                        todo!("get_mut for {:?}", index_type)
+                    }
+                }
+            }
             "frame_support::BoundedVec::<T, S>::retain" => {
-                // call "retain" https://docs.substrate.io/rustdocs/latest/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.retain
-                //TODO: multiply by cost of closure
-                // extract the name of the type for readability
-                let ty_name = callee_info.substs_ref.type_at(1).to_string();
-                let ty_name = ty_name.split("::").last().unwrap();
-                transfer_function
-                    .domain_state
-                    .add_steps(Cost::Symbolic(Symbolic::BigO(format!(
-                        "{}::get()",
-                        ty_name
-                    ))));
+                /*// call "retain" https://docs.substrate.io/rustdocs/latest/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.retain
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                //      call "retain" https://doc.rust-lang.org/nightly/std/vec/struct.Vec.html#method.retain
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                //          call "retain_mut" https://doc.rust-lang.org/nightly/std/vec/struct.Vec.html#method.retain_mut
+                //              get cost of running the closure
+                let closure_def_id = match transfer_function
+                .local_types
+                .borrow()
+                .get(callee_info.args[1].place().unwrap().local)
+                .unwrap()
+                .kind() {
+                    TyKind::Closure(def_id, _) => *def_id,
+                    _ => unreachable!("Argument can only be a TyKind::Closure")
+                };
+
+                let key = (closure_def_id, IndexVec::new());
+
+                let closure_cost = if transfer_function.summaries.borrow().contains_key(&key) {
+                    let summaries = transfer_function.summaries.borrow();
+                    let summary = summaries.get(&key).unwrap();
+
+                    match summary {
+                        Some(cost) => cost,
+                        None => unreachable!("Cannot have recursive closures"),
+                    }
+
+                } else {
+                    unreachable!("Closure must have been analyzed."); 
+                };
+
+                transfer_function.domain_state.inter_join(closure_cost.)
+                
+                panic!();*/
             }
             _ => println!("{}", path),
         }
@@ -504,71 +818,105 @@ pub(crate) mod storage_actions_specs {
                 match Self::from(action_short) {
                     StorageValueActions::Append => todo!(),
                     StorageValueActions::DecodeLen => todo!(),
-                    StorageValueActions::Exists => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.exists
-                        steps = steps + Cost::Concrete(1);
-                        // storage access
-                        reads = reads + field.get_size(&tcx);
-                    }
+                    StorageValueActions::Exists => todo!(),
                     StorageValueActions::Get => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.get
-                        // decoding
+                        steps = steps + Cost::Concrete(1);
+                        // compute storage key
                         steps = steps
-                            + Cost::Symbolic(Symbolic::BigO(format!("{}", substs_ref.type_at(1))));
-                        // storage access
+                            + Cost::Symbolic(Symbolic::TimeOf(format!(
+                                "{}::storage_value_final_key()",
+                                tcx.def_path_str(field.def_id)
+                            )));
+                        // get data from storage
+                        steps = steps
+                            + Cost::Symbolic(Symbolic::TimeOf(format!(
+                                "sp_io::storage::get({:?})",
+                                substs_ref[1]
+                            )));
                         reads = reads + field.get_size(&tcx);
+                        // decode the whole data
+                        steps = steps
+                            + Cost::Symbolic(Symbolic::TimeOf(format!(
+                                "decode({:?})",
+                                substs_ref[1]
+                            )));
+                        // from_optional_to_query_value
+                        steps = steps + Cost::Concrete(1);
                     }
                     StorageValueActions::Kill => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.kill
+                        // call "kill"
                         steps = steps + Cost::Concrete(1);
+                        // compute storage key
+                        steps = steps
+                            + Cost::Symbolic(Symbolic::TimeOf(format!(
+                                "{}::storage_value_final_key()",
+                                tcx.def_path_str(field.def_id)
+                            )));
+                        steps = steps
+                            + Cost::Symbolic(Symbolic::TimeOf("unhashed::kill()".to_string()));
                         // Write None to database
                         writes = writes + Cost::Concrete(1);
                     }
                     StorageValueActions::Mutate => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.mutate
-                        // decoding/encoding
-                        steps = steps
-                            + Cost::Symbolic(Symbolic::BigO(format!("{}", substs_ref.type_at(1))));
+                        // call "try_mutate"
+                        let try_mutate_cost = Self::get_access_cost(tcx, field, "try_mutate")?;
 
-                        // storage access
-                        reads = reads + field.get_size(&tcx);
-                        // storage access
-                        writes = writes + field.get_size(&tcx);
+                        reads = reads + try_mutate_cost.reads;
+                        writes = writes + try_mutate_cost.writes;
+                        steps = steps + try_mutate_cost.steps;
+
+                        // call to "expect" https://doc.rust-lang.org/nightly/core/result/enum.Result.html#method.expect /!\ INLINED
+                        //      call to "unwrap_failed", if so, calls panic!s
                     }
                     StorageValueActions::Put => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.put
+                        // call "put"
+                        steps = steps + Cost::Concrete(1);
+                        // compute storage key
                         steps = steps
-                            + Cost::Symbolic(Symbolic::BigO(format!("{}", substs_ref.type_at(1))));
-                        // storage access
+                            + Cost::Symbolic(Symbolic::TimeOf(format!(
+                                "{}::storage_value_final_key()",
+                                tcx.def_path_str(field.def_id)
+                            )));
+                        // call unhashed::put
+                        steps = steps + Cost::Concrete(1);
+                        // encode the value
+                        steps = steps
+                            + Cost::Symbolic(Symbolic::TimeOf(format!(
+                                "encode({:?})",
+                                substs_ref[1]
+                            )));
+                        // write data to storage
+                        steps = steps
+                            + Cost::Symbolic(Symbolic::TimeOf(format!(
+                                "sp_io::storage::set({:?})",
+                                substs_ref[1]
+                            )));
                         writes = writes + field.get_size(&tcx);
                     }
-                    StorageValueActions::Set => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.set
-                        // encoding
-                        steps = steps
-                            + Cost::Symbolic(Symbolic::BigO(format!("{}", substs_ref.type_at(1))));
-                        // storage access
-                        writes = writes + field.get_size(&tcx);
-                    }
+                    StorageValueActions::Set => todo!(),
                     StorageValueActions::Take => todo!(),
                     StorageValueActions::Translate => todo!(),
                     StorageValueActions::TryAppend => todo!(),
-                    StorageValueActions::TryGet => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.try_get
-                        steps = steps
-                            + Cost::Symbolic(Symbolic::BigO(format!("{}", substs_ref.type_at(1))));
-                        reads = reads + field.get_size(&tcx);
-                    }
+                    StorageValueActions::TryGet => todo!(),
                     StorageValueActions::TryMutate => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.try_mutate
-                        // decoding/encoding
-                        steps = steps
-                            + field.get_size(&tcx);
+                        // call try_mutate https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.try_mutate
+                        steps = steps + Cost::Concrete(1);
+                        // call get https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/value.rs#63
+                        let get_access_cost = Self::get_access_cost(tcx, field, "get")?;
+                        reads = reads + get_access_cost.reads;
+                        writes = writes + get_access_cost.writes;
+                        steps = steps + get_access_cost.steps;
+                        // apply closure (done in analyze_storage_access)
+                        // "if" branch is more costly, account for call to is_ok()
+                        steps = steps + Cost::Concrete(1);
+                        // call from_query_to_optional_value
+                        steps = steps + Cost::Concrete(1);
 
-                        // storage access
-                        reads = reads + field.get_size(&tcx);
-                        // storage access
-                        writes = writes + field.get_size(&tcx);
+                        // "put" has greater cost than "kill"
+                        let put_access_cost = Self::get_access_cost(tcx, field, "put")?;
+                        reads = reads + put_access_cost.reads;
+                        writes = writes + put_access_cost.writes;
+                        steps = steps + put_access_cost.steps;
                     }
                 };
                 Some(AccessCost::new(reads, writes, steps))

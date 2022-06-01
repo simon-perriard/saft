@@ -39,6 +39,7 @@ impl AnalysisState {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct CalleeInfo<'tcx> {
     pub location: Location,
     pub func: Operand<'tcx>,
@@ -130,10 +131,10 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
 }
 
 pub(crate) struct TransferFunction<'tcx, 'inter, 'intra> {
-    tcx: TyCtxt<'tcx>,
+    pub tcx: TyCtxt<'tcx>,
     pallet: &'inter Pallet,
     events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
-    summaries: Rc<RefCell<Summary<'tcx>>>,
+    pub summaries: Rc<RefCell<Summary<'tcx>>>,
     def_id: DefId,
     pub local_types: Rc<RefCell<LocalTypes<'tcx>>>,
     pub domain_state: &'intra mut CostDomain,
@@ -186,17 +187,17 @@ where
             // further analysis.
             self.analyze_deposit_event(callee_info);
         } else {
-            self.t_fn_call_analysis(callee_info);
+            self.t_fn_call_analysis(callee_info, true);
         }
     }
 
-    fn t_fn_call_analysis(&mut self, callee_info: CalleeInfo<'tcx>) {
-        if self.summaries.borrow_mut().contains_key(&(
+    fn t_fn_call_analysis(&mut self, callee_info: CalleeInfo<'tcx>, account_for_cost_now: bool) {
+        if self.summaries.borrow().contains_key(&(
             callee_info.callee_def_id,
             (*self.local_types.borrow()).clone(),
         )) {
             // We already have the summary for this function, retrieve it and return
-            let summaries = self.summaries.borrow_mut();
+            let summaries = self.summaries.borrow();
             let summary = summaries
                 .get(&(
                     callee_info.callee_def_id,
@@ -206,7 +207,9 @@ where
 
             if let Some(summary) = summary {
                 // Add the cost of calling the target function
-                self.domain_state.inter_join(summary);
+                if account_for_cost_now {
+                    self.domain_state.inter_join(summary);
+                }
             } else {
                 // we are in a recursive call, just ignore it
                 println!("Recursive calls not supported.");
@@ -219,8 +222,41 @@ where
             self.analyze_closure_call(callee_info);
         } else {
             // No MIR available, but symbolically account for the call cost
-            dispatch_to_specifications(self.tcx, self, callee_info);
+
+            // Check if any closure is present in the arguments.
+            // If so, analyze it but do not account for the cost yet, as we don't know
+            // how man times it will be run
+            for arg in callee_info.args.iter() {
+                let arg_ty_kind = self
+                    .local_types
+                    .borrow()
+                    .get(arg.place().unwrap().local)
+                    .unwrap()
+                    .kind();
+
+                match arg_ty_kind {
+                    TyKind::Closure(closure_def_id, _) => {
+                        self.analyze_closure_as_argument(callee_info.clone(), *closure_def_id, false);
+                    }
+                    _ => (),
+                }
+            }
+
+            dispatch_to_specifications(self, callee_info);
         }
+    }
+
+    fn analyze_closure_as_argument(&mut self, callee_info: CalleeInfo<'tcx>, closure_def_id: DefId, account_for_cost_now: bool) {
+        let closure_info = CalleeInfo {
+            callee_def_id: closure_def_id,
+            // precise enough args type will be inferred by the closure body
+            args: vec![],
+            // cannot keep the storage access return type as it is not the same as closure's
+            // precise enough args type will be inferred by the closure body
+            destination: None,
+            ..callee_info
+        };
+        self.t_fn_call_analysis(closure_info, account_for_cost_now);
     }
 
     fn analyze_storage_access(&mut self, callee_info: CalleeInfo<'tcx>, access_cost: AccessCost) {
@@ -228,16 +264,7 @@ where
             callee_info.substs_ref.last().unwrap().expect_ty().kind()
         {
             // Storage access functions may have closures as parameters, we need to analyze them
-            let closure_info = CalleeInfo {
-                callee_def_id: *closure_def_id,
-                // precise enough args type will be inferred by the closure body
-                args: vec![],
-                // cannot keep the storage access return type as it is not the same as closure's
-                // precise enough args type will be inferred by the closure body
-                destination: None,
-                ..callee_info
-            };
-            self.t_fn_call_analysis(closure_info);
+            self.analyze_closure_as_argument(callee_info, *closure_def_id, true);
         }
 
         // Account for the cost of calling the storage access function
@@ -420,8 +447,8 @@ where
         {
             TyKind::Closure(closure_def_id, _) => Some(*closure_def_id),
             TyKind::FnDef(def_id, _) => Some(*def_id),
-            TyKind::Ref(_, _, _) => None,
-            TyKind::Projection(_) => None,
+            TyKind::Ref(_, _, _) => None,  //No further analysis needed
+            TyKind::Projection(_) => None, //No further analysis needed
             _ => unreachable!(),
         };
 
@@ -434,7 +461,7 @@ where
                 args: closure_args,
                 ..callee_info
             };
-            self.t_fn_call_analysis(closure_info);
+            self.t_fn_call_analysis(closure_info, true);
         }
     }
 

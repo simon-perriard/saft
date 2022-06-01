@@ -16,6 +16,7 @@ pub(crate) enum Symbolic {
     ValueOf(String),
     SizeOf(String),
     TimeOf(String),
+    BigO(String),
 }
 
 impl Symbolic {
@@ -30,6 +31,7 @@ impl fmt::Display for Symbolic {
             Symbolic::ValueOf(s) => write!(f, "VALUEOF({})", s),
             Symbolic::SizeOf(s) => write!(f, "SIZEOF({})", s),
             Symbolic::TimeOf(s) => write!(f, "TIMEOF({})", s),
+            Symbolic::BigO(s) => write!(f, "O({})", s),
         }
     }
 }
@@ -147,7 +149,7 @@ impl Cost {
             unreachable!();
         }
 
-        // Remove common elements from chain_1
+        // Remove common elements from chain_1 and chain_2
         chain_1.drain_filter(|cost_1| {
             let res = chain_2.contains(cost_1);
             if res {
@@ -274,7 +276,7 @@ impl fmt::Display for Cost {
         match self {
             Self::Concrete(x) => write!(f, "{}", x),
             Self::Symbolic(symbolic) => write!(f, "{}", symbolic),
-            Self::Add(a, b) => write!(f, "{} + {}", a, b),
+            Self::Add(a, b) => write!(f, "{}\n + \n{}", a, b),
             Self::SymbolicMul(a, b) => {
                 if b.pretty_print_need_parenthesis() {
                     write!(f, "{} * ({})", a, b)
@@ -283,7 +285,7 @@ impl fmt::Display for Cost {
                 }
             }
             Self::ConcreteMul(a, b) => write!(f, "{} * ({})", a, b),
-            Self::Max(a, b) => write!(f, "MAX({}, {})", a, b),
+            Self::Max(a, b) => write!(f, "MAX(\n\t{}\n , \n\t{}\n)", a, b),
         }
     }
 }
