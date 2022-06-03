@@ -7,18 +7,67 @@ use crate::analysis::events_variants_domain::EventVariantsDomain;
 use crate::analysis::specifications::dispatch_to_specifications;
 use rustc_index::vec::IndexVec;
 use rustc_middle::mir::{
-    traversal::*, visit::*, BasicBlock, Body, Local, Location, Operand, Place, ProjectionElem,
-    Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
+    self, traversal::*, visit::*, BasicBlock, Body, Local, Location, Operand, Place,
+    ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{subst::SubstsRef, Ty, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
-use rustc_span::def_id::DefId;
+use rustc_span::def_id::{DefId, LocalDefId};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::vec;
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct LocalType<'tcx> {
+    ty: Ty<'tcx>,
+    fields: Vec<Ty<'tcx>>,
+}
 
-pub(crate) type LocalTypes<'tcx> = IndexVec<Local, Ty<'tcx>>;
+impl<'tcx> LocalType<'tcx> {
+    pub fn has_fields(&self) -> bool {
+        !self.fields.is_empty()
+    }
+
+    pub fn get_ty(&self) -> Ty<'tcx> {
+        self.ty
+    }
+
+    pub fn set_ty(&mut self, ty: Ty<'tcx>) {
+        self.ty = ty;
+    }
+
+    pub fn get_field(&self, field: mir::Field) -> Option<&Ty<'tcx>> {
+        self.fields.get(field.index())
+    }
+
+    pub fn set_field(&mut self, field: mir::Field, ty: Ty<'tcx>) {
+        self.fields.remove(field.index());
+        self.fields.insert(field.index(), ty);
+    }
+
+    pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
+        let fields = match ty.kind() {
+            TyKind::Adt(adt_def, substs) => adt_def
+                .all_fields()
+                .map(|field| field.ty(tcx, substs))
+                .collect::<Vec<_>>(),
+            TyKind::Closure(closure_def_id, _) if tcx.has_typeck_results(closure_def_id) => {
+                let typeck_res = tcx.typeck(LocalDefId {
+                    local_def_index: closure_def_id.index,
+                });
+                typeck_res
+                    .closure_min_captures_flattened(*closure_def_id)
+                    .map(|captured_place| captured_place.place.ty())
+                    .collect::<Vec<_>>()
+            }
+            _ => Vec::new(),
+        };
+
+        LocalType { ty, fields }
+    }
+}
+
+pub(crate) type LocalTypes<'tcx> = IndexVec<Local, LocalType<'tcx>>;
 pub(crate) type Summary<'tcx> = HashMap<(DefId, LocalTypes<'tcx>), Option<CostDomain>>;
 
 #[derive(PartialEq, Eq)]
@@ -92,12 +141,12 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
         let mut local_types: LocalTypes<'tcx> = body
             .local_decls
             .iter()
-            .map(|local_decl| local_decl.ty)
+            .map(|local_decl| LocalType::new(local_decl.ty, tcx))
             .collect();
 
         // Replace with more precise types from local_types_outter
-        for (local, ty) in local_types_outter.iter_enumerated() {
-            local_types[local] = *ty;
+        for (local, local_type_outter) in local_types_outter.iter_enumerated() {
+            local_types[local] = local_type_outter.clone();
         }
 
         let local_types = Rc::new(RefCell::new(local_types));
@@ -163,6 +212,10 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
             analysis_state,
         }
     }
+
+    pub fn get_local_type(&self, place: &Place) -> LocalType<'tcx> {
+        (*self.local_types.borrow().get(place.local).unwrap()).clone()
+    }
 }
 
 impl<'visitor, 'tcx> TransferFunction<'tcx, '_, '_>
@@ -175,6 +228,7 @@ where
         if let Some(access_cost) =
             self.is_storage_call(callee_info.callee_def_id, callee_info.substs_ref)
         {
+            // TODO: analyze closure before, and give it to storage access specs
             // Filtering storage access, we need to catch it now otherwise we lose information about which
             // field is accessed.
             self.analyze_storage_access(callee_info, access_cost);
@@ -224,19 +278,41 @@ where
             // If so, analyze it but do not account for the cost yet, as we don't know
             // how man times it will be run
             for arg in callee_info.args.iter() {
-                let arg_ty_kind = self
-                    .local_types
-                    .borrow()
-                    .get(
-                        arg.place()
-                            .expect("Call unwinds, this is not allowed for substrate chains")
-                            .local,
-                    )
-                    .unwrap()
-                    .kind();
+                match arg {
+                    Operand::Move(place) | Operand::Copy(place) => {
+                        let arg_ty_kind =
+                            self.get_local_type(place).get_ty().kind();
 
-                if let TyKind::Closure(closure_def_id, _) = arg_ty_kind {
-                    self.analyze_closure_as_argument(callee_info.clone(), *closure_def_id, false);
+                        if let TyKind::Closure(closure_def_id, substs_ref) = arg_ty_kind {
+
+                            /*println!();
+
+                            for (i, t) in self.local_types.borrow().iter_enumerated() {
+                                println!("{:?} --- {}", i, t);
+                            }
+
+                            println!();
+                            let typeck_res = self.tcx.typeck(LocalDefId{local_def_index: closure_def_id.index});
+                            for cap in typeck_res.closure_min_captures_flattened(*closure_def_id) {
+                                println!("{:?}", cap);
+                            }
+                            println!("{:?}", closure_def_id);
+                            println!("CLOSURE SUBSTS REF");
+                            for sub in substs_ref.iter() {
+                                println!("{:?}", sub);
+                            }
+                            println!();
+                            self.analyze_closure_as_argument(
+                                callee_info.clone(),
+                                *closure_def_id,
+                                false,
+                            );*/
+                        }
+                    }
+                    Operand::Constant(_) if let Some((const_fn_def_id, _)) = arg.const_fn_def() => {
+                        self.analyze_closure_as_argument(callee_info.clone(), const_fn_def_id, false)
+                    },
+                    _ => ()
                 }
             }
 
@@ -250,8 +326,11 @@ where
         closure_def_id: DefId,
         account_for_cost_now: bool,
     ) {
-        //println!("{:?}", self.local_types);
-
+        /*println!(
+            "{} --- {:?}",
+            self.tcx.def_path_str(callee_info.callee_def_id),
+            self.local_types
+        );*/
         let closure_info = CalleeInfo {
             callee_def_id: closure_def_id,
             // precise enough args type will be inferred by the closure body
@@ -369,7 +448,7 @@ where
         let mut local_types_outter = LocalTypes::new();
         // Local 0_ will be return value, args start at 1_
         if let Some((place_to, _)) = callee_info.destination {
-            local_types_outter.push(self.local_types.borrow()[place_to.local]);
+            local_types_outter.push(self.local_types.borrow()[place_to.local].clone());
         } else {
             // If none, the call necessarily diverges.
             // cf. https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/terminator/enum.TerminatorKind.html#variant.Call
@@ -378,21 +457,22 @@ where
         for arg in callee_info.args {
             match &arg {
                 Operand::Copy(place) | Operand::Move(place) => {
-                    local_types_outter.push(*self.local_types.borrow().get(place.local).unwrap());
+                    local_types_outter.push(self.get_local_type(place));
                 }
                 Operand::Constant(constant) => {
                     if let Some((def_id, substs_ref)) = arg.const_fn_def() {
                         // Constant function,
                         // cf. https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/enum.Operand.html#method.const_fn_def
-                        local_types_outter.push(self.tcx.mk_fn_def(def_id, substs_ref));
+                        local_types_outter.push(LocalType::new(
+                            self.tcx.mk_fn_def(def_id, substs_ref),
+                            self.tcx,
+                        ));
                     } else {
-                        local_types_outter.push(constant.ty());
+                        local_types_outter.push(LocalType::new(constant.ty(), self.tcx));
                     }
                 }
             };
         }
-
-        //println!("{} calls {} {:?}", self.tcx.def_path_str(self.def_id), self.tcx.def_path_str(callee_info.callee_def_id), local_types_outter);
 
         // Analyze the target function
         let mut results = CostAnalysis::new_with_init(
@@ -447,21 +527,22 @@ where
             .borrow()
             .get(callee_info.args[0].place().unwrap().local)
             .unwrap()
+            .get_ty()
             .kind()
         {
             TyKind::Closure(closure_def_id, _) => Some(*closure_def_id),
             TyKind::FnDef(def_id, _) => Some(*def_id),
             TyKind::Ref(_, _, _) => None,  //No further analysis needed
             TyKind::Projection(_) => None, //No further analysis needed
-            _ => unreachable!(
-                "{} --- {:?}",
-                self.tcx.def_path_str(self.def_id),
-                self.local_types
-                    .borrow()
-                    .get(callee_info.args[0].place().unwrap().local)
-                    .unwrap()
-                    .kind()
-            ),
+            _ => None,                     /*unreachable!(
+                                                "{} --- {:?}",
+                                                self.tcx.def_path_str(self.def_id),
+                                                self.local_types
+                                                    .borrow()
+                                                    .get(callee_info.type_args[0].place().unwrap().local)
+                                                    .unwrap()
+                                                    .kind()
+                                            )*/
         };
 
         if let Some(callee_def_id) = callee_def_id {
@@ -569,56 +650,78 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
     }
 
     fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {
-        let Statement { source_info, kind } = statement;
+        let Statement { kind, .. } = statement;
 
         match kind {
-            StatementKind::Assign(box (place_to, rvalue)) if let Rvalue::Use(operand) = rvalue && place_to.projection.is_empty() => {
-                self.visit_source_info(source_info);
-
+            StatementKind::Assign(box (place_to, r_value)) if let Rvalue::Use(operand) = r_value => {
                 match operand {
-                    Operand::Copy(place_from) |
-                    Operand::Move(place_from) => {
-
-                        // In case of move of copy, update with the most precise type from our type map
-
+                    Operand::Copy(place_from)
+                    | Operand::Move(place_from) => {
                         if place_from.projection.is_empty() {
-                            // Move or copy the whole place
-                            let place_from_ty = *self.local_types.borrow().get(place_from.local).unwrap();
-                            self.local_types.borrow_mut()[place_to.local] = place_from_ty;
+                            // Reflect the whole type from "place_from"
+                            let local_type_from = self.get_local_type(place_from);
+
+                            if place_to.projection.is_empty() {
+                                // Reflect the whole type from "place_from" to whole type of "place_to"
+                                self.local_types.borrow_mut()[place_to.local] = local_type_from;
+                            } else {
+                                // Reflect the whole type from "place_from" to the given field of "place_to"
+                                if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
+                                    && self.get_local_type(place_to).has_fields()
+                                    // Second condition is for types that are Adt or closures but no typeck result is available
+                                    // we cannot infer more precise type information for them
+                                {
+                                    self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from.get_ty());
+                                }
+                            }
                         } else {
-                            // We consider the last projection only
-                            //      cf. https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Place.html
-                            // and we only care if it's a field
-                            if let ProjectionElem::Field(_, ty) = place_from.projection.last().unwrap() {
-                                self.local_types.borrow_mut()[place_to.local] = *ty;
+                            // Reflect the type of the given field of "place_from"
+                            if let ProjectionElem::Field(field, _) = place_from.projection.last().unwrap()
+                                && self.get_local_type(place_from).has_fields()
+                                // Second condition is for types that are Adt or closures but no typeck result is available
+                                // we cannot infer more precise type information for them    
+                            {
+                                let local_type_from = LocalType::new(*self.get_local_type(place_from).get_field(*field).unwrap(), self.tcx);
+
+                                if place_to.projection.is_empty() {
+                                    // Reflect the type of the given field of "place_from" to whole type of "place_to"
+                                    self.local_types.borrow_mut()[place_to.local] = local_type_from;
+                                } else {
+                                    // Reflect the type of the given field of "place_from" to the given field of "place_to"
+                                    if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
+                                    && self.get_local_type(place_to).has_fields()
+                                    // Second condition is for types that are Adt or closures but no typeck result is available
+                                    // we cannot infer more precise type information for them
+                                    {
+                                        self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from.get_ty());
+                                    }
+                                }
                             }
                         }
-                    },
+                    }
                     Operand::Constant(_) => {
                         if let Some((def_id, substs_ref)) = operand.const_fn_def() {
                             // In case of constant function, update with the function type
-                            self.local_types.borrow_mut()[place_to.local] = self.tcx.mk_fn_def(def_id, substs_ref);
+                            self.local_types.borrow_mut()[place_to.local].set_ty(self.tcx.mk_fn_def(def_id, substs_ref));
                         } else if let Some(constant) = operand.constant() {
                             // In case of standard constant, update with its type
-                            self.local_types.borrow_mut()[place_to.local] = constant.ty();
+                            self.local_types.borrow_mut()[place_to.local].set_ty(constant.ty());
                         }
                     }
                 }
-            },
+            }
             _ => self.super_statement(statement, location),
         }
     }
 
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
-        let Terminator { source_info, kind } = terminator;
+        let Terminator { kind, .. } = terminator;
 
         match kind {
             TerminatorKind::Call {
                 func: Operand::Constant(c),
                 ..
             } if let TyKind::FnDef(target_def_id, substs) = c.ty().kind() => {
-                self.visit_source_info(source_info);
-
                 self.t_visit_fn_call(location);
             }
             _ => self.super_terminator(terminator, location),

@@ -375,6 +375,7 @@ pub(crate) mod frame_support_traits_specs {
                         fn_name
                     ))));
             }
+            "frame_support::traits::StoredMap::try_mutate_exists" => {}
             _ => {
                 unimplemented!("{} --- {:?}", path, callee_info.func);
             }
@@ -403,16 +404,20 @@ pub(crate) mod sp_runtime_traits_specs {
             "sp_runtime::traits::Zero::zero" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
+            "sp_runtime::traits::Zero::is_zero" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+            }
+            "sp_runtime::traits::One::one" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+            }
             "sp_runtime::traits::StaticLookup::lookup" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
 
                 // get the destination type to know what type is read from storage
                 // return type is Result<read_type, error_type>
                 let res = transfer_function
-                    .local_types
-                    .borrow()
-                    .get(callee_info.destination.unwrap().0.local)
-                    .unwrap()
+                    .get_local_type(&callee_info.destination.unwrap().0)
+                    .get_ty()
                     .kind();
                 let read_type = match res {
                     TyKind::Adt(_, substs_ref) => substs_ref.type_at(0),
@@ -421,6 +426,9 @@ pub(crate) mod sp_runtime_traits_specs {
                 transfer_function
                     .domain_state
                     .add_reads(Cost::Symbolic(Symbolic::SizeOf(read_type.to_string())));
+            }
+            "sp_runtime::traits::StaticLookup::unlookup" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
             "sp_runtime::traits::Saturating::saturating_add"
             | "sp_runtime::traits::Saturating::saturating_mul" => {
@@ -851,7 +859,7 @@ pub(crate) mod storage_actions_specs {
                         reads = reads + field.get_size(&tcx);
                         writes = writes + field.get_size(&tcx);
                     }
-                    StorageMapActions::TryMutateExists => todo!(),
+                    StorageMapActions::TryMutateExists => (),
                 };
                 Some(AccessCost::new(reads, writes, steps))
             }
