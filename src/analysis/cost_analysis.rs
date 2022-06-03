@@ -20,7 +20,7 @@ use std::vec;
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct LocalType<'tcx> {
     ty: Ty<'tcx>,
-    fields: Vec<Ty<'tcx>>,
+    fields: Vec<LocalType<'tcx>>,
 }
 
 impl<'tcx> LocalType<'tcx> {
@@ -36,20 +36,20 @@ impl<'tcx> LocalType<'tcx> {
         self.ty = ty;
     }
 
-    pub fn get_field(&self, field: mir::Field) -> Option<&Ty<'tcx>> {
+    pub fn get_field(&self, field: mir::Field) -> Option<&LocalType<'tcx>> {
         self.fields.get(field.index())
     }
 
-    pub fn set_field(&mut self, field: mir::Field, ty: Ty<'tcx>) {
+    pub fn set_field(&mut self, field: mir::Field, local_type: LocalType<'tcx>) {
         self.fields.remove(field.index());
-        self.fields.insert(field.index(), ty);
+        self.fields.insert(field.index(), local_type);
     }
 
     pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
         let fields = match ty.kind() {
             TyKind::Adt(adt_def, substs) => adt_def
                 .all_fields()
-                .map(|field| field.ty(tcx, substs))
+                .map(|field| LocalType::new(field.ty(tcx, substs), tcx))
                 .collect::<Vec<_>>(),
             TyKind::Closure(closure_def_id, _) if tcx.has_typeck_results(closure_def_id) => {
                 let typeck_res = tcx.typeck(LocalDefId {
@@ -57,7 +57,7 @@ impl<'tcx> LocalType<'tcx> {
                 });
                 typeck_res
                     .closure_min_captures_flattened(*closure_def_id)
-                    .map(|captured_place| captured_place.place.ty())
+                    .map(|captured_place| LocalType::new(captured_place.place.ty(), tcx))
                     .collect::<Vec<_>>()
             }
             _ => Vec::new(),
@@ -151,15 +151,6 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
 
         let local_types = Rc::new(RefCell::new(local_types));
 
-        if tcx.def_path_str(def_id).contains("mutate_account") || tcx.def_path_str(def_id).contains("set_balance") {
-            println!();
-            println!("****************** {}", tcx.def_path_str(def_id));
-            for (index, local_type) in local_types.borrow().iter_enumerated() {
-                println!("{:?} --- {:?}", index, local_type);
-            }
-            println!();
-        }
-
         CostAnalysis {
             tcx,
             pallet,
@@ -252,7 +243,6 @@ where
     }
 
     fn t_fn_call_analysis(&mut self, callee_info: CalleeInfo<'tcx>, account_for_cost_now: bool) {
-        //println!("{}", self.tcx.def_path_str(callee_info.callee_def_id));
         if self.summaries.borrow().contains_key(&(
             callee_info.callee_def_id,
             (*self.local_types.borrow()).clone(),
@@ -476,15 +466,6 @@ where
             };
         }
 
-        if (self.tcx.def_path_str(self.def_id).contains("mutate_account") || self.tcx.def_path_str(self.def_id).contains("set_balance")) && self.tcx.def_path_str(callee_info.callee_def_id).contains("mutate_account") {
-            println!();
-            println!("****************** {} calling {}", self.tcx.def_path_str(self.def_id), self.tcx.def_path_str(callee_info.callee_def_id));
-            for (index, local_type) in local_types_outter.iter_enumerated() {
-                println!("{:?} --- {:?}", index, local_type);
-            }
-            println!();
-        }
-
         // Analyze the target function
         let mut results = CostAnalysis::new_with_init(
             self.tcx,
@@ -545,20 +526,7 @@ where
             TyKind::FnDef(def_id, _) => Some(*def_id),
             TyKind::Ref(_, _, _) => None,  //No further analysis needed
             TyKind::Projection(_) => None, //No further analysis needed
-            _ => {
-
-                /*for (index, local_type) in self.local_types.borrow().iter_enumerated() {
-                    println!("{:?} --- {:?}", index, local_type);
-                }*/
-                println!("{:?}", self.tcx.def_path_str(self.def_id));
-                unreachable!("{:?}", self
-                .local_types
-                .borrow()
-                .get(callee_info.args[0].place().unwrap().local)
-                .unwrap()
-                .get_ty()
-                .kind());
-            },
+            _ => unreachable!(),
         };
 
         if let Some(callee_def_id) = callee_def_id {
@@ -687,7 +655,7 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                                     // Second condition is for types that are Adt or closures but no typeck result is available
                                     // we cannot infer more precise type information for them
                                 {
-                                    self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from.get_ty());
+                                    self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from);
                                 }
                             }
                         } else {
@@ -697,7 +665,7 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                                 // Second condition is for types that are Adt or closures but no typeck result is available
                                 // we cannot infer more precise type information for them    
                             {
-                                let local_type_from = LocalType::new(*self.get_local_type(place_from).get_field(*field).unwrap(), self.tcx);
+                                let local_type_from = (*self.get_local_type(place_from).get_field(*field).unwrap()).clone();
 
                                 if place_to.projection.is_empty() {
                                     // Reflect the type of the given field of "place_from" to whole type of "place_to"
@@ -710,7 +678,7 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                                     // Second condition is for types that are Adt or closures but no typeck result is available
                                     // we cannot infer more precise type information for them
                                     {
-                                        self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from.get_ty());
+                                        self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from);
                                     }
                                 }
                             }
