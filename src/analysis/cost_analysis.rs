@@ -151,6 +151,15 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
 
         let local_types = Rc::new(RefCell::new(local_types));
 
+        if tcx.def_path_str(def_id).contains("mutate_account") || tcx.def_path_str(def_id).contains("set_balance") {
+            println!();
+            println!("****************** {}", tcx.def_path_str(def_id));
+            for (index, local_type) in local_types.borrow().iter_enumerated() {
+                println!("{:?} --- {:?}", index, local_type);
+            }
+            println!();
+        }
+
         CostAnalysis {
             tcx,
             pallet,
@@ -243,6 +252,7 @@ where
     }
 
     fn t_fn_call_analysis(&mut self, callee_info: CalleeInfo<'tcx>, account_for_cost_now: bool) {
+        //println!("{}", self.tcx.def_path_str(callee_info.callee_def_id));
         if self.summaries.borrow().contains_key(&(
             callee_info.callee_def_id,
             (*self.local_types.borrow()).clone(),
@@ -283,34 +293,18 @@ where
                         let arg_ty_kind =
                             self.get_local_type(place).get_ty().kind();
 
-                        if let TyKind::Closure(closure_def_id, substs_ref) = arg_ty_kind {
+                        if let TyKind::Closure(closure_def_id, _) = arg_ty_kind {
 
-                            /*println!();
-
-                            for (i, t) in self.local_types.borrow().iter_enumerated() {
-                                println!("{:?} --- {}", i, t);
-                            }
-
-                            println!();
-                            let typeck_res = self.tcx.typeck(LocalDefId{local_def_index: closure_def_id.index});
-                            for cap in typeck_res.closure_min_captures_flattened(*closure_def_id) {
-                                println!("{:?}", cap);
-                            }
-                            println!("{:?}", closure_def_id);
-                            println!("CLOSURE SUBSTS REF");
-                            for sub in substs_ref.iter() {
-                                println!("{:?}", sub);
-                            }
-                            println!();
                             self.analyze_closure_as_argument(
                                 callee_info.clone(),
                                 *closure_def_id,
+                                Some(vec![(*arg).clone()]),
                                 false,
-                            );*/
+                            );
                         }
                     }
                     Operand::Constant(_) if let Some((const_fn_def_id, _)) = arg.const_fn_def() => {
-                        self.analyze_closure_as_argument(callee_info.clone(), const_fn_def_id, false)
+                        self.analyze_closure_as_argument(callee_info.clone(), const_fn_def_id, None, false)
                     },
                     _ => ()
                 }
@@ -324,17 +318,16 @@ where
         &mut self,
         callee_info: CalleeInfo<'tcx>,
         closure_def_id: DefId,
+        args: Option<Vec<Operand<'tcx>>>,
         account_for_cost_now: bool,
     ) {
-        /*println!(
-            "{} --- {:?}",
-            self.tcx.def_path_str(callee_info.callee_def_id),
-            self.local_types
-        );*/
         let closure_info = CalleeInfo {
             callee_def_id: closure_def_id,
             // precise enough args type will be inferred by the closure body
-            args: vec![],
+            args: match args {
+                Some(args) => args,
+                None => vec![],
+            },
             // cannot keep the storage access return type as it is not the same as closure's
             // precise enough args type will be inferred by the closure body
             destination: None,
@@ -344,11 +337,16 @@ where
     }
 
     fn analyze_storage_access(&mut self, callee_info: CalleeInfo<'tcx>, access_cost: AccessCost) {
-        if let TyKind::Closure(closure_def_id, _) =
-            callee_info.substs_ref.last().unwrap().expect_ty().kind()
+
+        let maybe_closure_arg = callee_info.args.last().and_then(|arg| arg.place().and_then(|place| {
+            let local_type = self.get_local_type(&place);
+            Some((Some(vec![(*arg).clone()]), local_type.get_ty().kind()))
+        }));
+
+        if let Some((args, TyKind::Closure(closure_def_id, _))) = maybe_closure_arg
         {
             // Storage access functions may have closures as parameters, we need to analyze them
-            self.analyze_closure_as_argument(callee_info, *closure_def_id, true);
+            self.analyze_closure_as_argument(callee_info, *closure_def_id, args, true);
         }
 
         // Account for the cost of calling the storage access function
@@ -452,6 +450,10 @@ where
         } else {
             // If none, the call necessarily diverges.
             // cf. https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/terminator/enum.TerminatorKind.html#variant.Call
+
+            // We also use this branch when closures are not executed in their calling context.
+            // let's force the closure's return type in.
+            local_types_outter.push(LocalType::new(target_mir.local_decls.iter().next().unwrap().ty, self.tcx));
         }
 
         for arg in callee_info.args {
@@ -472,6 +474,15 @@ where
                     }
                 }
             };
+        }
+
+        if (self.tcx.def_path_str(self.def_id).contains("mutate_account") || self.tcx.def_path_str(self.def_id).contains("set_balance")) && self.tcx.def_path_str(callee_info.callee_def_id).contains("mutate_account") {
+            println!();
+            println!("****************** {} calling {}", self.tcx.def_path_str(self.def_id), self.tcx.def_path_str(callee_info.callee_def_id));
+            for (index, local_type) in local_types_outter.iter_enumerated() {
+                println!("{:?} --- {:?}", index, local_type);
+            }
+            println!();
         }
 
         // Analyze the target function
@@ -534,15 +545,20 @@ where
             TyKind::FnDef(def_id, _) => Some(*def_id),
             TyKind::Ref(_, _, _) => None,  //No further analysis needed
             TyKind::Projection(_) => None, //No further analysis needed
-            _ => None,                     /*unreachable!(
-                                                "{} --- {:?}",
-                                                self.tcx.def_path_str(self.def_id),
-                                                self.local_types
-                                                    .borrow()
-                                                    .get(callee_info.type_args[0].place().unwrap().local)
-                                                    .unwrap()
-                                                    .kind()
-                                            )*/
+            _ => {
+
+                /*for (index, local_type) in self.local_types.borrow().iter_enumerated() {
+                    println!("{:?} --- {:?}", index, local_type);
+                }*/
+                println!("{:?}", self.tcx.def_path_str(self.def_id));
+                unreachable!("{:?}", self
+                .local_types
+                .borrow()
+                .get(callee_info.args[0].place().unwrap().local)
+                .unwrap()
+                .get_ty()
+                .kind());
+            },
         };
 
         if let Some(callee_def_id) = callee_def_id {
@@ -686,6 +702,7 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                                 if place_to.projection.is_empty() {
                                     // Reflect the type of the given field of "place_from" to whole type of "place_to"
                                     self.local_types.borrow_mut()[place_to.local] = local_type_from;
+
                                 } else {
                                     // Reflect the type of the given field of "place_from" to the given field of "place_to"
                                     if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()

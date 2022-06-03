@@ -375,7 +375,6 @@ pub(crate) mod frame_support_traits_specs {
                         fn_name
                     ))));
             }
-            "frame_support::traits::StoredMap::try_mutate_exists" => {}
             _ => {
                 unimplemented!("{} --- {:?}", path, callee_info.func);
             }
