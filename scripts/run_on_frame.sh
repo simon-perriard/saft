@@ -8,7 +8,7 @@ no_extract=("benchmarking" "support" "examples" "election-provider-support" "exe
 # no_extract contains folders that are not pallets
 
 #extract=("balances" "identity" "multisig" "utility" "vesting")
-extract=("identity")
+extract=("balances" "identity" "multisig")
 
 for pallet in *
 do

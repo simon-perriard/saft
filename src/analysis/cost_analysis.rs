@@ -224,7 +224,7 @@ where
 {
     fn t_visit_fn_call(&mut self, location: Location) {
         let callee_info = self.get_callee_info(location);
-
+        //println!("{}", self.tcx.def_path_str(callee_info.callee_def_id));
         if let Some(access_cost) =
             self.is_storage_call(callee_info.callee_def_id, callee_info.substs_ref)
         {
@@ -327,14 +327,14 @@ where
     }
 
     fn analyze_storage_access(&mut self, callee_info: CalleeInfo<'tcx>, access_cost: AccessCost) {
+        let maybe_closure_arg = callee_info.args.last().and_then(|arg| {
+            arg.place().and_then(|place| {
+                let local_type = self.get_local_type(&place);
+                Some((Some(vec![(*arg).clone()]), local_type.get_ty().kind()))
+            })
+        });
 
-        let maybe_closure_arg = callee_info.args.last().and_then(|arg| arg.place().and_then(|place| {
-            let local_type = self.get_local_type(&place);
-            Some((Some(vec![(*arg).clone()]), local_type.get_ty().kind()))
-        }));
-
-        if let Some((args, TyKind::Closure(closure_def_id, _))) = maybe_closure_arg
-        {
+        if let Some((args, TyKind::Closure(closure_def_id, _))) = maybe_closure_arg {
             // Storage access functions may have closures as parameters, we need to analyze them
             self.analyze_closure_as_argument(callee_info, *closure_def_id, args, true);
         }
@@ -443,7 +443,10 @@ where
 
             // We also use this branch when closures are not executed in their calling context.
             // let's force the closure's return type in.
-            local_types_outter.push(LocalType::new(target_mir.local_decls.iter().next().unwrap().ty, self.tcx));
+            local_types_outter.push(LocalType::new(
+                target_mir.local_decls.iter().next().unwrap().ty,
+                self.tcx,
+            ));
         }
 
         for arg in callee_info.args {
