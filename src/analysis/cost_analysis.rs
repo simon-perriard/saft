@@ -17,6 +17,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::vec;
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct LocalType<'tcx> {
     ty: Ty<'tcx>,
@@ -60,6 +61,10 @@ impl<'tcx> LocalType<'tcx> {
                     .map(|captured_place| LocalType::new(captured_place.place.ty(), tcx))
                     .collect::<Vec<_>>()
             }
+            TyKind::Tuple(list_ty) => list_ty
+                .iter()
+                .map(|ty| LocalType::new(ty, tcx))
+                .collect::<Vec<_>>(),
             _ => Vec::new(),
         };
 
@@ -328,9 +333,9 @@ where
 
     fn analyze_storage_access(&mut self, callee_info: CalleeInfo<'tcx>, access_cost: AccessCost) {
         let maybe_closure_arg = callee_info.args.last().and_then(|arg| {
-            arg.place().and_then(|place| {
+            arg.place().map(|place| {
                 let local_type = self.get_local_type(&place);
-                Some((Some(vec![(*arg).clone()]), local_type.get_ty().kind()))
+                (Some(vec![(*arg).clone()]), local_type.get_ty().kind())
             })
         });
 

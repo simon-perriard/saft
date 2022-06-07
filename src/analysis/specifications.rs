@@ -2,6 +2,7 @@ use crate::analysis::cost_analysis::{CalleeInfo, TransferFunction};
 
 use self::frame_support_specs::frame_support_dispatch;
 use self::frame_system_specs::frame_system_dispatch;
+use self::parity_scale_codec_specs::parity_scale_codec_dispatch;
 use self::sp_io_specs::sp_io_dispatch;
 use self::sp_runtime_traits_specs::sp_runtime_traits_dispatch;
 use self::std_specs::std_dispatch;
@@ -18,6 +19,8 @@ pub(crate) fn dispatch_to_specifications<'tcx>(
         frame_support_dispatch(transfer_function, callee_info);
     } else if path.starts_with("frame_system::") {
         frame_system_dispatch(transfer_function, callee_info);
+    } else if path.starts_with("parity_scale_codec::") {
+        parity_scale_codec_dispatch(transfer_function, callee_info);
     } else if path.starts_with("sp_io::") {
         sp_io_dispatch(transfer_function, callee_info);
     } else if path.starts_with("sp_runtime::traits::") {
@@ -275,15 +278,44 @@ pub(crate) mod frame_system_specs {
     }
 }
 
-pub(crate) mod sp_io_specs {
+pub(crate) mod parity_scale_codec_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, TransferFunction},
+        cost_language::Cost,
     };
 
-    pub(crate) fn sp_io_dispatch(
-        _transfer_function: &mut TransferFunction,
-        _callee_info: CalleeInfo,
+    pub(crate) fn parity_scale_codec_dispatch<'tcx>(
+        transfer_function: &mut TransferFunction,
+        callee_info: CalleeInfo<'tcx>,
     ) {
+        let path = transfer_function
+            .tcx
+            .def_path_str(callee_info.callee_def_id);
+        let path = path.as_str();
+        match path {
+            "parity_scale_codec::Encode::using_encoded" => {
+                println!("{:?}", callee_info.substs_ref);
+                panic!();
+            }
+            _ => unimplemented!("{}", path),
+        }
+    }
+}
+
+pub(crate) mod sp_io_specs {
+    use crate::analysis::cost_analysis::{CalleeInfo, TransferFunction};
+
+    pub(crate) fn sp_io_dispatch(
+        transfer_function: &mut TransferFunction,
+        callee_info: CalleeInfo,
+    ) {
+        let path = transfer_function
+            .tcx
+            .def_path_str(callee_info.callee_def_id);
+        let path = path.as_str();
+        match path {
+            _ => unimplemented!("{}", path),
+        }
     }
 }
 
@@ -395,9 +427,7 @@ pub(crate) mod std_specs {
 }
 
 pub(crate) mod std_alloc_specs {
-    use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
-    };
+    use crate::analysis::cost_analysis::{CalleeInfo, TransferFunction};
 
     pub(crate) fn std_alloc_dispatch<'tcx>(
         transfer_function: &mut TransferFunction,
