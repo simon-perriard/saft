@@ -682,540 +682,418 @@ pub(crate) mod std_slice_specs {
 pub(crate) mod storage_actions_specs {
 
     use crate::analysis::{
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
         cost_language::{get_big_o_from_storage_size, Cost, HasSize},
         pallet::{Field, StorageKind},
     };
-    use rustc_middle::ty::{TyCtxt, TyKind};
+    use rustc_span::def_id::DefId;
 
     // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html
     // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageMap.html
 
-    #[derive(Debug)]
-    pub(crate) struct AccessCost {
-        pub reads: Cost,
-        pub writes: Cost,
-        pub steps: Cost,
-    }
-
-    impl AccessCost {
-        pub fn new(reads: Cost, writes: Cost, steps: Cost) -> Self {
-            AccessCost {
-                reads,
-                writes,
-                steps,
-            }
-        }
-    }
-
     pub(crate) trait HasAccessCost {
-        fn get_access_cost(&self, tcx: TyCtxt, action: &str) -> Option<AccessCost>;
+        fn get_access_cost<'tcx>(
+            &self,
+            transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+            callee_info: &CalleeInfo<'tcx>,
+            closure_summary_key: Option<SummaryKey<'tcx>>,
+        );
     }
 
     impl HasAccessCost for Field {
-        fn get_access_cost(&self, tcx: TyCtxt, action: &str) -> Option<AccessCost> {
+        fn get_access_cost<'tcx>(
+            &self,
+            transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+            callee_info: &CalleeInfo<'tcx>,
+            closure_summary_key: Option<SummaryKey<'tcx>>,
+        ) {
             match &self.kind {
-                StorageKind::StorageValue { .. } => {
-                    StorageValueActions::get_access_cost(tcx, self, action)
-                }
-                StorageKind::StorageMap { .. } => {
-                    StorageMapActions::get_access_cost(tcx, self, action)
-                }
-                StorageKind::StorageDoubleMap { .. } => {
-                    StorageDoubleMapActions::get_access_cost(tcx, self, action)
-                }
+                StorageKind::StorageValue { .. } => StorageValueActions::get_access_cost(
+                    self,
+                    transfer_function,
+                    callee_info,
+                    closure_summary_key,
+                ),
+                StorageKind::StorageMap { .. } => StorageMapActions::get_access_cost(
+                    self,
+                    transfer_function,
+                    callee_info,
+                    closure_summary_key,
+                ),
+
+                StorageKind::StorageDoubleMap { .. } => StorageDoubleMapActions::get_access_cost(
+                    self,
+                    transfer_function,
+                    callee_info,
+                    closure_summary_key,
+                ),
                 StorageKind::StorageNMap { .. } => todo!(),
                 StorageKind::CountedStorageMap { .. } => todo!(),
             }
         }
     }
 
-    pub(crate) enum StorageValueActions {
-        Append,
-        DecodeLen,
-        Exists,
-        Get,
-        Kill,
-        Mutate,
-        Put,
-        Set,
-        Take,
-        Translate,
-        TryAppend,
-        TryGet,
-        TryMutate,
-    }
+    pub(crate) struct StorageValueActions {}
 
     impl StorageValueActions {
-        fn is_storage_value_action(action: &str) -> bool {
-            StorageValueActions::storage_value_actions().contains(&action.to_owned())
-        }
-
-        fn storage_value_actions() -> Vec<String> {
-            let storage_value_actions = vec![
-                "append",
-                "decode_len",
-                "exists",
-                "get",
-                "kill",
-                "mutate",
-                "put",
-                "set",
-                "take",
-                "translate",
-                "try_append",
-                "try_get",
-                "try_mutate",
-            ];
-
-            storage_value_actions
-                .iter()
-                .map(|action| String::from(*action))
-                .collect()
-        }
-
-        fn from(action: &str) -> StorageValueActions {
-            match action {
-                "append" => StorageValueActions::Append,
-                "decode_len" => StorageValueActions::DecodeLen,
-                "exists" => StorageValueActions::Exists,
-                "get" => StorageValueActions::Get,
-                "kill" => StorageValueActions::Kill,
-                "mutate" => StorageValueActions::Mutate,
-                "put" => StorageValueActions::Put,
-                "set" => StorageValueActions::Set,
-                "take" => StorageValueActions::Take,
-                "translate" => StorageValueActions::Translate,
-                "try_append" => StorageValueActions::TryAppend,
-                "try_get" => StorageValueActions::TryGet,
-                "try_mutate" => StorageValueActions::TryMutate,
-                _ => panic!("Invalid StorageValue action"),
-            }
-        }
-
-        pub fn get_access_cost(tcx: TyCtxt, field: &Field, action: &str) -> Option<AccessCost> {
+        pub fn get_access_cost<'tcx>(
+            field: &Field,
+            transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+            callee_info: &CalleeInfo<'tcx>,
+            closure_summary_key: Option<SummaryKey<'tcx>>,
+        ) {
+            let action = transfer_function
+                .tcx
+                .def_path_str(callee_info.callee_def_id);
             let action_short = action.split("::").last().unwrap();
 
-            if !Self::is_storage_value_action(action_short) {
-                None
-            } else {
-                let mut steps = Cost::default();
-                let mut reads = Cost::default();
-                let mut writes = Cost::default();
+            match action_short {
+                "append" => todo!(),
+                "decode_len" => todo!(),
+                "exists" => {
+                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.exists
+                    transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                    // storage access
+                    transfer_function
+                        .domain_state
+                        .add_reads(field.get_size(&transfer_function.tcx));
+                }
+                "get" => {
+                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.get
+                    // decoding
+                    transfer_function
+                        .domain_state
+                        .add_steps(get_big_o_from_storage_size(
+                            field.get_size(&transfer_function.tcx),
+                        ));
+                    // storage access
+                    transfer_function
+                        .domain_state
+                        .add_reads(field.get_size(&transfer_function.tcx));
+                }
+                "kill" => {
+                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.kill
+                    transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                    // Write None to database
+                    transfer_function.domain_state.add_writes(Cost::Concrete(1));
+                }
+                "mutate" => {
+                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.mutate
+                    // decoding/encoding
+                    transfer_function
+                        .domain_state
+                        .add_steps(get_big_o_from_storage_size(
+                            field.get_size(&transfer_function.tcx),
+                        ));
 
-                match Self::from(action_short) {
-                    StorageValueActions::Append => todo!(),
-                    StorageValueActions::DecodeLen => todo!(),
-                    StorageValueActions::Exists => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.exists
-                        steps = steps + Cost::Concrete(1);
-                        // storage access
-                        reads = reads + field.get_size(&tcx);
-                    }
-                    StorageValueActions::Get => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.get
-                        // decoding
-                        steps = steps + get_big_o_from_storage_size(field.get_size(&tcx));
-                        // storage access
-                        reads = reads + field.get_size(&tcx);
-                    }
-                    StorageValueActions::Kill => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.kill
-                        steps = steps + Cost::Concrete(1);
-                        // Write None to database
-                        writes = writes + Cost::Concrete(1);
-                    }
-                    StorageValueActions::Mutate => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.mutate
-                        // decoding/encoding
-                        steps = steps + get_big_o_from_storage_size(field.get_size(&tcx));
+                    // storage access
+                    transfer_function
+                        .domain_state
+                        .add_reads(field.get_size(&transfer_function.tcx));
 
-                        // storage access
-                        reads = reads + field.get_size(&tcx);
-                        // storage access
-                        writes = writes + field.get_size(&tcx);
-                    }
-                    StorageValueActions::Put => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.put
-                        steps = steps + get_big_o_from_storage_size(field.get_size(&tcx));
-                        // storage access
-                        writes = writes + field.get_size(&tcx);
-                    }
-                    StorageValueActions::Set => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.set
-                        // encoding
-                        steps = steps + get_big_o_from_storage_size(field.get_size(&tcx));
-                        // storage access
-                        writes = writes + field.get_size(&tcx);
-                    }
-                    StorageValueActions::Take => todo!(),
-                    StorageValueActions::Translate => todo!(),
-                    StorageValueActions::TryAppend => todo!(),
-                    StorageValueActions::TryGet => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.try_get
-                        steps = steps + get_big_o_from_storage_size(field.get_size(&tcx));
-                        reads = reads + field.get_size(&tcx);
-                    }
-                    StorageValueActions::TryMutate => {
-                        // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.try_mutate
-                        // decoding/encoding depends on the actual length of what is stored
+                    // account for closure complexity
+                    let closure_summary_key = closure_summary_key.unwrap();
+                    let closure_cost = transfer_function
+                        .summaries
+                        .borrow()
+                        .get(&closure_summary_key)
+                        .unwrap()
+                        .clone()
+                        .unwrap();
+                    transfer_function.domain_state.inter_join(&closure_cost);
 
-                        steps = steps + get_big_o_from_storage_size(field.get_size(&tcx));
+                    // storage access
+                    transfer_function
+                        .domain_state
+                        .add_writes(field.get_size(&transfer_function.tcx));
+                }
+                "put" => {
+                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.put
+                    transfer_function
+                        .domain_state
+                        .add_steps(get_big_o_from_storage_size(
+                            field.get_size(&transfer_function.tcx),
+                        ));
+                    // storage access
+                    transfer_function
+                        .domain_state
+                        .add_writes(field.get_size(&transfer_function.tcx));
+                }
+                "set" => {
+                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.set
+                    // encoding
+                    transfer_function
+                        .domain_state
+                        .add_steps(get_big_o_from_storage_size(
+                            field.get_size(&transfer_function.tcx),
+                        ));
+                    // storage access
+                    transfer_function
+                        .domain_state
+                        .add_writes(field.get_size(&transfer_function.tcx));
+                }
+                "take" => todo!(),
+                "translate" => todo!(),
+                "try_append" => todo!(),
+                "try_get" => {
+                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.try_get
+                    transfer_function
+                        .domain_state
+                        .add_steps(get_big_o_from_storage_size(
+                            field.get_size(&transfer_function.tcx),
+                        ));
+                    transfer_function
+                        .domain_state
+                        .add_reads(field.get_size(&transfer_function.tcx));
+                }
+                "try_mutate" => {
+                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.try_mutate
+                    // decoding/encoding depends on the actual length of what is stored
 
-                        // storage access
-                        reads = reads + field.get_size(&tcx);
-                        // storage access
-                        writes = writes + field.get_size(&tcx);
-                    }
-                };
-                Some(AccessCost::new(reads, writes, steps))
-            }
+                    transfer_function
+                        .domain_state
+                        .add_steps(get_big_o_from_storage_size(
+                            field.get_size(&transfer_function.tcx),
+                        ));
+
+                    // storage access
+                    transfer_function
+                        .domain_state
+                        .add_reads(field.get_size(&transfer_function.tcx));
+
+                    // account for closure complexity
+                    let closure_summary_key = closure_summary_key.unwrap();
+                    let closure_cost = transfer_function
+                        .summaries
+                        .borrow()
+                        .get(&closure_summary_key)
+                        .unwrap()
+                        .clone()
+                        .unwrap();
+                    transfer_function.domain_state.inter_join(&closure_cost);
+
+                    // storage access
+                    transfer_function
+                        .domain_state
+                        .add_writes(field.get_size(&transfer_function.tcx));
+                }
+                _ => unimplemented!(
+                    "{}",
+                    transfer_function
+                        .tcx
+                        .def_path_str(callee_info.callee_def_id)
+                ),
+            };
         }
     }
 
-    pub(crate) enum StorageMapActions {
-        Append,
-        ContainsKey,
-        DecodeLen,
-        Drain,
-        Get,
-        Insert,
-        Iter,
-        IterFrom,
-        IterKeys,
-        IterKeysFrom,
-        IterValues,
-        MigrateKey,
-        Mutate,
-        MutateExists,
-        Remove,
-        RemoveAll,
-        Swap,
-        Take,
-        Translate,
-        TranslateValues,
-        TryAppend,
-        TryGet,
-        TryMutate,
-        TryMutateExists,
-    }
+    pub(crate) struct StorageMapActions {}
 
     impl StorageMapActions {
-        fn is_storage_map_action(action: &str) -> bool {
-            StorageMapActions::storage_map_actions().contains(&action.to_owned())
-        }
-
-        fn storage_map_actions() -> Vec<String> {
-            let storage_map_actions = vec![
-                "append",
-                "contains_key",
-                "decode_len",
-                "drain",
-                "get",
-                "insert",
-                "iter",
-                "iter_from",
-                "iter_keys",
-                "iter_keys_from",
-                "iter_values",
-                "migrate_key",
-                "mutate",
-                "mutate_exists",
-                "remove",
-                "remove_all",
-                "swap",
-                "take",
-                "translate",
-                "translate_values",
-                "try_append",
-                "try_get",
-                "try_mutate",
-                "try_mutate_exists",
-            ];
-
-            storage_map_actions
-                .iter()
-                .map(|action| String::from(*action))
-                .collect()
-        }
-
-        fn from(action: &str) -> StorageMapActions {
-            match action {
-                "append" => StorageMapActions::Append,
-                "contains_key" => StorageMapActions::ContainsKey,
-                "decode_len" => StorageMapActions::DecodeLen,
-                "drain" => StorageMapActions::Drain,
-                "get" => StorageMapActions::Get,
-                "insert" => StorageMapActions::Insert,
-                "iter" => StorageMapActions::Iter,
-                "iter_from" => StorageMapActions::IterFrom,
-                "iter_keys" => StorageMapActions::IterKeys,
-                "iter_keys_from" => StorageMapActions::IterKeysFrom,
-                "iter_values" => StorageMapActions::IterValues,
-                "migrate_key" => StorageMapActions::MigrateKey,
-                "mutate" => StorageMapActions::Mutate,
-                "mutate_exists" => StorageMapActions::MutateExists,
-                "remove" => StorageMapActions::Remove,
-                "remove_all" => StorageMapActions::RemoveAll,
-                "swap" => StorageMapActions::Swap,
-                "take" => StorageMapActions::Take,
-                "translate" => StorageMapActions::Translate,
-                "translate_values" => StorageMapActions::TranslateValues,
-                "try_append" => StorageMapActions::TryAppend,
-                "try_get" => StorageMapActions::TryGet,
-                "try_mutate" => StorageMapActions::TryMutate,
-                "try_mutate_exists" => StorageMapActions::TryMutateExists,
-                _ => panic!("Invalid StorageMap action"),
-            }
-        }
-
-        pub fn get_access_cost(tcx: TyCtxt, field: &Field, action: &str) -> Option<AccessCost> {
+        pub fn get_access_cost<'tcx>(
+            field: &Field,
+            transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+            callee_info: &CalleeInfo<'tcx>,
+            closure_summary_key: Option<SummaryKey<'tcx>>,
+        ) {
+            let action = transfer_function
+                .tcx
+                .def_path_str(callee_info.callee_def_id);
             let action_short = action.split("::").last().unwrap();
 
-            if !Self::is_storage_map_action(action_short) {
-                None
-            } else {
-                let mut steps = Cost::default();
-                let mut reads = Cost::default();
-                let mut writes = Cost::default();
+            match action_short {
+                "append" => todo!(),
+                "contains_key" => {
+                    // call "contains_key" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#236
+                    transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                    transfer_function
+                        .domain_state
+                        .add_reads(field.get_size(&transfer_function.tcx));
+                }
+                "decode_len" => todo!(),
+                "drain" => todo!(),
+                "get" => {
+                    // call "get" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#240
+                    transfer_function
+                        .domain_state
+                        .add_steps(get_big_o_from_storage_size(
+                            field.get_size(&transfer_function.tcx),
+                        ));
+                    transfer_function
+                        .domain_state
+                        .add_reads(field.get_size(&transfer_function.tcx));
+                }
+                "insert" => {
+                    // call "insert" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#248
+                    transfer_function
+                        .domain_state
+                        .add_steps(get_big_o_from_storage_size(
+                            field.get_size(&transfer_function.tcx),
+                        ));
+                    transfer_function
+                        .domain_state
+                        .add_writes(field.get_size(&transfer_function.tcx));
+                }
+                "iter" => todo!(),
+                "iter_from" => todo!(),
+                "iter_keys" => todo!(),
+                "iter_key_from" => todo!(),
+                "iter_values" => todo!(),
+                "migrate_key" => todo!(),
+                "mutate" => {
+                    // call "mutate" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#256
+                    transfer_function
+                        .domain_state
+                        .add_steps(get_big_o_from_storage_size(
+                            field.get_size(&transfer_function.tcx),
+                        ));
+                    transfer_function
+                        .domain_state
+                        .add_reads(field.get_size(&transfer_function.tcx));
 
-                match Self::from(action_short) {
-                    StorageMapActions::Append => todo!(),
-                    StorageMapActions::ContainsKey => {
-                        // call "contains_key" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#236
-                        steps = steps + Cost::Concrete(1);
-                        reads = reads + field.get_size(&tcx);
-                    }
-                    StorageMapActions::DecodeLen => todo!(),
-                    StorageMapActions::Drain => todo!(),
-                    StorageMapActions::Get => {
-                        // call "get" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#240
-                        steps = steps + get_big_o_from_storage_size(field.get_size(&tcx));
-                        reads = reads + field.get_size(&tcx);
-                    }
-                    StorageMapActions::Insert => {
-                        // call "insert" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#248
-                        steps = steps + get_big_o_from_storage_size(field.get_size(&tcx));
-                        writes = writes + field.get_size(&tcx);
-                    }
-                    StorageMapActions::Iter => todo!(),
-                    StorageMapActions::IterFrom => todo!(),
-                    StorageMapActions::IterKeys => todo!(),
-                    StorageMapActions::IterKeysFrom => todo!(),
-                    StorageMapActions::IterValues => todo!(),
-                    StorageMapActions::MigrateKey => todo!(),
-                    StorageMapActions::Mutate => {
-                        // call "mutate" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#256
-                        steps = steps + get_big_o_from_storage_size(field.get_size(&tcx));
-                        reads = reads + field.get_size(&tcx);
-                        writes = writes + field.get_size(&tcx);
-                    }
-                    StorageMapActions::MutateExists => todo!(),
-                    StorageMapActions::Remove => {
-                        // call "remove" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#248
-                        steps = steps + Cost::Concrete(1);
-                        writes = writes + Cost::Concrete(1);
-                    }
-                    StorageMapActions::RemoveAll => todo!(),
-                    StorageMapActions::Swap => todo!(),
-                    StorageMapActions::Take => {
-                        // call "take" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#303
-                        steps = steps + get_big_o_from_storage_size(field.get_size(&tcx));
+                    // account for closure complexity
+                    let closure_summary_key = closure_summary_key.unwrap();
+                    let closure_cost = transfer_function
+                        .summaries
+                        .borrow()
+                        .get(&closure_summary_key)
+                        .unwrap()
+                        .clone()
+                        .unwrap();
+                    transfer_function.domain_state.inter_join(&closure_cost);
 
-                        reads = reads + field.get_size(&tcx);
+                    transfer_function
+                        .domain_state
+                        .add_writes(field.get_size(&transfer_function.tcx));
+                }
+                "mutate_exists" => todo!(),
+                "remove" => {
+                    // call "remove" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#248
+                    transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                    // Write "None" to storage
+                    transfer_function.domain_state.add_writes(Cost::Concrete(1));
+                }
+                "remove_all" => todo!(),
+                "swap" => todo!(),
+                "take" => {
+                    // call "take" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#303
+                    transfer_function
+                        .domain_state
+                        .add_steps(get_big_o_from_storage_size(
+                            field.get_size(&transfer_function.tcx),
+                        ));
 
-                        // Write "None" to storage
-                        writes = writes + Cost::Concrete(1);
-                    }
-                    StorageMapActions::Translate => todo!(),
-                    StorageMapActions::TranslateValues => todo!(),
-                    StorageMapActions::TryAppend => todo!(),
-                    StorageMapActions::TryGet => {
-                        // call "try_get" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#244
-                        steps = steps + get_big_o_from_storage_size(field.get_size(&tcx));
-                        reads = reads + field.get_size(&tcx);
-                    }
-                    StorageMapActions::TryMutate => {
-                        // call try_mutate https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#286
-                        steps = steps + get_big_o_from_storage_size(field.get_size(&tcx));
-                        reads = reads + field.get_size(&tcx);
-                        writes = writes + field.get_size(&tcx);
-                    }
-                    StorageMapActions::TryMutateExists => (),
-                };
-                Some(AccessCost::new(reads, writes, steps))
-            }
+                    transfer_function
+                        .domain_state
+                        .add_reads(field.get_size(&transfer_function.tcx));
+
+                    // Write "None" to storage
+                    transfer_function.domain_state.add_writes(Cost::Concrete(1));
+                }
+                "translate" => todo!(),
+                "translate_values" => todo!(),
+                "try_append" => todo!(),
+                "try_get" => {
+                    // call "try_get" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#244
+                    transfer_function
+                        .domain_state
+                        .add_steps(get_big_o_from_storage_size(
+                            field.get_size(&transfer_function.tcx),
+                        ));
+                    transfer_function
+                        .domain_state
+                        .add_reads(field.get_size(&transfer_function.tcx));
+                }
+                "try_mutate" => {
+                    // call try_mutate https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#286
+                    transfer_function
+                        .domain_state
+                        .add_steps(get_big_o_from_storage_size(
+                            field.get_size(&transfer_function.tcx),
+                        ));
+                    transfer_function
+                        .domain_state
+                        .add_reads(field.get_size(&transfer_function.tcx));
+
+                    // account for closure complexity
+                    let closure_summary_key = closure_summary_key.unwrap();
+                    let closure_cost = transfer_function
+                        .summaries
+                        .borrow()
+                        .get(&closure_summary_key)
+                        .unwrap()
+                        .clone()
+                        .unwrap();
+                    transfer_function.domain_state.inter_join(&closure_cost);
+
+                    transfer_function
+                        .domain_state
+                        .add_writes(field.get_size(&transfer_function.tcx));
+                }
+                "try_mutate_exists" => todo!(),
+                _ => unimplemented!(
+                    "{}",
+                    transfer_function
+                        .tcx
+                        .def_path_str(callee_info.callee_def_id)
+                ),
+            };
         }
     }
 
-    pub(crate) enum StorageDoubleMapActions {
-        Append,
-        ContainsKey,
-        DecodeLen,
-        Drain,
-        DrainPrefix,
-        Get,
-        Insert,
-        Iter,
-        IterFrom,
-        IterKeyPrefix,
-        IterKeyPrefixFrom,
-        IterKeys,
-        IterKeysFrom,
-        IterPrefix,
-        IterPrefixFrom,
-        IterPrefixValues,
-        IterValues,
-        MigrateKeys,
-        Mutate,
-        MutateExists,
-        Remove,
-        RemoveAll,
-        RemovePrefix,
-        Swap,
-        Take,
-        Translate,
-        TranslateValues,
-        TryAppend,
-        TryGet,
-        TryMutate,
-        TryMutateExists,
-    }
+    pub(crate) struct StorageDoubleMapActions {}
 
     impl StorageDoubleMapActions {
-        fn is_storage_map_action(action: &str) -> bool {
-            StorageDoubleMapActions::storage_double_map_actions().contains(&action.to_owned())
-        }
-
-        fn storage_double_map_actions() -> Vec<String> {
-            let storage_double_map_actions = vec![
-                "append",
-                "contains_key",
-                "decode_len",
-                "drain",
-                "drain_prefix",
-                "get",
-                "insert",
-                "iter",
-                "iter_from",
-                "iter_key_prefix",
-                "iter_key_prefix_from",
-                "iter_keys",
-                "iter_keys_from",
-                "iter_prefix",
-                "iter_prefix_from",
-                "iter_prefix_values",
-                "iter_values",
-                "migrate_keys",
-                "mutate",
-                "mutate_exists",
-                "remove",
-                "remove_all",
-                "remove_prefix",
-                "swap",
-                "take",
-                "translate",
-                "translate_values",
-                "try_append",
-                "try_get",
-                "try_mutate",
-                "try_mutate_exists",
-            ];
-
-            storage_double_map_actions
-                .iter()
-                .map(|action| String::from(*action))
-                .collect()
-        }
-
-        fn from(action: &str) -> StorageDoubleMapActions {
-            match action {
-                "append" => StorageDoubleMapActions::Append,
-                "contains_key" => StorageDoubleMapActions::ContainsKey,
-                "decode_len" => StorageDoubleMapActions::DecodeLen,
-                "drain" => StorageDoubleMapActions::Drain,
-                "drain_prefix" => StorageDoubleMapActions::DrainPrefix,
-                "get" => StorageDoubleMapActions::Get,
-                "insert" => StorageDoubleMapActions::Insert,
-                "iter" => StorageDoubleMapActions::Iter,
-                "iter_from" => StorageDoubleMapActions::IterFrom,
-                "iter_key_prefix" => StorageDoubleMapActions::IterKeyPrefix,
-                "iter_key_prefix_from" => StorageDoubleMapActions::IterKeyPrefixFrom,
-                "iter_keys" => StorageDoubleMapActions::IterKeys,
-                "iter_keys_from" => StorageDoubleMapActions::IterKeysFrom,
-                "iter_prefix" => StorageDoubleMapActions::IterPrefix,
-                "iter_prefix_from" => StorageDoubleMapActions::IterPrefixFrom,
-                "iter_prefix_values" => StorageDoubleMapActions::IterPrefixValues,
-                "iter_values" => StorageDoubleMapActions::IterValues,
-                "migrate_keys" => StorageDoubleMapActions::MigrateKeys,
-                "mutate" => StorageDoubleMapActions::Mutate,
-                "mutate_exists" => StorageDoubleMapActions::MutateExists,
-                "remove" => StorageDoubleMapActions::Remove,
-                "remove_all" => StorageDoubleMapActions::RemoveAll,
-                "remove_prefix" => StorageDoubleMapActions::RemovePrefix,
-                "swap" => StorageDoubleMapActions::Swap,
-                "take" => StorageDoubleMapActions::Take,
-                "translate" => StorageDoubleMapActions::Translate,
-                "translate_values" => StorageDoubleMapActions::TranslateValues,
-                "try_append" => StorageDoubleMapActions::TryAppend,
-                "try_get" => StorageDoubleMapActions::TryGet,
-                "try_mutate" => StorageDoubleMapActions::TryMutate,
-                "try_mutate_exists" => StorageDoubleMapActions::TryMutateExists,
-                _ => panic!("Invalid StorageDoubleMap action"),
-            }
-        }
-
-        pub fn get_access_cost(tcx: TyCtxt, field: &Field, action: &str) -> Option<AccessCost> {
+        pub fn get_access_cost<'tcx>(
+            _field: &Field,
+            transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+            callee_info: &CalleeInfo<'tcx>,
+            _closure_summary_key: Option<SummaryKey<'tcx>>,
+        ) {
+            let action = transfer_function
+                .tcx
+                .def_path_str(callee_info.callee_def_id);
             let action_short = action.split("::").last().unwrap();
 
-            if !Self::is_storage_map_action(action_short) {
-                None
-            } else {
-                let _substs_ref =
-                    if let TyKind::Adt(_, substs_ref) = tcx.type_of(field.def_id).kind() {
-                        substs_ref
-                    } else {
-                        unreachable!()
-                    };
-
-                let mut _steps = Cost::default();
-                let mut _reads = Cost::default();
-                let mut _writes = Cost::default();
-
-                match Self::from(action_short) {
-                    StorageDoubleMapActions::Append => todo!(),
-                    StorageDoubleMapActions::ContainsKey => todo!(),
-                    StorageDoubleMapActions::DecodeLen => todo!(),
-                    StorageDoubleMapActions::Drain => todo!(),
-                    StorageDoubleMapActions::DrainPrefix => todo!(),
-                    StorageDoubleMapActions::Get => todo!(),
-                    StorageDoubleMapActions::Insert => todo!(),
-                    StorageDoubleMapActions::Iter => todo!(),
-                    StorageDoubleMapActions::IterFrom => todo!(),
-                    StorageDoubleMapActions::IterKeyPrefix => todo!(),
-                    StorageDoubleMapActions::IterKeyPrefixFrom => todo!(),
-                    StorageDoubleMapActions::IterKeys => todo!(),
-                    StorageDoubleMapActions::IterKeysFrom => todo!(),
-                    StorageDoubleMapActions::IterPrefix => todo!(),
-                    StorageDoubleMapActions::IterPrefixFrom => todo!(),
-                    StorageDoubleMapActions::IterPrefixValues => todo!(),
-                    StorageDoubleMapActions::IterValues => todo!(),
-                    StorageDoubleMapActions::MigrateKeys => todo!(),
-                    StorageDoubleMapActions::Mutate => todo!(),
-                    StorageDoubleMapActions::MutateExists => todo!(),
-                    StorageDoubleMapActions::Remove => todo!(),
-                    StorageDoubleMapActions::RemoveAll => todo!(),
-                    StorageDoubleMapActions::RemovePrefix => todo!(),
-                    StorageDoubleMapActions::Swap => todo!(),
-                    StorageDoubleMapActions::Take => todo!(),
-                    StorageDoubleMapActions::Translate => todo!(),
-                    StorageDoubleMapActions::TranslateValues => todo!(),
-                    StorageDoubleMapActions::TryAppend => todo!(),
-                    StorageDoubleMapActions::TryGet => todo!(),
-                    StorageDoubleMapActions::TryMutate => todo!(),
-                    StorageDoubleMapActions::TryMutateExists => todo!(),
-                };
-                Some(AccessCost::new(_reads, _writes, _steps))
-            }
+            match action_short {
+                "append" => todo!(),
+                "contains_key" => todo!(),
+                "decode_len" => todo!(),
+                "drain" => todo!(),
+                "drain_prefix" => todo!(),
+                "get" => todo!(),
+                "insert" => todo!(),
+                "iter" => todo!(),
+                "iter_from" => todo!(),
+                "iter_key_prefix" => todo!(),
+                "iter_key_prefix_from" => todo!(),
+                "iter_keys" => todo!(),
+                "iter_keys_from" => todo!(),
+                "iter_prefix" => todo!(),
+                "iter_prefix_from" => todo!(),
+                "iter_prefix_values" => todo!(),
+                "iter_values" => todo!(),
+                "migrate_keys" => todo!(),
+                "mutate" => todo!(),
+                "mutate_exists" => todo!(),
+                "remove" => todo!(),
+                "remove_all" => todo!(),
+                "remove_prefix" => todo!(),
+                "swap" => todo!(),
+                "take" => todo!(),
+                "translate" => todo!(),
+                "translate_values" => todo!(),
+                "try_append" => todo!(),
+                "try_get" => todo!(),
+                "try_mutate" => todo!(),
+                "try_mutate_exists" => todo!(),
+                _ => unimplemented!(
+                    "{}",
+                    transfer_function
+                        .tcx
+                        .def_path_str(callee_info.callee_def_id)
+                ),
+            };
         }
     }
 }

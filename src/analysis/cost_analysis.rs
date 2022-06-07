@@ -2,7 +2,7 @@ use super::cost_domain::CostDomain;
 use super::cost_language::{Cost, Symbolic};
 use super::events_variants_domain::Variants;
 use super::pallet::Pallet;
-use super::specifications::storage_actions_specs::{AccessCost, HasAccessCost};
+use super::specifications::storage_actions_specs::HasAccessCost;
 use crate::analysis::events_variants_domain::EventVariantsDomain;
 use crate::analysis::specifications::dispatch_to_specifications;
 use rustc_index::vec::IndexVec;
@@ -72,8 +72,9 @@ impl<'tcx> LocalType<'tcx> {
     }
 }
 
+pub(crate) type SummaryKey<'tcx> = (DefId, Vec<LocalType<'tcx>>);
 pub(crate) type LocalTypes<'tcx> = IndexVec<Local, LocalType<'tcx>>;
-pub(crate) type Summary<'tcx> = HashMap<(DefId, LocalTypes<'tcx>), Option<CostDomain>>;
+pub(crate) type Summary<'tcx> = HashMap<SummaryKey<'tcx>, Option<CostDomain>>;
 
 #[derive(PartialEq, Eq)]
 pub(crate) enum AnalysisState {
@@ -229,14 +230,11 @@ where
 {
     fn t_visit_fn_call(&mut self, location: Location) {
         let callee_info = self.get_callee_info(location);
-        //println!("{}", self.tcx.def_path_str(callee_info.callee_def_id));
-        if let Some(access_cost) =
-            self.is_storage_call(callee_info.callee_def_id, callee_info.substs_ref)
-        {
-            // TODO: analyze closure before, and give it to storage access specs
+
+        if self.is_storage_field_access(callee_info.callee_def_id) {
             // Filtering storage access, we need to catch it now otherwise we lose information about which
             // field is accessed.
-            self.analyze_storage_access(callee_info, access_cost);
+            self.analyze_storage_access(callee_info);
         } else if self.is_deposit_event(callee_info.callee_def_id) {
             // Filtering event deposit, pallet::deposit_event will later call frame_system::deposit_event,
             // but we can only catch the variant of the Event enum now. Or we need to pass a calling context for
@@ -248,18 +246,12 @@ where
     }
 
     fn t_fn_call_analysis(&mut self, callee_info: CalleeInfo<'tcx>, account_for_cost_now: bool) {
-        if self.summaries.borrow().contains_key(&(
-            callee_info.callee_def_id,
-            (*self.local_types.borrow()).clone(),
-        )) {
+        let summary_key = self.get_summary_key_for_callee_info(&callee_info);
+
+        if self.summaries.borrow().contains_key(&summary_key) {
             // We already have the summary for this function, retrieve it and return
             let summaries = self.summaries.borrow();
-            let summary = summaries
-                .get(&(
-                    callee_info.callee_def_id,
-                    (*self.local_types.borrow()).clone(),
-                ))
-                .unwrap();
+            let summary = summaries.get(&summary_key).unwrap();
 
             if let Some(summary) = summary {
                 // Add the cost of calling the target function
@@ -273,7 +265,7 @@ where
             }
         } else if self.tcx.is_mir_available(callee_info.callee_def_id) {
             // We don't have the summary but MIR is available, we need to analyze the function
-            self.analyze_with_available_mir(callee_info);
+            self.analyze_with_available_mir(&callee_info);
         } else if self.is_closure_call(callee_info.callee_def_id) {
             self.analyze_closure_call(callee_info);
         } else {
@@ -293,13 +285,12 @@ where
                             self.analyze_closure_as_argument(
                                 callee_info.clone(),
                                 *closure_def_id,
-                                Some(vec![(*arg).clone()]),
-                                false,
+                                Some(vec![(*arg).clone()])
                             );
                         }
                     }
                     Operand::Constant(_) if let Some((const_fn_def_id, _)) = arg.const_fn_def() => {
-                        self.analyze_closure_as_argument(callee_info.clone(), const_fn_def_id, None, false)
+                        self.analyze_closure_as_argument(callee_info.clone(), const_fn_def_id, None);
                     },
                     _ => ()
                 }
@@ -314,8 +305,7 @@ where
         callee_info: CalleeInfo<'tcx>,
         closure_def_id: DefId,
         args: Option<Vec<Operand<'tcx>>>,
-        account_for_cost_now: bool,
-    ) {
+    ) -> SummaryKey<'tcx> {
         let closure_info = CalleeInfo {
             callee_def_id: closure_def_id,
             // precise enough args type will be inferred by the closure body
@@ -326,12 +316,16 @@ where
             // cannot keep the storage access return type as it is not the same as closure's
             // precise enough args type will be inferred by the closure body
             destination: None,
+
+            // The remaining fields are not correct wrt the closure but are irrelevant in the closure analysis
             ..callee_info
         };
-        self.t_fn_call_analysis(closure_info, account_for_cost_now);
+        self.t_fn_call_analysis(closure_info.clone(), false);
+        self.get_summary_key_for_callee_info(&closure_info)
     }
 
-    fn analyze_storage_access(&mut self, callee_info: CalleeInfo<'tcx>, access_cost: AccessCost) {
+    fn analyze_storage_access(&mut self, callee_info: CalleeInfo<'tcx>) {
+        // From Subtrate storage access implementation, if there is a closure it is as last argument
         let maybe_closure_arg = callee_info.args.last().and_then(|arg| {
             arg.place().map(|place| {
                 let local_type = self.get_local_type(&place);
@@ -339,15 +333,18 @@ where
             })
         });
 
-        if let Some((args, TyKind::Closure(closure_def_id, _))) = maybe_closure_arg {
-            // Storage access functions may have closures as parameters, we need to analyze them
-            self.analyze_closure_as_argument(callee_info, *closure_def_id, args, true);
-        }
+        // First analyze the closure that may be in the param but do not account for its cost yet
+        // we do this in the specifications
 
-        // Account for the cost of calling the storage access function
-        self.domain_state.add_reads(access_cost.reads);
-        self.domain_state.add_writes(access_cost.writes);
-        self.domain_state.add_steps(access_cost.steps);
+        let maybe_closure_def_id =
+            if let Some((args, TyKind::Closure(closure_def_id, _))) = maybe_closure_arg {
+                // Storage access functions may have closures as parameters, we need to analyze them
+                Some(self.analyze_closure_as_argument(callee_info.clone(), *closure_def_id, args))
+            } else {
+                None
+            };
+
+        self.dispatch_to_storage_access_specifications(&callee_info, maybe_closure_def_id);
     }
 
     fn analyze_deposit_event(&mut self, callee_info: CalleeInfo<'tcx>) {
@@ -409,15 +406,10 @@ where
         }
     }
 
-    fn analyze_with_available_mir(&mut self, callee_info: CalleeInfo<'tcx>) {
+    fn analyze_with_available_mir(&mut self, callee_info: &CalleeInfo<'tcx>) {
         // Initialize the summary to None so we can detect a recursive call later
-        self.summaries.borrow_mut().insert(
-            (
-                callee_info.callee_def_id,
-                (*self.local_types.borrow()).clone(),
-            ),
-            None,
-        );
+        let summary_key = self.get_summary_key_for_callee_info(callee_info);
+        self.summaries.borrow_mut().insert(summary_key, None);
 
         let target_mir = self.tcx.optimized_mir(callee_info.callee_def_id);
 
@@ -434,7 +426,7 @@ where
         self.analyze_with_mir(callee_info, target_mir);
     }
 
-    fn analyze_with_mir(&mut self, callee_info: CalleeInfo<'tcx>, target_mir: &Body<'tcx>) {
+    fn analyze_with_mir(&mut self, callee_info: &CalleeInfo<'tcx>, target_mir: &Body<'tcx>) {
         // Account for function call
         self.domain_state.add_steps(Cost::Concrete(1));
 
@@ -454,8 +446,8 @@ where
             ));
         }
 
-        for arg in callee_info.args {
-            match &arg {
+        for arg in &callee_info.args {
+            match arg {
                 Operand::Copy(place) | Operand::Move(place) => {
                     local_types_outter.push(self.get_local_type(place));
                 }
@@ -510,13 +502,10 @@ where
             self.domain_state.inter_join(&end_state);
 
             // Add the callee function summary to our summaries map
-            self.summaries.borrow_mut().insert(
-                (
-                    callee_info.callee_def_id,
-                    (*self.local_types.borrow()).clone(),
-                ),
-                Some(end_state),
-            );
+            let summary_key = self.get_summary_key_for_callee_info(callee_info);
+            self.summaries
+                .borrow_mut()
+                .insert(summary_key, Some(end_state));
         }
     }
 
@@ -550,36 +539,55 @@ where
         }
     }
 
-    fn is_storage_call(&self, def_id: DefId, substs: SubstsRef<'tcx>) -> Option<AccessCost> {
-        if self
-            .tcx
+    fn dispatch_to_storage_access_specifications(
+        &mut self,
+        callee_info: &CalleeInfo<'tcx>,
+        closure_summary_key: Option<SummaryKey<'tcx>>,
+    ) {
+        let def_id = callee_info.callee_def_id;
+        let substs = callee_info.substs_ref;
+
+        if !self.is_storage_field_access(def_id) {
+            panic!(
+                "This is not a storage call: {}",
+                self.tcx.def_path_str(def_id)
+            );
+        }
+
+        let pallet = self.pallet;
+        let tcx = self.tcx;
+        let key = tcx.def_key(def_id);
+        let parent_def_id = DefId {
+            index: key.parent.unwrap(),
+            ..def_id
+        };
+        let generics = tcx.generics_of(def_id);
+        let parent_substs = &substs[..generics.parent_count.min(substs.len())];
+
+        if let TyKind::Adt(adt_def_data, _) = tcx.type_of(parent_def_id).kind() {
+            let reconstructed_ty = tcx.mk_adt(*adt_def_data, tcx.intern_substs(parent_substs));
+
+            let ty_field_hash_map = pallet
+                .fields
+                .iter()
+                .map(|(field_def_id, field)| (tcx.type_of(field_def_id), (*field).clone()))
+                .fold(HashMap::new(), |mut accum, (field_ty, field)| {
+                    accum.insert(field_ty, field);
+                    accum
+                });
+
+            let field = ty_field_hash_map.get(&reconstructed_ty).unwrap();
+
+            field.get_access_cost(self, callee_info, closure_summary_key)
+        } else {
+            unreachable!();
+        }
+    }
+
+    fn is_storage_field_access(&self, def_id: DefId) -> bool {
+        self.tcx
             .def_path_str(def_id)
             .starts_with("frame_support::pallet_prelude::Storage")
-        {
-            let pallet = self.pallet;
-            let tcx = self.tcx;
-            let key = tcx.def_key(def_id);
-            let parent_def_id = DefId {
-                index: key.parent.unwrap(),
-                ..def_id
-            };
-            let generics = tcx.generics_of(def_id);
-            let parent_substs = &substs[..generics.parent_count.min(substs.len())];
-
-            if let TyKind::Adt(adt_def_data, _) = tcx.type_of(parent_def_id).kind() {
-                let reconstructed_ty = tcx.mk_adt(*adt_def_data, tcx.intern_substs(parent_substs));
-                for (ty, field) in pallet
-                    .fields
-                    .iter()
-                    .map(|(field_def_id, field)| (tcx.type_of(field_def_id), field))
-                {
-                    if ty == reconstructed_ty {
-                        return field.get_access_cost(tcx, &tcx.def_path_str(def_id));
-                    }
-                }
-            }
-        }
-        None
     }
 
     fn is_deposit_event(&self, target_def_id: DefId) -> bool {
@@ -620,6 +628,28 @@ where
              },
             _ => unreachable!("{:?}", terminator.kind),
         }
+    }
+
+    fn get_callee_args_types(&self, callee_info: &CalleeInfo<'tcx>) -> Vec<LocalType<'tcx>> {
+        callee_info
+            .args
+            .iter()
+            .map(|arg| match arg.place() {
+                Some(place) => self.get_local_type(&place),
+                None => match arg.const_fn_def() {
+                    Some((def_id, _)) => LocalType::new(self.tcx.type_of(def_id), self.tcx),
+                    None => LocalType::new(arg.constant().unwrap().ty(), self.tcx),
+                },
+            })
+            .collect::<Vec<_>>()
+    }
+
+    fn get_summary_key_for_callee_info(&self, callee_info: &CalleeInfo<'tcx>) -> SummaryKey<'tcx> {
+        // Second part of the key is the calling context (types of callee function's args)
+        (
+            callee_info.callee_def_id,
+            self.get_callee_args_types(&callee_info),
+        )
     }
 }
 
