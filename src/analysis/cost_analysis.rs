@@ -96,8 +96,7 @@ impl AnalysisState {
 
 #[derive(Clone)]
 pub(crate) struct CalleeInfo<'tcx> {
-    pub location: Location,
-    pub func: Operand<'tcx>,
+    pub location: Option<Location>,
     pub args: Vec<Operand<'tcx>>,
     pub destination: Option<(Place<'tcx>, BasicBlock)>,
     pub callee_def_id: DefId,
@@ -280,17 +279,17 @@ where
                         let arg_ty_kind =
                             self.get_local_type(place).get_ty().kind();
 
-                        if let TyKind::Closure(closure_def_id, _) = arg_ty_kind {
+                        if let TyKind::Closure(closure_def_id, closure_substs_ref) = arg_ty_kind {
 
                             self.analyze_closure_as_argument(
-                                callee_info.clone(),
                                 *closure_def_id,
+                                closure_substs_ref,
                                 Some(vec![(*arg).clone()])
                             );
                         }
                     }
-                    Operand::Constant(_) if let Some((const_fn_def_id, _)) = arg.const_fn_def() => {
-                        self.analyze_closure_as_argument(callee_info.clone(), const_fn_def_id, None);
+                    Operand::Constant(_) if let Some((const_fn_def_id, const_fn_substs_ref)) = arg.const_fn_def() => {
+                        self.analyze_closure_as_argument(const_fn_def_id, const_fn_substs_ref, None);
                     },
                     _ => ()
                 }
@@ -302,12 +301,14 @@ where
 
     fn analyze_closure_as_argument(
         &mut self,
-        callee_info: CalleeInfo<'tcx>,
         closure_def_id: DefId,
+        closure_substs_ref: SubstsRef<'tcx>,
         args: Option<Vec<Operand<'tcx>>>,
     ) -> SummaryKey<'tcx> {
         let closure_info = CalleeInfo {
-            callee_def_id: closure_def_id,
+            // We do not know at what point the closure is called
+            location: None,
+
             // precise enough args type will be inferred by the closure body
             args: match args {
                 Some(args) => args,
@@ -317,8 +318,9 @@ where
             // precise enough args type will be inferred by the closure body
             destination: None,
 
-            // The remaining fields are not correct wrt the closure but are irrelevant in the closure analysis
-            ..callee_info
+            callee_def_id: closure_def_id,
+
+            substs_ref: closure_substs_ref,
         };
         self.t_fn_call_analysis(closure_info.clone(), false);
         self.get_summary_key_for_callee_info(&closure_info)
@@ -337,9 +339,11 @@ where
         // we do this in the specifications
 
         let maybe_closure_def_id =
-            if let Some((args, TyKind::Closure(closure_def_id, _))) = maybe_closure_arg {
+            if let Some((args, TyKind::Closure(closure_def_id, closure_substs_ref))) =
+                maybe_closure_arg
+            {
                 // Storage access functions may have closures as parameters, we need to analyze them
-                Some(self.analyze_closure_as_argument(callee_info.clone(), *closure_def_id, args))
+                Some(self.analyze_closure_as_argument(*closure_def_id, closure_substs_ref, args))
             } else {
                 None
             };
@@ -358,7 +362,7 @@ where
                 .events_variants
                 .get(&self.def_id)
                 .unwrap()
-                .get(location)
+                .get(location.unwrap())
                 .unwrap();
 
             match event_variants {
@@ -619,8 +623,7 @@ where
                 ..
             } if let Operand::Constant(c) = func && let TyKind::FnDef(callee_def_id, substs_ref) = *c.ty().kind()
              => CalleeInfo {
-                 location,
-                 func: (*func).clone(),
+                 location: Some(location),
                  args: (*args).clone(),
                  destination: *destination,
                  callee_def_id,
@@ -648,7 +651,7 @@ where
         // Second part of the key is the calling context (types of callee function's args)
         (
             callee_info.callee_def_id,
-            self.get_callee_args_types(&callee_info),
+            self.get_callee_args_types(callee_info),
         )
     }
 }

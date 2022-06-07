@@ -30,7 +30,13 @@ pub(crate) fn dispatch_to_specifications<'tcx>(
     } else if path.starts_with("weights::WeightInfo::") {
         // Ignore
     } else {
-        unimplemented!("{} --- {:?}", path, callee_info.func);
+        unimplemented!(
+            "{} --- {:?}",
+            path,
+            transfer_function
+                .tcx
+                .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+        );
     }
 }
 
@@ -76,7 +82,13 @@ pub(crate) mod frame_support_specs {
                             value_type_size.get_size(&transfer_function.tcx),
                         ));
                 }
-                _ => unimplemented!("{} --- {:?}", path, callee_info.func),
+                _ => unimplemented!(
+                    "{} --- {:?}",
+                    path,
+                    transfer_function
+                        .tcx
+                        .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+                ),
             }
         }
     }
@@ -238,9 +250,13 @@ pub(crate) mod frame_support_traits_specs {
                         fn_name
                     ))));
             }
-            _ => {
-                unimplemented!("{} --- {:?}", path, callee_info.func);
-            }
+            _ => unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            ),
         }
     }
 }
@@ -314,6 +330,10 @@ pub(crate) mod sp_io_specs {
             .def_path_str(callee_info.callee_def_id);
         let path = path.as_str();
         match path {
+            "sp_io::hashing::blake2_256" => {
+                println!("{:?}", callee_info.substs_ref.type_at(0));
+                //unimplemented!("{} --- {:?}", path, transfer_function.tcx.mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref));
+            }
             _ => unimplemented!("{}", path),
         }
     }
@@ -328,7 +348,7 @@ pub(crate) mod sp_runtime_traits_specs {
     use rustc_middle::ty::TyKind;
 
     pub(crate) fn sp_runtime_traits_dispatch<'tcx>(
-        transfer_function: &mut TransferFunction,
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
     ) {
         let path = transfer_function
@@ -370,14 +390,13 @@ pub(crate) mod sp_runtime_traits_specs {
             | "sp_runtime::traits::Saturating::saturating_mul" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
-            _ => {
-                unimplemented!(
-                    "{} --- {:?} --- {:?}",
-                    path,
-                    callee_info.func,
-                    callee_info.substs_ref,
-                );
-            }
+            _ => unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            ),
         }
     }
 }
@@ -395,7 +414,7 @@ pub(crate) mod std_specs {
     use crate::analysis::cost_analysis::{CalleeInfo, TransferFunction};
 
     pub(crate) fn std_dispatch<'tcx>(
-        transfer_function: &mut TransferFunction,
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
     ) {
         let path = transfer_function
@@ -421,7 +440,13 @@ pub(crate) mod std_specs {
         } else if path.starts_with("std::slice::") {
             std_slice_dispatch(transfer_function, callee_info);
         } else {
-            unimplemented!("{} --- {:?}", path, callee_info.func);
+            unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            );
         }
     }
 }
@@ -430,7 +455,7 @@ pub(crate) mod std_alloc_specs {
     use crate::analysis::cost_analysis::{CalleeInfo, TransferFunction};
 
     pub(crate) fn std_alloc_dispatch<'tcx>(
-        transfer_function: &mut TransferFunction,
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
     ) {
         let path = transfer_function
@@ -451,7 +476,13 @@ pub(crate) mod std_alloc_specs {
                 //TODO: specs
                 //panic!()
             }
-            _ => unimplemented!("{} --- {:?}", path, callee_info.func),
+            _ => unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            ),
         }
     }
 }
@@ -463,7 +494,7 @@ pub(crate) mod std_clone_specs {
     };
 
     pub(crate) fn std_clone_dispatch<'tcx>(
-        transfer_function: &mut TransferFunction,
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         _callee_info: CalleeInfo<'tcx>,
     ) {
         //TODO: linear if this is a vec or something similar
@@ -477,9 +508,9 @@ pub(crate) mod std_cmp_specs {
         cost_language::Cost,
     };
 
-    pub(crate) fn std_cmp_dispatch(
-        transfer_function: &mut TransferFunction,
-        _callee_info: CalleeInfo,
+    pub(crate) fn std_cmp_dispatch<'tcx>(
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+        _callee_info: CalleeInfo<'tcx>,
     ) {
         //TODO: linear if this is a vec or something similar
         transfer_function.domain_state.add_steps(Cost::Concrete(1));
@@ -492,9 +523,9 @@ pub(crate) mod std_convert_specs {
         cost_language::Cost,
     };
 
-    pub(crate) fn std_convert_dispatch(
-        transfer_function: &mut TransferFunction,
-        callee_info: CalleeInfo,
+    pub(crate) fn std_convert_dispatch<'tcx>(
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+        callee_info: CalleeInfo<'tcx>,
     ) {
         let path = transfer_function
             .tcx
@@ -507,9 +538,13 @@ pub(crate) mod std_convert_specs {
             "std::convert::From::from" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
-            _ => {
-                unimplemented!("{} --- {:?}", path, callee_info.func);
-            }
+            _ => unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            ),
         }
     }
 }
@@ -521,7 +556,7 @@ pub(crate) mod std_default_specs {
     };
 
     pub(crate) fn std_default_dispatch<'tcx>(
-        transfer_function: &mut TransferFunction,
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
     ) {
         let path = transfer_function
@@ -532,9 +567,13 @@ pub(crate) mod std_default_specs {
             "std::default::Default::default" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
-            _ => {
-                unimplemented!("{} --- {:?}", path, callee_info.func);
-            }
+            _ => unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            ),
         }
     }
 }
@@ -546,7 +585,7 @@ pub(crate) mod std_instrinsics_specs {
     };
 
     pub(crate) fn std_intrinsics_dispatch<'tcx>(
-        transfer_function: &mut TransferFunction,
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
     ) {
         let path = transfer_function
@@ -566,7 +605,13 @@ pub(crate) mod std_instrinsics_specs {
             "std::intrinsics::assert_inhabited" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1))
             }
-            _ => unimplemented!("{} --- {:?}", path, callee_info.func),
+            _ => unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            ),
         }
     }
 }
@@ -578,7 +623,7 @@ pub(crate) mod std_ops_specs {
     };
 
     pub(crate) fn std_ops_dispatch<'tcx>(
-        transfer_function: &mut TransferFunction,
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
     ) {
         let path = transfer_function
@@ -616,7 +661,7 @@ pub(crate) mod std_result_specs {
     };
 
     pub(crate) fn std_result_dispatch<'tcx>(
-        transfer_function: &mut TransferFunction,
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
     ) {
         let path = transfer_function
@@ -627,7 +672,13 @@ pub(crate) mod std_result_specs {
             "std::result::unwrap_failed" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1))
             }
-            _ => unimplemented!("{} --- {:?}", path, callee_info.func),
+            _ => unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            ),
         }
     }
 }
@@ -640,7 +691,7 @@ pub(crate) mod std_slice_specs {
     use rustc_middle::ty::TyKind;
 
     pub(crate) fn std_slice_dispatch<'tcx>(
-        transfer_function: &mut TransferFunction,
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
     ) {
         let path = transfer_function
@@ -670,10 +721,11 @@ pub(crate) mod std_slice_specs {
                 panic!();
             }
             _ => unimplemented!(
-                "{} --- {:?} --- {:?}",
+                "{} --- {:?}",
                 path,
-                callee_info.func,
-                callee_info.substs_ref,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
             ),
         }
     }
@@ -686,7 +738,6 @@ pub(crate) mod storage_actions_specs {
         cost_language::{get_big_o_from_storage_size, Cost, HasSize},
         pallet::{Field, StorageKind},
     };
-    use rustc_span::def_id::DefId;
 
     // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html
     // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageMap.html
