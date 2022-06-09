@@ -12,7 +12,7 @@ use super::cost_analysis::SummaryKey;
 pub(crate) fn needs_early_catch(path: &str) -> bool {
     match path {
         "std::slice::<impl [T]>::to_vec" => true,
-        _ => false
+        _ => false,
     }
 }
 
@@ -120,7 +120,7 @@ pub(crate) mod frame_support_bounded_vec_specs {
     pub(crate) fn frame_support_bounded_vec_dispatch<'tcx>(
         transfer_function: &mut TransferFunction,
         callee_info: CalleeInfo<'tcx>,
-        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
+        args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
@@ -129,7 +129,7 @@ pub(crate) mod frame_support_bounded_vec_specs {
 
         match path {
             "frame_support::BoundedVec::<T, S>::try_push" => {
-                // call "try_push" https://docs.substrate.io/rustdocs/latest/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.try_push
+                // call "try_push" https://paritytech.github.io/substrate/master/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.try_push
                 // upperbound grow amortized by max size
 
                 // extract the name of the type for readability
@@ -146,17 +146,17 @@ pub(crate) mod frame_support_bounded_vec_specs {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
             "frame_support::BoundedVec::<T, S>::retain" => {
-                // call "retain" https://docs.substrate.io/rustdocs/latest/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.retain
-                //TODO: multiply by cost of closure
+                // call "retain" https://paritytech.github.io/substrate/master/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.retain
                 // extract the name of the type for readability
                 let ty_name = callee_info.substs_ref.type_at(1).to_string();
                 let ty_name = ty_name.split("::").last().unwrap();
-                transfer_function
-                    .domain_state
-                    .add_steps(Cost::Symbolic(Symbolic::BigO(format!(
-                        "VALUEOF({}::get())",
-                        ty_name
-                    ))));
+                let length = Cost::Symbolic(Symbolic::BigO(format!("VALUEOF({}::get())", ty_name)));
+                let summary_key = (*args_summary_keys.get(0).unwrap()).clone();
+                let mut total_cost = transfer_function.get_summary_for_key(&summary_key.unwrap());
+
+                total_cost.cost_big_o_mul(length);
+
+                transfer_function.domain_state.inter_join(&total_cost);
             }
             _ => unimplemented!("{}", path),
         }
@@ -244,7 +244,7 @@ pub(crate) mod frame_support_traits_specs {
         let path = path.as_str();
         match path {
             "frame_support::traits::EnsureOrigin::ensure_origin" => {
-                // https://docs.substrate.io/rustdocs/latest/frame_support/traits/trait.EnsureOrigin.html#method.ensure_origin
+                // https://paritytech.github.io/substrate/master/frame_support/traits/trait.EnsureOrigin.html#method.ensure_origin
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
             "frame_support::traits::EnsureOrigin::try_origin" => {
@@ -421,7 +421,11 @@ pub(crate) mod parity_scale_codec_specs {
 }
 
 pub(crate) mod sp_io_specs {
-    use crate::analysis::{cost_analysis::{CalleeInfo, SummaryKey, TransferFunction}, cost_language::{get_big_o_from_storage_size, HasSize}, types::Type};
+    use crate::analysis::{
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
+        cost_language::{get_big_o_from_storage_size, HasSize},
+        types::Type,
+    };
 
     pub(crate) fn sp_io_dispatch<'tcx>(
         transfer_function: &mut TransferFunction<'tcx, '_, '_>,
@@ -439,11 +443,16 @@ pub(crate) mod sp_io_specs {
                     // outter function must take care of this cost
                 } else {
                     transfer_function
-                    .domain_state
-                    .add_steps(get_big_o_from_storage_size(
-                        Type::from_mir_ty(transfer_function.tcx, transfer_function.get_local_type(&callee_info.args[0].place().unwrap()).get_ty())
+                        .domain_state
+                        .add_steps(get_big_o_from_storage_size(
+                            Type::from_mir_ty(
+                                transfer_function.tcx,
+                                transfer_function
+                                    .get_local_type(&callee_info.args[0].place().unwrap())
+                                    .get_ty(),
+                            )
                             .get_size(transfer_function.tcx),
-                    ));
+                        ));
                 }
             }
             _ => unimplemented!("{}", path),
@@ -614,7 +623,8 @@ pub(crate) mod std_clone_specs {
         _callee_info: CalleeInfo<'tcx>,
         _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
-        //TODO: linear if this is a vec or something similar
+        // Soundness inconsistency here, we would need Instance to
+        // resolve to the concrete implementation
         transfer_function.domain_state.add_steps(Cost::Concrete(1));
     }
 }
@@ -630,7 +640,8 @@ pub(crate) mod std_cmp_specs {
         _callee_info: CalleeInfo<'tcx>,
         _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
-        //TODO: linear if this is a vec or something similar
+        // Soundness inconsistency here, we would need Instance to
+        // resolve to the concrete implementation
         transfer_function.domain_state.add_steps(Cost::Concrete(1));
     }
 }
@@ -744,46 +755,22 @@ pub(crate) mod std_instrinsics_specs {
 }
 
 pub(crate) mod std_iter_specs {
-    use crate::analysis::{
-        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction, AnalysisState},
-    };
+    use crate::analysis::cost_analysis::{AnalysisState, CalleeInfo, SummaryKey, TransferFunction};
 
     pub(crate) fn std_iter_dispatch<'tcx>(
         transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         _callee_info: CalleeInfo<'tcx>,
         _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
-        println!("{:?}", transfer_function.get_local_type(&_callee_info.args[0].place().unwrap()).get_ty().kind());
+        println!(
+            "{:?}",
+            transfer_function
+                .get_local_type(&_callee_info.args[0].place().unwrap())
+                .get_ty()
+                .kind()
+        );
         *transfer_function.analysis_state.borrow_mut() = AnalysisState::Failure;
         println!("Iterators not supported yet");
-        //panic!();
-        
-        /*match path {
-            "std::iter::IntoIterator::into_iter" => {
-                let underlying = transfer_function.get_local_type(&callee_info.args[0].place().unwrap()).get_ty();
-                transfer_function
-                    .domain_state
-                    .add_steps(get_big_o_from_storage_size(
-                        Type::from_mir_ty(transfer_function.tcx, underlying)
-                            .get_size(transfer_function.tcx),
-                    ));
-                // Keep type with more information when switching to iterator
-                let underlying = transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
-                transfer_function.local_types.borrow_mut()[callee_info.destination.unwrap().0.local] = underlying;
-            }
-            "std::iter::FromIterator::from_iter" => {
-                // First arg is the iterator, then come the closures for map, filter, etc, in order of application
-                println!("{:?}", transfer_function.get_local_type(&callee_info.args[1].place().unwrap()));
-                panic!();
-            }
-            _ => unimplemented!(
-                "{} --- {:?}",
-                path,
-                transfer_function
-                    .tcx
-                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
-            ),
-        }*/
     }
 }
 
@@ -814,14 +801,17 @@ pub(crate) mod std_ops_specs {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
 
                 // Keep type with more information when derefencing
-                let underlying = transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
-                transfer_function.local_types.borrow_mut()[callee_info.destination.unwrap().0.local] = underlying;
+                let underlying =
+                    transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
+                transfer_function.local_types.borrow_mut()
+                    [callee_info.destination.unwrap().0.local] = underlying;
             }
             "std::ops::Mul::mul"
             | "std::ops::Add::add"
             | "std::ops::Sub::sub"
             | "std::ops::SubAssign::sub_assign" => {
-                //TODO: linear or more if this is a vec or something similar
+                // Soundness inconsistency here, we would need Instance to
+                // resolve to the concrete implementation
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
             _ => {
@@ -864,7 +854,8 @@ pub(crate) mod std_result_specs {
 pub(crate) mod std_slice_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
-        cost_language::{Cost, get_big_o_from_storage_size, HasSize}, types::Type,
+        cost_language::{get_big_o_from_storage_size, Cost, HasSize},
+        types::Type,
     };
     use rustc_middle::ty::TyKind;
 
@@ -882,15 +873,23 @@ pub(crate) mod std_slice_specs {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
             "std::slice::<impl [T]>::to_vec" => {
-                let underlying = if let TyKind::Ref(_, ty, _) = transfer_function.get_local_type(&callee_info.args[0].place().unwrap()).get_ty().kind() {
+                let underlying = if let TyKind::Ref(_, ty, _) = transfer_function
+                    .get_local_type(&callee_info.args[0].place().unwrap())
+                    .get_ty()
+                    .kind()
+                {
                     *ty
                 } else {
-                    transfer_function.get_local_type(&callee_info.args[0].place().unwrap()).get_ty()
+                    transfer_function
+                        .get_local_type(&callee_info.args[0].place().unwrap())
+                        .get_ty()
                 };
 
                 // Keep type with more information when converting to vec
-                let source_ty = transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
-                transfer_function.local_types.borrow_mut()[callee_info.destination.unwrap().0.local] = source_ty;
+                let source_ty =
+                    transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
+                transfer_function.local_types.borrow_mut()
+                    [callee_info.destination.unwrap().0.local] = source_ty;
 
                 transfer_function
                     .domain_state
@@ -918,8 +917,8 @@ pub(crate) mod storage_actions_specs {
         pallet::{Field, StorageKind},
     };
 
-    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html
-    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageMap.html
+    // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html
+    // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageMap.html
 
     pub(crate) trait HasAccessCost {
         fn get_access_cost<'tcx>(
@@ -981,7 +980,7 @@ pub(crate) mod storage_actions_specs {
                 "append" => todo!(),
                 "decode_len" => todo!(),
                 "exists" => {
-                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.exists
+                    // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html#method.exists
                     transfer_function.domain_state.add_steps(Cost::Concrete(1));
                     // storage access
                     transfer_function
@@ -989,7 +988,7 @@ pub(crate) mod storage_actions_specs {
                         .add_reads(field.get_size(transfer_function.tcx));
                 }
                 "get" => {
-                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.get
+                    // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html#method.get
                     // decoding
                     transfer_function
                         .domain_state
@@ -1002,13 +1001,13 @@ pub(crate) mod storage_actions_specs {
                         .add_reads(field.get_size(transfer_function.tcx));
                 }
                 "kill" => {
-                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.kill
+                    // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html#method.kill
                     transfer_function.domain_state.add_steps(Cost::Concrete(1));
                     // Write None to database
                     transfer_function.domain_state.add_writes(Cost::Concrete(1));
                 }
                 "mutate" => {
-                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.mutate
+                    // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html#method.mutate
                     // decoding/encoding
                     transfer_function
                         .domain_state
@@ -1038,7 +1037,7 @@ pub(crate) mod storage_actions_specs {
                         .add_writes(field.get_size(transfer_function.tcx));
                 }
                 "put" => {
-                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.put
+                    // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html#method.put
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
@@ -1050,7 +1049,7 @@ pub(crate) mod storage_actions_specs {
                         .add_writes(field.get_size(transfer_function.tcx));
                 }
                 "set" => {
-                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.set
+                    // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html#method.set
                     // encoding
                     transfer_function
                         .domain_state
@@ -1066,7 +1065,7 @@ pub(crate) mod storage_actions_specs {
                 "translate" => todo!(),
                 "try_append" => todo!(),
                 "try_get" => {
-                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.try_get
+                    // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html#method.try_get
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
@@ -1077,7 +1076,7 @@ pub(crate) mod storage_actions_specs {
                         .add_reads(field.get_size(transfer_function.tcx));
                 }
                 "try_mutate" => {
-                    // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.try_mutate
+                    // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html#method.try_mutate
                     // decoding/encoding depends on the actual length of what is stored
 
                     transfer_function
@@ -1134,7 +1133,7 @@ pub(crate) mod storage_actions_specs {
             match action_short {
                 "append" => todo!(),
                 "contains_key" => {
-                    // call "contains_key" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#236
+                    // call "contains_key" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#236
                     transfer_function.domain_state.add_steps(Cost::Concrete(1));
                     transfer_function
                         .domain_state
@@ -1143,7 +1142,7 @@ pub(crate) mod storage_actions_specs {
                 "decode_len" => todo!(),
                 "drain" => todo!(),
                 "get" => {
-                    // call "get" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#240
+                    // call "get" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#240
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
@@ -1154,7 +1153,7 @@ pub(crate) mod storage_actions_specs {
                         .add_reads(field.get_size(transfer_function.tcx));
                 }
                 "insert" => {
-                    // call "insert" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#248
+                    // call "insert" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#248
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
@@ -1171,7 +1170,7 @@ pub(crate) mod storage_actions_specs {
                 "iter_values" => todo!(),
                 "migrate_key" => todo!(),
                 "mutate" => {
-                    // call "mutate" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#256
+                    // call "mutate" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#256
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
@@ -1198,7 +1197,7 @@ pub(crate) mod storage_actions_specs {
                 }
                 "mutate_exists" => todo!(),
                 "remove" => {
-                    // call "remove" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#248
+                    // call "remove" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#248
                     transfer_function.domain_state.add_steps(Cost::Concrete(1));
                     // Write "None" to storage
                     transfer_function.domain_state.add_writes(Cost::Concrete(1));
@@ -1206,7 +1205,7 @@ pub(crate) mod storage_actions_specs {
                 "remove_all" => todo!(),
                 "swap" => todo!(),
                 "take" => {
-                    // call "take" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#303
+                    // call "take" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#303
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
@@ -1224,7 +1223,7 @@ pub(crate) mod storage_actions_specs {
                 "translate_values" => todo!(),
                 "try_append" => todo!(),
                 "try_get" => {
-                    // call "try_get" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#244
+                    // call "try_get" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#244
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
@@ -1235,7 +1234,7 @@ pub(crate) mod storage_actions_specs {
                         .add_reads(field.get_size(transfer_function.tcx));
                 }
                 "try_mutate" => {
-                    // call try_mutate https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#286
+                    // call try_mutate https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#286
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(

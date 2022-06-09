@@ -25,6 +25,12 @@ pub(crate) enum Symbolic {
 
 impl Symbolic {
     pub(crate) fn symbolic_mul(self, rhs: Cost) -> Cost {
+        if rhs.is_zero() {
+            return Cost::Concrete(0);
+        } else if let Cost::Concrete(1) = rhs {
+            return Cost::Symbolic(self);
+        }
+
         Cost::SymbolicMul(self, Box::new(rhs))
     }
 }
@@ -61,10 +67,24 @@ impl Cost {
         }
     }
 
+    pub(crate) fn mul(self, rhs: Self) -> Self {
+        match self {
+            Cost::Symbolic(sym) => sym.symbolic_mul(rhs),
+            Cost::Concrete(_) | Cost::ConcreteMul(_, _) => self.concrete_mul(rhs),
+            _ => unimplemented!(),
+        }
+    }
+
     pub(crate) fn concrete_mul(self, rhs: Self) -> Self {
         if self.is_zero() || rhs.is_zero() {
             // Compact notation: x*y with x=0 and/or y=0 -> 0 
             return Self::Concrete(0);
+        } else if let Self::Concrete(1) = self {
+            // Compact notation: x*y with x=1 -> y
+            return rhs;
+        } else if let Self::Concrete(1) = rhs {
+            // Compact notation: x*y with y=1 -> x
+            return self;
         } else if let Self::Concrete(x) = self && let Self::Concrete(y) = rhs {
             // Compact notation: (x)*(y) with x and y concrete -> (x*y)
             return Self::Concrete(x*y);
@@ -314,7 +334,7 @@ impl fmt::Display for Cost {
 
 pub(crate) fn get_big_o_from_storage_size(size: Cost) -> Cost {
     match size.clone() {
-        Cost::Concrete(_) => size,
+        Cost::Concrete(_) => Cost::Concrete(1),
         Cost::Symbolic(s) => match s {
             Symbolic::ValueOf(_) | Symbolic::SizeOf(_) => {
                 Cost::Symbolic(Symbolic::BigO(format!("{}", s)))

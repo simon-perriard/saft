@@ -2,6 +2,8 @@ use crate::analysis::cost_language::Cost;
 use core::fmt;
 use rustc_mir_dataflow::{fmt::DebugWithContext, lattice::JoinSemiLattice};
 
+use super::cost_language::get_big_o_from_storage_size;
+
 #[derive(Eq, PartialEq, Clone, Debug, Default)]
 pub(crate) struct CostDomain {
     bytes_read: Cost,
@@ -29,6 +31,20 @@ impl CostDomain {
 
     pub fn add_steps(&mut self, steps: Cost) {
         self.steps_executed = self.steps_executed.clone() + steps;
+    }
+
+    pub fn cost_big_o_mul(&mut self, mul_factor: Cost) {
+        self.bytes_read = mul_factor
+            .clone()
+            .mul(get_big_o_from_storage_size(self.bytes_read.clone()));
+        self.bytes_written = mul_factor
+            .clone()
+            .mul(get_big_o_from_storage_size(self.bytes_written.clone()));
+        self.bytes_deposited = mul_factor
+            .clone()
+            .mul(get_big_o_from_storage_size(self.bytes_deposited.clone()));
+        self.steps_executed =
+            mul_factor.mul(get_big_o_from_storage_size(self.steps_executed.clone()));
     }
 
     pub fn inter_join(&mut self, other: &Self) {

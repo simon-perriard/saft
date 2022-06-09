@@ -222,6 +222,12 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
     pub fn get_local_type(&self, place: &Place) -> LocalType<'tcx> {
         (*self.local_types.borrow().get(place.local).unwrap()).clone()
     }
+
+    pub fn get_summary_for_key(&self, key: &SummaryKey) -> CostDomain {
+        (*self.summaries.borrow().get(key).unwrap())
+            .clone()
+            .unwrap()
+    }
 }
 
 impl<'visitor, 'tcx> TransferFunction<'tcx, '_, '_>
@@ -230,6 +236,7 @@ where
 {
     fn t_visit_fn_call(&mut self, location: Location) {
         let callee_info = self.get_callee_info(location);
+        println!("{}", self.tcx.def_path_str(callee_info.callee_def_id));
         if self.is_storage_field_access(callee_info.callee_def_id) {
             // Filtering storage access, we need to catch it now otherwise we lose information about which
             // field is accessed.
@@ -272,7 +279,6 @@ where
         } else {
             self.analyze_with_specifications(callee_info);
         }
-            
     }
 
     fn analyze_closure_as_argument(
@@ -534,7 +540,6 @@ where
         if *self.analysis_state.borrow() == AnalysisState::Success {
             dispatch_to_specifications(self, callee_info, args_summary_keys);
         }
-    
     }
 
     fn analyze_closure_call(&mut self, callee_info: CalleeInfo<'tcx>) {
@@ -762,7 +767,7 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
             }
             StatementKind::Assign(box (place_to, r_value)) if let Rvalue::Ref(_, _, place_from) = r_value => {
                 // Replace references by their underlying types
-                
+
                 if place_from.projection.is_empty() {
                     // Reflect the whole type from "place_from"
                     let local_type_from = self.get_local_type(place_from);
@@ -805,8 +810,7 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                         }
                     }
                 }
-
-            } 
+            }
             _ => self.super_statement(statement, location),
         }
     }
