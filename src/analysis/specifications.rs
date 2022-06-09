@@ -7,26 +7,36 @@ use self::sp_io_specs::sp_io_dispatch;
 use self::sp_runtime_traits_specs::sp_runtime_traits_dispatch;
 use self::std_specs::std_dispatch;
 
+use super::cost_analysis::SummaryKey;
+
+pub(crate) fn needs_early_catch(path: &str) -> bool {
+    match path {
+        "std::slice::<impl [T]>::to_vec" => true,
+        _ => false
+    }
+}
+
 pub(crate) fn dispatch_to_specifications<'tcx>(
     transfer_function: &mut TransferFunction<'tcx, '_, '_>,
     callee_info: CalleeInfo<'tcx>,
+    args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
 ) {
     let path = transfer_function
         .tcx
         .def_path_str(callee_info.callee_def_id);
 
     if path.starts_with("frame_support::") {
-        frame_support_dispatch(transfer_function, callee_info);
+        frame_support_dispatch(transfer_function, callee_info, args_summary_keys);
     } else if path.starts_with("frame_system::") {
-        frame_system_dispatch(transfer_function, callee_info);
+        frame_system_dispatch(transfer_function, callee_info, args_summary_keys);
     } else if path.starts_with("parity_scale_codec::") {
-        parity_scale_codec_dispatch(transfer_function, callee_info);
+        parity_scale_codec_dispatch(transfer_function, callee_info, args_summary_keys);
     } else if path.starts_with("sp_io::") {
-        sp_io_dispatch(transfer_function, callee_info);
+        sp_io_dispatch(transfer_function, callee_info, args_summary_keys);
     } else if path.starts_with("sp_runtime::traits::") {
-        sp_runtime_traits_dispatch(transfer_function, callee_info);
+        sp_runtime_traits_dispatch(transfer_function, callee_info, args_summary_keys);
     } else if path.starts_with("std::") {
-        std_dispatch(transfer_function, callee_info);
+        std_dispatch(transfer_function, callee_info, args_summary_keys);
     } else if path.starts_with("weights::WeightInfo::") {
         // Ignore
     } else {
@@ -42,19 +52,21 @@ pub(crate) fn dispatch_to_specifications<'tcx>(
 
 pub(crate) mod frame_support_specs {
     use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
         cost_language::{get_big_o_from_storage_size, HasSize},
         types::Type,
     };
 
     use super::{
         frame_support_bounded_vec_specs::frame_support_bounded_vec_dispatch,
+        frame_support_dispatch_specs::frame_support_dispatch_dispatch,
         frame_support_traits_specs::frame_support_traits_dispatch,
     };
 
     pub(crate) fn frame_support_dispatch<'tcx>(
         transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
+        args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
@@ -62,9 +74,13 @@ pub(crate) mod frame_support_specs {
         let path = path.as_str();
 
         if path.starts_with("frame_support::BoundedVec::") {
-            frame_support_bounded_vec_dispatch(transfer_function, callee_info);
+            frame_support_bounded_vec_dispatch(transfer_function, callee_info, args_summary_keys);
         } else if path.starts_with("frame_support::traits::") {
-            frame_support_traits_dispatch(transfer_function, callee_info);
+            frame_support_traits_dispatch(transfer_function, callee_info, args_summary_keys);
+        } else if path.starts_with("frame_support::dispatch::") {
+            frame_support_dispatch_dispatch(transfer_function, callee_info, args_summary_keys);
+        } else if path.starts_with("frame_support::weights::") {
+            // ignore
         } else {
             match path {
                 "frame_support::StorageMap::get" => {
@@ -74,12 +90,12 @@ pub(crate) mod frame_support_specs {
 
                     transfer_function
                         .domain_state
-                        .add_reads(value_type_size.get_size(&transfer_function.tcx));
+                        .add_reads(value_type_size.get_size(transfer_function.tcx));
 
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
-                            value_type_size.get_size(&transfer_function.tcx),
+                            value_type_size.get_size(transfer_function.tcx),
                         ));
                 }
                 _ => unimplemented!(
@@ -97,13 +113,14 @@ pub(crate) mod frame_support_specs {
 pub(crate) mod frame_support_bounded_vec_specs {
 
     use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
         cost_language::{Cost, Symbolic},
     };
 
     pub(crate) fn frame_support_bounded_vec_dispatch<'tcx>(
         transfer_function: &mut TransferFunction,
         callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
@@ -146,9 +163,72 @@ pub(crate) mod frame_support_bounded_vec_specs {
     }
 }
 
+pub(crate) mod frame_support_dispatch_specs {
+    use crate::analysis::{
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
+        cost_language::{Cost, Symbolic},
+    };
+
+    pub(crate) fn frame_support_dispatch_dispatch<'tcx>(
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+        callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
+    ) {
+        let path = transfer_function
+            .tcx
+            .def_path_str(callee_info.callee_def_id);
+        let path = path.as_str();
+
+        match path {
+            "frame_support::dispatch::UnfilteredDispatchable::dispatch_bypass_filter" => {
+                // This specifications are far from optimal, but at least we see that another call is made
+                let call_name = callee_info.substs_ref.type_at(0);
+                transfer_function
+                    .domain_state
+                    .add_reads(Cost::Symbolic(Symbolic::ReadsOf(format!("{}", call_name))));
+                transfer_function
+                    .domain_state
+                    .add_writes(Cost::Symbolic(Symbolic::WritesOf(format!("{}", call_name))));
+                transfer_function
+                    .domain_state
+                    .add_events(Cost::Symbolic(Symbolic::EventsOf(format!("{}", call_name))));
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::StepsOf(format!("{}", call_name))));
+            }
+            "frame_support::dispatch::Dispatchable::dispatch" => {
+                // This specifications are far from optimal, but at least we see that another call is made
+                let call_name = callee_info.substs_ref.type_at(0);
+                transfer_function
+                    .domain_state
+                    .add_reads(Cost::Symbolic(Symbolic::ReadsOf(format!("{}", call_name))));
+                transfer_function
+                    .domain_state
+                    .add_writes(Cost::Symbolic(Symbolic::WritesOf(format!("{}", call_name))));
+                transfer_function
+                    .domain_state
+                    .add_events(Cost::Symbolic(Symbolic::EventsOf(format!("{}", call_name))));
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::StepsOf(format!("{}", call_name))));
+            }
+            "frame_support::dispatch::GetDispatchInfo::get_dispatch_info" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+            }
+            _ => unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            ),
+        }
+    }
+}
+
 pub(crate) mod frame_support_traits_specs {
     use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
         cost_language::{get_big_o_from_storage_size, Cost, HasSize, Symbolic},
         types::Type,
     };
@@ -156,6 +236,7 @@ pub(crate) mod frame_support_traits_specs {
     pub(crate) fn frame_support_traits_dispatch<'tcx>(
         transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
@@ -212,14 +293,14 @@ pub(crate) mod frame_support_traits_specs {
 
                 transfer_function
                     .domain_state
-                    .add_reads(value_type_size.get_size(&transfer_function.tcx));
+                    .add_reads(value_type_size.get_size(transfer_function.tcx));
                 transfer_function
                     .domain_state
-                    .add_writes(value_type_size.get_size(&transfer_function.tcx));
+                    .add_writes(value_type_size.get_size(transfer_function.tcx));
                 transfer_function
                     .domain_state
                     .add_steps(get_big_o_from_storage_size(
-                        value_type_size.get_size(&transfer_function.tcx),
+                        value_type_size.get_size(transfer_function.tcx),
                     ));
             }
             "frame_support::traits::VestingSchedule::can_add_vesting_schedule"
@@ -250,6 +331,9 @@ pub(crate) mod frame_support_traits_specs {
                         fn_name
                     ))));
             }
+            "frame_support::traits::OriginTrait::set_caller_from" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+            }
             _ => unimplemented!(
                 "{} --- {:?}",
                 path,
@@ -263,7 +347,7 @@ pub(crate) mod frame_support_traits_specs {
 
 pub(crate) mod frame_system_specs {
     use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
         cost_language::Cost,
     };
     use regex::Regex;
@@ -271,6 +355,7 @@ pub(crate) mod frame_system_specs {
     pub(crate) fn frame_system_dispatch<'tcx>(
         transfer_function: &mut TransferFunction,
         callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
@@ -296,13 +381,15 @@ pub(crate) mod frame_system_specs {
 
 pub(crate) mod parity_scale_codec_specs {
     use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
-        cost_language::Cost,
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
+        cost_language::{get_big_o_from_storage_size, HasSize},
+        types::Type,
     };
 
     pub(crate) fn parity_scale_codec_dispatch<'tcx>(
-        transfer_function: &mut TransferFunction,
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
@@ -310,8 +397,23 @@ pub(crate) mod parity_scale_codec_specs {
         let path = path.as_str();
         match path {
             "parity_scale_codec::Encode::using_encoded" => {
-                println!("{:?}", callee_info.substs_ref);
-                panic!();
+                // arg is a hasher, complexity accounted for here
+                transfer_function
+                    .domain_state
+                    .add_steps(get_big_o_from_storage_size(
+                        Type::from_mir_ty(transfer_function.tcx, callee_info.substs_ref.type_at(0))
+                            .get_size(transfer_function.tcx),
+                    ));
+            }
+            "parity_scale_codec::Decode::decode" => {
+                // Ideally should be parametrized on the length of the vector to decode,
+                // but we can assume that is proportional to the type to be decoded to
+                transfer_function
+                    .domain_state
+                    .add_steps(get_big_o_from_storage_size(
+                        Type::from_mir_ty(transfer_function.tcx, callee_info.substs_ref.type_at(0))
+                            .get_size(transfer_function.tcx),
+                    ));
             }
             _ => unimplemented!("{}", path),
         }
@@ -319,11 +421,12 @@ pub(crate) mod parity_scale_codec_specs {
 }
 
 pub(crate) mod sp_io_specs {
-    use crate::analysis::cost_analysis::{CalleeInfo, TransferFunction};
+    use crate::analysis::{cost_analysis::{CalleeInfo, SummaryKey, TransferFunction}, cost_language::{get_big_o_from_storage_size, HasSize}, types::Type};
 
-    pub(crate) fn sp_io_dispatch(
-        transfer_function: &mut TransferFunction,
-        callee_info: CalleeInfo,
+    pub(crate) fn sp_io_dispatch<'tcx>(
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+        callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
@@ -331,8 +434,17 @@ pub(crate) mod sp_io_specs {
         let path = path.as_str();
         match path {
             "sp_io::hashing::blake2_256" => {
-                println!("{:?}", callee_info.substs_ref.type_at(0));
-                //unimplemented!("{} --- {:?}", path, transfer_function.tcx.mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref));
+                if callee_info.args.is_empty() {
+                    // Function is passed as a closure and we don't know what will be hashed
+                    // outter function must take care of this cost
+                } else {
+                    transfer_function
+                    .domain_state
+                    .add_steps(get_big_o_from_storage_size(
+                        Type::from_mir_ty(transfer_function.tcx, transfer_function.get_local_type(&callee_info.args[0].place().unwrap()).get_ty())
+                            .get_size(transfer_function.tcx),
+                    ));
+                }
             }
             _ => unimplemented!("{}", path),
         }
@@ -341,7 +453,7 @@ pub(crate) mod sp_io_specs {
 
 pub(crate) mod sp_runtime_traits_specs {
     use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
         cost_language::{Cost, Symbolic},
     };
 
@@ -350,6 +462,7 @@ pub(crate) mod sp_runtime_traits_specs {
     pub(crate) fn sp_runtime_traits_dispatch<'tcx>(
         transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
@@ -390,6 +503,10 @@ pub(crate) mod sp_runtime_traits_specs {
             | "sp_runtime::traits::Saturating::saturating_mul" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
+            "sp_runtime::traits::TrailingZeroInput::<'a>::new" => {
+                // https://paritytech.github.io/substrate/master/sp_runtime/traits/struct.TrailingZeroInput.html#method.new
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+            }
             _ => unimplemented!(
                 "{} --- {:?}",
                 path,
@@ -408,37 +525,41 @@ pub(crate) mod std_specs {
     use super::std_convert_specs::std_convert_dispatch;
     use super::std_default_specs::std_default_dispatch;
     use super::std_instrinsics_specs::std_intrinsics_dispatch;
+    use super::std_iter_specs::std_iter_dispatch;
     use super::std_result_specs::std_result_dispatch;
     use super::std_slice_specs::std_slice_dispatch;
     use super::{std_alloc_specs::std_alloc_dispatch, std_ops_specs::std_ops_dispatch};
-    use crate::analysis::cost_analysis::{CalleeInfo, TransferFunction};
+    use crate::analysis::cost_analysis::{CalleeInfo, SummaryKey, TransferFunction};
 
     pub(crate) fn std_dispatch<'tcx>(
         transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
+        args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
             .def_path_str(callee_info.callee_def_id);
 
         if path.starts_with("std::alloc::") {
-            std_alloc_dispatch(transfer_function, callee_info);
+            std_alloc_dispatch(transfer_function, callee_info, args_summary_keys);
         } else if path.starts_with("std::clone::") {
-            std_clone_dispatch(transfer_function, callee_info);
+            std_clone_dispatch(transfer_function, callee_info, args_summary_keys);
         } else if path.starts_with("std::cmp::") {
-            std_cmp_dispatch(transfer_function, callee_info);
+            std_cmp_dispatch(transfer_function, callee_info, args_summary_keys);
         } else if path.starts_with("std::convert::") {
-            std_convert_dispatch(transfer_function, callee_info);
+            std_convert_dispatch(transfer_function, callee_info, args_summary_keys);
         } else if path.starts_with("std::default::") {
-            std_default_dispatch(transfer_function, callee_info);
+            std_default_dispatch(transfer_function, callee_info, args_summary_keys);
         } else if path.starts_with("std::intrinsics::") {
-            std_intrinsics_dispatch(transfer_function, callee_info);
+            std_intrinsics_dispatch(transfer_function, callee_info, args_summary_keys);
+        } else if path.starts_with("std::iter::") {
+            std_iter_dispatch(transfer_function, callee_info, args_summary_keys);
         } else if path.starts_with("std::ops::") {
-            std_ops_dispatch(transfer_function, callee_info);
+            std_ops_dispatch(transfer_function, callee_info, args_summary_keys);
         } else if path.starts_with("std::result::") {
-            std_result_dispatch(transfer_function, callee_info);
+            std_result_dispatch(transfer_function, callee_info, args_summary_keys);
         } else if path.starts_with("std::slice::") {
-            std_slice_dispatch(transfer_function, callee_info);
+            std_slice_dispatch(transfer_function, callee_info, args_summary_keys);
         } else {
             unimplemented!(
                 "{} --- {:?}",
@@ -452,11 +573,15 @@ pub(crate) mod std_specs {
 }
 
 pub(crate) mod std_alloc_specs {
-    use crate::analysis::cost_analysis::{CalleeInfo, TransferFunction};
+    use crate::analysis::{
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
+        cost_language::Cost,
+    };
 
     pub(crate) fn std_alloc_dispatch<'tcx>(
         transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
@@ -464,17 +589,8 @@ pub(crate) mod std_alloc_specs {
         let path = path.as_str();
         match path {
             "std::alloc::Allocator::deallocate" => {
-                println!("DEALLOCATE");
-                println!(
-                    "{:?}",
-                    transfer_function
-                        .local_types
-                        .borrow()
-                        .get(callee_info.args[0].place().unwrap().local)
-                        .unwrap()
-                );
-                //TODO: specs
-                //panic!()
+                // deallocate boils down to libc::free
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
             _ => unimplemented!(
                 "{} --- {:?}",
@@ -489,13 +605,14 @@ pub(crate) mod std_alloc_specs {
 
 pub(crate) mod std_clone_specs {
     use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
         cost_language::Cost,
     };
 
     pub(crate) fn std_clone_dispatch<'tcx>(
         transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         _callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         //TODO: linear if this is a vec or something similar
         transfer_function.domain_state.add_steps(Cost::Concrete(1));
@@ -504,13 +621,14 @@ pub(crate) mod std_clone_specs {
 
 pub(crate) mod std_cmp_specs {
     use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
         cost_language::Cost,
     };
 
     pub(crate) fn std_cmp_dispatch<'tcx>(
         transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         _callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         //TODO: linear if this is a vec or something similar
         transfer_function.domain_state.add_steps(Cost::Concrete(1));
@@ -519,13 +637,14 @@ pub(crate) mod std_cmp_specs {
 
 pub(crate) mod std_convert_specs {
     use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
         cost_language::Cost,
     };
 
     pub(crate) fn std_convert_dispatch<'tcx>(
         transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
@@ -536,6 +655,9 @@ pub(crate) mod std_convert_specs {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
             "std::convert::From::from" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+            }
+            "std::convert::AsRef::as_ref" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
             _ => unimplemented!(
@@ -551,13 +673,14 @@ pub(crate) mod std_convert_specs {
 
 pub(crate) mod std_default_specs {
     use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
         cost_language::Cost,
     };
 
     pub(crate) fn std_default_dispatch<'tcx>(
         transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
@@ -580,13 +703,14 @@ pub(crate) mod std_default_specs {
 
 pub(crate) mod std_instrinsics_specs {
     use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
         cost_language::Cost,
     };
 
     pub(crate) fn std_intrinsics_dispatch<'tcx>(
         transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
@@ -605,6 +729,9 @@ pub(crate) mod std_instrinsics_specs {
             "std::intrinsics::assert_inhabited" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1))
             }
+            "std::intrinsics::saturating_add" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1))
+            }
             _ => unimplemented!(
                 "{} --- {:?}",
                 path,
@@ -616,15 +743,61 @@ pub(crate) mod std_instrinsics_specs {
     }
 }
 
-pub(crate) mod std_ops_specs {
+pub(crate) mod std_iter_specs {
     use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction, AnalysisState},
+    };
+
+    pub(crate) fn std_iter_dispatch<'tcx>(
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+        _callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
+    ) {
+        println!("{:?}", transfer_function.get_local_type(&_callee_info.args[0].place().unwrap()).get_ty().kind());
+        *transfer_function.analysis_state.borrow_mut() = AnalysisState::Failure;
+        println!("Iterators not supported yet");
+        //panic!();
+        
+        /*match path {
+            "std::iter::IntoIterator::into_iter" => {
+                let underlying = transfer_function.get_local_type(&callee_info.args[0].place().unwrap()).get_ty();
+                transfer_function
+                    .domain_state
+                    .add_steps(get_big_o_from_storage_size(
+                        Type::from_mir_ty(transfer_function.tcx, underlying)
+                            .get_size(transfer_function.tcx),
+                    ));
+                // Keep type with more information when switching to iterator
+                let underlying = transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
+                transfer_function.local_types.borrow_mut()[callee_info.destination.unwrap().0.local] = underlying;
+            }
+            "std::iter::FromIterator::from_iter" => {
+                // First arg is the iterator, then come the closures for map, filter, etc, in order of application
+                println!("{:?}", transfer_function.get_local_type(&callee_info.args[1].place().unwrap()));
+                panic!();
+            }
+            _ => unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            ),
+        }*/
+    }
+}
+
+pub(crate) mod std_ops_specs {
+
+    use crate::analysis::{
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
         cost_language::Cost,
     };
 
     pub(crate) fn std_ops_dispatch<'tcx>(
         transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
@@ -639,6 +812,10 @@ pub(crate) mod std_ops_specs {
             }
             "std::ops::Deref::deref" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
+
+                // Keep type with more information when derefencing
+                let underlying = transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
+                transfer_function.local_types.borrow_mut()[callee_info.destination.unwrap().0.local] = underlying;
             }
             "std::ops::Mul::mul"
             | "std::ops::Add::add"
@@ -656,13 +833,14 @@ pub(crate) mod std_ops_specs {
 
 pub(crate) mod std_result_specs {
     use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
         cost_language::Cost,
     };
 
     pub(crate) fn std_result_dispatch<'tcx>(
         transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
@@ -685,14 +863,15 @@ pub(crate) mod std_result_specs {
 
 pub(crate) mod std_slice_specs {
     use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
-        cost_language::Cost,
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
+        cost_language::{Cost, get_big_o_from_storage_size, HasSize}, types::Type,
     };
     use rustc_middle::ty::TyKind;
 
     pub(crate) fn std_slice_dispatch<'tcx>(
         transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
         let path = transfer_function
             .tcx
@@ -702,23 +881,23 @@ pub(crate) mod std_slice_specs {
             "std::slice::SliceIndex::get" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
-            "std::slice::hack::ConvertVec::to_vec" => {
-                //TODO:
-                let ty = if let TyKind::Ref(_, ty, _) = transfer_function
-                    .get_local_type(&callee_info.args[0].place().unwrap())
-                    .get_ty()
-                    .kind()
-                {
-                    if let TyKind::Slice(ty) = ty.kind() {
-                        ty
-                    } else {
-                        unreachable!()
-                    }
+            "std::slice::<impl [T]>::to_vec" => {
+                let underlying = if let TyKind::Ref(_, ty, _) = transfer_function.get_local_type(&callee_info.args[0].place().unwrap()).get_ty().kind() {
+                    *ty
                 } else {
-                    unreachable!()
+                    transfer_function.get_local_type(&callee_info.args[0].place().unwrap()).get_ty()
                 };
-                println!("{:?}", ty);
-                panic!();
+
+                // Keep type with more information when converting to vec
+                let source_ty = transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
+                transfer_function.local_types.borrow_mut()[callee_info.destination.unwrap().0.local] = source_ty;
+
+                transfer_function
+                    .domain_state
+                    .add_steps(get_big_o_from_storage_size(
+                        Type::from_mir_ty(transfer_function.tcx, underlying)
+                            .get_size(transfer_function.tcx),
+                    ));
             }
             _ => unimplemented!(
                 "{} --- {:?}",
@@ -807,7 +986,7 @@ pub(crate) mod storage_actions_specs {
                     // storage access
                     transfer_function
                         .domain_state
-                        .add_reads(field.get_size(&transfer_function.tcx));
+                        .add_reads(field.get_size(transfer_function.tcx));
                 }
                 "get" => {
                     // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.get
@@ -815,12 +994,12 @@ pub(crate) mod storage_actions_specs {
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
-                            field.get_size(&transfer_function.tcx),
+                            field.get_size(transfer_function.tcx),
                         ));
                     // storage access
                     transfer_function
                         .domain_state
-                        .add_reads(field.get_size(&transfer_function.tcx));
+                        .add_reads(field.get_size(transfer_function.tcx));
                 }
                 "kill" => {
                     // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.kill
@@ -834,13 +1013,13 @@ pub(crate) mod storage_actions_specs {
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
-                            field.get_size(&transfer_function.tcx),
+                            field.get_size(transfer_function.tcx),
                         ));
 
                     // storage access
                     transfer_function
                         .domain_state
-                        .add_reads(field.get_size(&transfer_function.tcx));
+                        .add_reads(field.get_size(transfer_function.tcx));
 
                     // account for closure complexity
                     let closure_summary_key = closure_summary_key.unwrap();
@@ -856,19 +1035,19 @@ pub(crate) mod storage_actions_specs {
                     // storage access
                     transfer_function
                         .domain_state
-                        .add_writes(field.get_size(&transfer_function.tcx));
+                        .add_writes(field.get_size(transfer_function.tcx));
                 }
                 "put" => {
                     // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.put
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
-                            field.get_size(&transfer_function.tcx),
+                            field.get_size(transfer_function.tcx),
                         ));
                     // storage access
                     transfer_function
                         .domain_state
-                        .add_writes(field.get_size(&transfer_function.tcx));
+                        .add_writes(field.get_size(transfer_function.tcx));
                 }
                 "set" => {
                     // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.set
@@ -876,12 +1055,12 @@ pub(crate) mod storage_actions_specs {
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
-                            field.get_size(&transfer_function.tcx),
+                            field.get_size(transfer_function.tcx),
                         ));
                     // storage access
                     transfer_function
                         .domain_state
-                        .add_writes(field.get_size(&transfer_function.tcx));
+                        .add_writes(field.get_size(transfer_function.tcx));
                 }
                 "take" => todo!(),
                 "translate" => todo!(),
@@ -891,11 +1070,11 @@ pub(crate) mod storage_actions_specs {
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
-                            field.get_size(&transfer_function.tcx),
+                            field.get_size(transfer_function.tcx),
                         ));
                     transfer_function
                         .domain_state
-                        .add_reads(field.get_size(&transfer_function.tcx));
+                        .add_reads(field.get_size(transfer_function.tcx));
                 }
                 "try_mutate" => {
                     // https://docs.substrate.io/rustdocs/latest/frame_support/storage/types/struct.StorageValue.html#method.try_mutate
@@ -904,13 +1083,13 @@ pub(crate) mod storage_actions_specs {
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
-                            field.get_size(&transfer_function.tcx),
+                            field.get_size(transfer_function.tcx),
                         ));
 
                     // storage access
                     transfer_function
                         .domain_state
-                        .add_reads(field.get_size(&transfer_function.tcx));
+                        .add_reads(field.get_size(transfer_function.tcx));
 
                     // account for closure complexity
                     let closure_summary_key = closure_summary_key.unwrap();
@@ -926,7 +1105,7 @@ pub(crate) mod storage_actions_specs {
                     // storage access
                     transfer_function
                         .domain_state
-                        .add_writes(field.get_size(&transfer_function.tcx));
+                        .add_writes(field.get_size(transfer_function.tcx));
                 }
                 _ => unimplemented!(
                     "{}",
@@ -959,7 +1138,7 @@ pub(crate) mod storage_actions_specs {
                     transfer_function.domain_state.add_steps(Cost::Concrete(1));
                     transfer_function
                         .domain_state
-                        .add_reads(field.get_size(&transfer_function.tcx));
+                        .add_reads(field.get_size(transfer_function.tcx));
                 }
                 "decode_len" => todo!(),
                 "drain" => todo!(),
@@ -968,22 +1147,22 @@ pub(crate) mod storage_actions_specs {
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
-                            field.get_size(&transfer_function.tcx),
+                            field.get_size(transfer_function.tcx),
                         ));
                     transfer_function
                         .domain_state
-                        .add_reads(field.get_size(&transfer_function.tcx));
+                        .add_reads(field.get_size(transfer_function.tcx));
                 }
                 "insert" => {
                     // call "insert" https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#248
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
-                            field.get_size(&transfer_function.tcx),
+                            field.get_size(transfer_function.tcx),
                         ));
                     transfer_function
                         .domain_state
-                        .add_writes(field.get_size(&transfer_function.tcx));
+                        .add_writes(field.get_size(transfer_function.tcx));
                 }
                 "iter" => todo!(),
                 "iter_from" => todo!(),
@@ -996,11 +1175,11 @@ pub(crate) mod storage_actions_specs {
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
-                            field.get_size(&transfer_function.tcx),
+                            field.get_size(transfer_function.tcx),
                         ));
                     transfer_function
                         .domain_state
-                        .add_reads(field.get_size(&transfer_function.tcx));
+                        .add_reads(field.get_size(transfer_function.tcx));
 
                     // account for closure complexity
                     let closure_summary_key = closure_summary_key.unwrap();
@@ -1015,7 +1194,7 @@ pub(crate) mod storage_actions_specs {
 
                     transfer_function
                         .domain_state
-                        .add_writes(field.get_size(&transfer_function.tcx));
+                        .add_writes(field.get_size(transfer_function.tcx));
                 }
                 "mutate_exists" => todo!(),
                 "remove" => {
@@ -1031,12 +1210,12 @@ pub(crate) mod storage_actions_specs {
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
-                            field.get_size(&transfer_function.tcx),
+                            field.get_size(transfer_function.tcx),
                         ));
 
                     transfer_function
                         .domain_state
-                        .add_reads(field.get_size(&transfer_function.tcx));
+                        .add_reads(field.get_size(transfer_function.tcx));
 
                     // Write "None" to storage
                     transfer_function.domain_state.add_writes(Cost::Concrete(1));
@@ -1049,22 +1228,22 @@ pub(crate) mod storage_actions_specs {
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
-                            field.get_size(&transfer_function.tcx),
+                            field.get_size(transfer_function.tcx),
                         ));
                     transfer_function
                         .domain_state
-                        .add_reads(field.get_size(&transfer_function.tcx));
+                        .add_reads(field.get_size(transfer_function.tcx));
                 }
                 "try_mutate" => {
                     // call try_mutate https://docs.substrate.io/rustdocs/latest/src/frame_support/storage/generator/map.rs.html#286
                     transfer_function
                         .domain_state
                         .add_steps(get_big_o_from_storage_size(
-                            field.get_size(&transfer_function.tcx),
+                            field.get_size(transfer_function.tcx),
                         ));
                     transfer_function
                         .domain_state
-                        .add_reads(field.get_size(&transfer_function.tcx));
+                        .add_reads(field.get_size(transfer_function.tcx));
 
                     // account for closure complexity
                     let closure_summary_key = closure_summary_key.unwrap();
@@ -1079,7 +1258,7 @@ pub(crate) mod storage_actions_specs {
 
                     transfer_function
                         .domain_state
-                        .add_writes(field.get_size(&transfer_function.tcx));
+                        .add_writes(field.get_size(transfer_function.tcx));
                 }
                 "try_mutate_exists" => todo!(),
                 _ => unimplemented!(

@@ -87,7 +87,7 @@ impl Type {
 }
 
 impl HasSize for Type {
-    fn get_size(&self, tcx: &TyCtxt) -> Cost {
+    fn get_size(&self, tcx: TyCtxt) -> Cost {
         match self {
             Type::Bool => Cost::Concrete(size_of::<bool>().try_into().unwrap()),
             Type::Char => Cost::Concrete(size_of::<char>().try_into().unwrap()),

@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use super::cost_language::HasSize;
 
 pub(crate) struct Dispatchable {
-    pub def_id: DefId,
+    pub _def_id: DefId,
 }
 
 pub(crate) struct Pallet {
@@ -26,7 +26,7 @@ pub(crate) struct Field {
 }
 
 impl HasSize for Field {
-    fn get_size(&self, tcx: &TyCtxt) -> super::cost_language::Cost {
+    fn get_size(&self, tcx: TyCtxt) -> super::cost_language::Cost {
         match &self.kind {
             StorageKind::StorageValue { value_type } => value_type.get_size(tcx),
             StorageKind::StorageMap { value_type, .. } => value_type.get_size(tcx),
@@ -208,7 +208,7 @@ fn get_dispatchables(tcx: TyCtxt) -> HashMap<DefId, Dispatchable> {
         dispatchables.insert(
             dispatchable_def_id,
             Dispatchable {
-                def_id: dispatchable_def_id,
+                _def_id: dispatchable_def_id,
             },
         );
     }

@@ -2,6 +2,7 @@ use super::cost_domain::CostDomain;
 use super::cost_language::{Cost, Symbolic};
 use super::events_variants_domain::Variants;
 use super::pallet::Pallet;
+use super::specifications::needs_early_catch;
 use super::specifications::storage_actions_specs::HasAccessCost;
 use crate::analysis::events_variants_domain::EventVariantsDomain;
 use crate::analysis::specifications::dispatch_to_specifications;
@@ -94,7 +95,7 @@ impl AnalysisState {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct CalleeInfo<'tcx> {
     pub location: Option<Location>,
     pub args: Vec<Operand<'tcx>>,
@@ -189,10 +190,10 @@ pub(crate) struct TransferFunction<'tcx, 'inter, 'intra> {
     pallet: &'inter Pallet,
     events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     pub summaries: Rc<RefCell<Summary<'tcx>>>,
-    def_id: DefId,
+    pub def_id: DefId,
     pub local_types: Rc<RefCell<LocalTypes<'tcx>>>,
     pub domain_state: &'intra mut CostDomain,
-    analysis_state: Rc<RefCell<AnalysisState>>,
+    pub analysis_state: Rc<RefCell<AnalysisState>>,
 }
 
 impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
@@ -229,7 +230,6 @@ where
 {
     fn t_visit_fn_call(&mut self, location: Location) {
         let callee_info = self.get_callee_info(location);
-
         if self.is_storage_field_access(callee_info.callee_def_id) {
             // Filtering storage access, we need to catch it now otherwise we lose information about which
             // field is accessed.
@@ -239,6 +239,8 @@ where
             // but we can only catch the variant of the Event enum now. Or we need to pass a calling context for
             // further analysis.
             self.analyze_deposit_event(callee_info);
+        } else if needs_early_catch(&self.tcx.def_path_str(callee_info.callee_def_id)) {
+            self.analyze_with_specifications(callee_info);
         } else {
             self.t_fn_call_analysis(callee_info, true);
         }
@@ -264,39 +266,13 @@ where
             }
         } else if self.tcx.is_mir_available(callee_info.callee_def_id) {
             // We don't have the summary but MIR is available, we need to analyze the function
-            self.analyze_with_available_mir(&callee_info);
+            self.analyze_with_available_mir(&callee_info, account_for_cost_now);
         } else if self.is_closure_call(callee_info.callee_def_id) {
             self.analyze_closure_call(callee_info);
         } else {
-            // No MIR available, but symbolically account for the call cost
-
-            // Check if any closure is present in the arguments.
-            // If so, analyze it but do not account for the cost yet, as we don't know
-            // how man times it will be run
-            for arg in callee_info.args.iter() {
-                match arg {
-                    Operand::Move(place) | Operand::Copy(place) => {
-                        let arg_ty_kind =
-                            self.get_local_type(place).get_ty().kind();
-
-                        if let TyKind::Closure(closure_def_id, closure_substs_ref) = arg_ty_kind {
-
-                            self.analyze_closure_as_argument(
-                                *closure_def_id,
-                                closure_substs_ref,
-                                Some(vec![(*arg).clone()])
-                            );
-                        }
-                    }
-                    Operand::Constant(_) if let Some((const_fn_def_id, const_fn_substs_ref)) = arg.const_fn_def() => {
-                        self.analyze_closure_as_argument(const_fn_def_id, const_fn_substs_ref, None);
-                    },
-                    _ => ()
-                }
-            }
-
-            dispatch_to_specifications(self, callee_info);
+            self.analyze_with_specifications(callee_info);
         }
+            
     }
 
     fn analyze_closure_as_argument(
@@ -410,7 +386,11 @@ where
         }
     }
 
-    fn analyze_with_available_mir(&mut self, callee_info: &CalleeInfo<'tcx>) {
+    fn analyze_with_available_mir(
+        &mut self,
+        callee_info: &CalleeInfo<'tcx>,
+        account_for_cost_now: bool,
+    ) {
         // Initialize the summary to None so we can detect a recursive call later
         let summary_key = self.get_summary_key_for_callee_info(callee_info);
         self.summaries.borrow_mut().insert(summary_key, None);
@@ -427,13 +407,15 @@ where
             return;
         }
 
-        self.analyze_with_mir(callee_info, target_mir);
+        self.analyze_with_mir(callee_info, target_mir, account_for_cost_now);
     }
 
-    fn analyze_with_mir(&mut self, callee_info: &CalleeInfo<'tcx>, target_mir: &Body<'tcx>) {
-        // Account for function call
-        self.domain_state.add_steps(Cost::Concrete(1));
-
+    fn analyze_with_mir(
+        &mut self,
+        callee_info: &CalleeInfo<'tcx>,
+        target_mir: &Body<'tcx>,
+        account_for_cost_now: bool,
+    ) {
         let mut local_types_outter = LocalTypes::new();
         // Local 0_ will be return value, args start at 1_
         if let Some((place_to, _)) = callee_info.destination {
@@ -502,8 +484,10 @@ where
         };
 
         if let Some(end_state) = end_state {
-            // Update caller function state
-            self.domain_state.inter_join(&end_state);
+            if account_for_cost_now {
+                // Update caller function state
+                self.domain_state.inter_join(&end_state);
+            }
 
             // Add the callee function summary to our summaries map
             let summary_key = self.get_summary_key_for_callee_info(callee_info);
@@ -511,6 +495,46 @@ where
                 .borrow_mut()
                 .insert(summary_key, Some(end_state));
         }
+    }
+
+    fn analyze_with_specifications(&mut self, callee_info: CalleeInfo<'tcx>) {
+        // No MIR available, but symbolically account for the call cost
+        let mut args_summary_keys = Vec::new();
+        // Check if any closure is present in the arguments.
+        // If so, analyze it but do not account for the cost yet, as we don't know
+        // how man times it will be run
+        for arg in callee_info.args.iter() {
+            if *self.analysis_state.borrow() == AnalysisState::Success {
+                match arg {
+                Operand::Move(place) | Operand::Copy(place) => {
+                    let arg_ty_kind =
+                        self.get_local_type(place).get_ty().kind();
+
+                    if let TyKind::Closure(closure_def_id, closure_substs_ref) = arg_ty_kind {
+
+                        let summary_key = self.analyze_closure_as_argument(
+                            *closure_def_id,
+                            closure_substs_ref,
+                            Some(vec![(*arg).clone()])
+                        );
+                        args_summary_keys.push(Some(summary_key));
+                    }
+                }
+                Operand::Constant(_) if let Some((const_fn_def_id, const_fn_substs_ref)) = arg.const_fn_def() => {
+                    let summary_key = self.analyze_closure_as_argument(const_fn_def_id, const_fn_substs_ref, None);
+                    args_summary_keys.push(Some(summary_key));
+                },
+                _ => args_summary_keys.push(None)
+            }
+            } else {
+                break;
+            }
+        }
+
+        if *self.analysis_state.borrow() == AnalysisState::Success {
+            dispatch_to_specifications(self, callee_info, args_summary_keys);
+        }
+    
     }
 
     fn analyze_closure_call(&mut self, callee_info: CalleeInfo<'tcx>) {
@@ -736,6 +760,53 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                     }
                 }
             }
+            StatementKind::Assign(box (place_to, r_value)) if let Rvalue::Ref(_, _, place_from) = r_value => {
+                // Replace references by their underlying types
+                
+                if place_from.projection.is_empty() {
+                    // Reflect the whole type from "place_from"
+                    let local_type_from = self.get_local_type(place_from);
+
+                    if place_to.projection.is_empty() {
+                        // Reflect the whole type from "place_from" to whole type of "place_to"
+                        self.local_types.borrow_mut()[place_to.local] = local_type_from;
+                    } else {
+                        // Reflect the whole type from "place_from" to the given field of "place_to"
+                        if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
+                            && self.get_local_type(place_to).has_fields()
+                            // Second condition is for types that are Adt or closures but no typeck result is available
+                            // we cannot infer more precise type information for them
+                        {
+                            self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from);
+                        }
+                    }
+                } else {
+                    // Reflect the type of the given field of "place_from"
+                    if let ProjectionElem::Field(field, _) = place_from.projection.last().unwrap()
+                        && self.get_local_type(place_from).has_fields()
+                        // Second condition is for types that are Adt or closures but no typeck result is available
+                        // we cannot infer more precise type information for them    
+                    {
+                        let local_type_from = (*self.get_local_type(place_from).get_field(*field).unwrap()).clone();
+
+                        if place_to.projection.is_empty() {
+                            // Reflect the type of the given field of "place_from" to whole type of "place_to"
+                            self.local_types.borrow_mut()[place_to.local] = local_type_from;
+
+                        } else {
+                            // Reflect the type of the given field of "place_from" to the given field of "place_to"
+                            if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
+                            && self.get_local_type(place_to).has_fields()
+                            // Second condition is for types that are Adt or closures but no typeck result is available
+                            // we cannot infer more precise type information for them
+                            {
+                                self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from);
+                            }
+                        }
+                    }
+                }
+
+            } 
             _ => self.super_statement(statement, location),
         }
     }

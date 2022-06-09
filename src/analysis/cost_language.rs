@@ -330,7 +330,7 @@ pub(crate) fn get_big_o_from_storage_size(size: Cost) -> Cost {
 }
 
 pub(crate) trait HasSize {
-    fn get_size(&self, tcx: &TyCtxt) -> Cost;
+    fn get_size(&self, tcx: TyCtxt) -> Cost;
 }
 
 #[cfg(test)]
