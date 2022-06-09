@@ -18,9 +18,21 @@ Install the tool for cargo:
 cargo install --path .
 ```
 
+## Running the tool
+
 Run it on a pallet:
 ```console
 cd /path/to/frame/pallet/
 touch src/*.rs && cargo saft --release
 ```
 We make sure that the pallet is recompiled, otherwise we may not have access to the minimal needed [MIR](https://rustc-dev-guide.rust-lang.org/mir/index.html).
+
+### Some considerations
+
+The tool does not support recursion, loops and iterators (for now).
+
+The tool does not have access to all the MIR it wants, since we run it on a pallet, some concrete types that are injected by the Runtime are still generic and [monomorphization](https://rustc-dev-guide.rust-lang.org/backend/monomorph.html) cannot happen yet. This leads to the need of manual specifications, and thus imprecisions. The tool, in this proof-of-concept state, only supports the following pallets: [balances](https://github.com/paritytech/substrate/tree/master/frame/balances), [identity](https://github.com/paritytech/substrate/tree/master/frame/identity), [utility](https://github.com/paritytech/substrate/tree/master/frame/utility), [vesting](https://github.com/paritytech/substrate/tree/master/frame/vesting). It possibly supports other pallets but the effort has been made on the previous list in particular.
+
+You can add specifications to fill the needs for your pallet in the [specifications.rs](https://github.com/simon-perriard/saft/blob/main/src/analysis/specifications.rs) file.
+
+This is a research project and it is not intended to be used as a product to fully trust.
