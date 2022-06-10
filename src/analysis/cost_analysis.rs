@@ -236,7 +236,6 @@ where
 {
     fn t_visit_fn_call(&mut self, location: Location) {
         let callee_info = self.get_callee_info(location);
-        println!("{}", self.tcx.def_path_str(callee_info.callee_def_id));
         if self.is_storage_field_access(callee_info.callee_def_id) {
             // Filtering storage access, we need to catch it now otherwise we lose information about which
             // field is accessed.

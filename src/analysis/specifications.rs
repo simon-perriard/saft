@@ -762,13 +762,6 @@ pub(crate) mod std_iter_specs {
         _callee_info: CalleeInfo<'tcx>,
         _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
-        println!(
-            "{:?}",
-            transfer_function
-                .get_local_type(&_callee_info.args[0].place().unwrap())
-                .get_ty()
-                .kind()
-        );
         *transfer_function.analysis_state.borrow_mut() = AnalysisState::Failure;
         println!("Iterators not supported yet");
     }

@@ -71,7 +71,7 @@ pub(crate) mod dispatchables_getter {
     pub(crate) fn get_dispatch_bypass_filter_local_def_id(tcx: TyCtxt) -> Option<LocalDefId> {
         for local_def_id in tcx.hir().body_owners() {
             let def_id = local_def_id.to_def_id();
-            let pallet_call_dispatch_regex = Regex::new(r"<pallet::Call<.*\s*(,.*)*> as frame_support::dispatch::UnfilteredDispatchable>::dispatch_bypass_filter").unwrap();
+            let pallet_call_dispatch_regex = Regex::new(r"^<pallet::Call<.*\s*(,.*)*> as frame_support::dispatch::UnfilteredDispatchable>::dispatch_bypass_filter$").unwrap();
 
             if pallet_call_dispatch_regex.is_match(&tcx.def_path_str(def_id)) {
                 return Some(local_def_id);
@@ -87,23 +87,23 @@ pub(crate) mod dispatchables_getter {
     /// * `tcx` - Compilation context
     /// * `dispatch_local_def_id` - LocalDefId of the pallet's `dispatch_bypass_filter` function, can be given by [`get_dispatch_bypass_filter_local_def_id`]
     /// * `variant_ids` - Vector containing the extrinsincs' HirIds, can be given by [`get_call_enum_variants_hir_ids`]
-    pub(crate) fn get_dispatchable_def_ids(
-        tcx: TyCtxt,
+    pub(crate) fn get_dispatchable_def_ids<'tcx>(
+        tcx: TyCtxt<'tcx>,
         dispatch_local_def_id: LocalDefId,
-        variant_ids: &Vec<&HirId>,
+        variant_ids: Vec<&HirId>,
     ) -> Vec<DefId> {
         let mut extrinsics_fn_ids = Vec::new();
         let dispatch_def_hir_id = tcx.hir().local_def_id_to_hir_id(dispatch_local_def_id);
 
-        for variant_id in variant_ids {
-            let body_owner = tcx.hir().body_owned_by(dispatch_def_hir_id);
-            let body = tcx.hir().body(body_owner);
-            let match_target = tcx.hir().get(**variant_id).ident().unwrap();
+        let body_owner = tcx.hir().body_owned_by(dispatch_def_hir_id);
+        let body = tcx.hir().body(body_owner);
 
+        for variant_id in variant_ids {
+            let match_target = tcx.hir().get(*variant_id).ident().unwrap();
             let rustc_hir::Body { value, .. } = body;
             {
                 let called_fn_path =
-                    go_down_dispatch_bypass_filter(&value.kind, match_target.as_str());
+                    go_down_dispatch_bypass_filter(&tcx, &value.kind, match_target.as_str());
                 if let Some((hir_id, qpath)) = called_fn_path {
                     // Resolve the function call to the function definition
                     let typeck_results = tcx.typeck(tcx.hir().local_def_id(dispatch_def_hir_id));
@@ -120,14 +120,15 @@ pub(crate) mod dispatchables_getter {
         extrinsics_fn_ids
     }
 
-    fn go_down_dispatch_bypass_filter<'hir>(
+    fn go_down_dispatch_bypass_filter<'tcx, 'hir>(
+        tcx: &'hir TyCtxt<'tcx>,
         current_node: &'hir rustc_hir::ExprKind,
         match_target: &'hir str,
     ) -> Option<(&'hir HirId, &'hir rustc_hir::QPath<'hir>)> {
         match current_node {
             rustc_hir::ExprKind::Block(block, _) => {
                 if let Some(expr) = block.expr {
-                    go_down_dispatch_bypass_filter(&expr.kind, match_target)
+                    go_down_dispatch_bypass_filter(tcx, &expr.kind, match_target)
                 } else {
                     None
                 }
@@ -137,7 +138,7 @@ pub(crate) mod dispatchables_getter {
                 for arm in *arms {
                     let rustc_hir::Arm { pat, body, .. } = arm;
                     if is_matching(&pat.kind, match_target) {
-                        return go_down_dispatch_bypass_filter(&body.kind, match_target);
+                        return go_down_dispatch_bypass_filter(tcx, &body.kind, match_target);
                     } else {
                         continue;
                     }
@@ -150,8 +151,17 @@ pub(crate) mod dispatchables_getter {
                     rustc_hir::ExprKind::Path(qpath) => Some((&expr.hir_id, qpath)),
                     _ => None,
                 },
-                _ => go_down_dispatch_bypass_filter(&exprs[0].kind, match_target),
+                _ => go_down_dispatch_bypass_filter(tcx, &exprs[0].kind, match_target),
             },
+
+            rustc_hir::ExprKind::Call(_, args) => 
+                go_down_dispatch_bypass_filter(tcx, &args[0].kind, match_target),
+
+            rustc_hir::ExprKind::Closure(_, _, body_id, _, _) => {
+                let body = tcx.hir().body(*body_id);
+                let rustc_hir::Body { value, .. } = body;
+                go_down_dispatch_bypass_filter(tcx, &value.kind, match_target)
+            }
             _ => None,
         }
     }

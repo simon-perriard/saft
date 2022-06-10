@@ -197,7 +197,7 @@ fn get_dispatchables(tcx: TyCtxt) -> HashMap<DefId, Dispatchable> {
     let dispatch_local_def_id = get_dispatch_bypass_filter_local_def_id(tcx);
 
     let dispatchable_def_ids = if let Some(dispatch_local_def_id) = dispatch_local_def_id {
-        get_dispatchable_def_ids(tcx, dispatch_local_def_id, &variant_ids)
+        get_dispatchable_def_ids(tcx, dispatch_local_def_id, variant_ids)
     } else {
         panic!("Pallet level dispatch function not found.\nFunction 'dispatch_bypass_filter' not found, are you running SAFT on the pallet level?");
     };
