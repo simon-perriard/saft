@@ -153,7 +153,6 @@ pub(crate) mod frame_support_bounded_vec_specs {
                 let length = Cost::Symbolic(Symbolic::BigO(format!("VALUEOF({}::get())", ty_name)));
                 let summary_key = (*args_summary_keys.get(0).unwrap()).clone();
                 let mut total_cost = transfer_function.get_summary_for_key(&summary_key.unwrap());
-
                 total_cost.cost_big_o_mul(length);
 
                 transfer_function.domain_state.inter_join(&total_cost);

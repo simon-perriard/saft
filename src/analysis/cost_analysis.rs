@@ -253,6 +253,9 @@ where
     }
 
     fn t_fn_call_analysis(&mut self, callee_info: CalleeInfo<'tcx>, account_for_cost_now: bool) {
+        // Account for function call overhead
+        self.domain_state.add_steps(Cost::Concrete(1));
+
         let summary_key = self.get_summary_key_for_callee_info(&callee_info);
 
         if self.summaries.borrow().contains_key(&summary_key) {
@@ -308,6 +311,9 @@ where
     }
 
     fn analyze_storage_access(&mut self, callee_info: CalleeInfo<'tcx>) {
+        // Account for function call overhead
+        self.domain_state.add_steps(Cost::Concrete(1));
+        
         // From Subtrate storage access implementation, if there is a closure it is as last argument
         let maybe_closure_arg = callee_info.args.last().and_then(|arg| {
             arg.place().map(|place| {
@@ -333,6 +339,9 @@ where
     }
 
     fn analyze_deposit_event(&mut self, callee_info: CalleeInfo<'tcx>) {
+        // Account for function call overhead
+        self.domain_state.add_steps(Cost::Concrete(1));
+
         let args = callee_info.args;
         let location = callee_info.location;
 
@@ -503,6 +512,8 @@ where
     }
 
     fn analyze_with_specifications(&mut self, callee_info: CalleeInfo<'tcx>) {
+        // Account for function call overhead
+        self.domain_state.add_steps(Cost::Concrete(1));
         // No MIR available, but symbolically account for the call cost
         let mut args_summary_keys = Vec::new();
         // Check if any closure is present in the arguments.
