@@ -118,7 +118,7 @@ pub(crate) mod frame_support_bounded_vec_specs {
     };
 
     pub(crate) fn frame_support_bounded_vec_dispatch<'tcx>(
-        transfer_function: &mut TransferFunction,
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
         callee_info: CalleeInfo<'tcx>,
         args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
     ) {
@@ -493,7 +493,7 @@ pub(crate) mod sp_runtime_traits_specs {
                 // get the destination type to know what type is read from storage
                 // return type is Result<read_type, error_type>
                 let res = transfer_function
-                    .get_local_type(&callee_info.destination.unwrap().0)
+                    .get_local_type(&callee_info.destination.unwrap())
                     .get_ty()
                     .kind();
                 let read_type = match res {
@@ -796,7 +796,7 @@ pub(crate) mod std_ops_specs {
                 let underlying =
                     transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
                 transfer_function.local_types.borrow_mut()
-                    [callee_info.destination.unwrap().0.local] = underlying;
+                    [callee_info.destination.unwrap().local] = underlying;
             }
             "std::ops::Mul::mul"
             | "std::ops::Add::add"
@@ -881,7 +881,7 @@ pub(crate) mod std_slice_specs {
                 let source_ty =
                     transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
                 transfer_function.local_types.borrow_mut()
-                    [callee_info.destination.unwrap().0.local] = source_ty;
+                    [callee_info.destination.unwrap().local] = source_ty;
 
                 transfer_function
                     .domain_state

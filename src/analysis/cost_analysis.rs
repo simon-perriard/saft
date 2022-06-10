@@ -99,7 +99,7 @@ impl AnalysisState {
 pub(crate) struct CalleeInfo<'tcx> {
     pub location: Option<Location>,
     pub args: Vec<Operand<'tcx>>,
-    pub destination: Option<(Place<'tcx>, BasicBlock)>,
+    pub destination: Option<Place<'tcx>>,
     pub callee_def_id: DefId,
     pub substs_ref: SubstsRef<'tcx>,
 }
@@ -223,7 +223,7 @@ impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
         (*self.local_types.borrow().get(place.local).unwrap()).clone()
     }
 
-    pub fn get_summary_for_key(&self, key: &SummaryKey) -> CostDomain {
+    pub fn get_summary_for_key(&self, key: &SummaryKey<'tcx>) -> CostDomain {
         (*self.summaries.borrow().get(key).unwrap())
             .clone()
             .unwrap()
@@ -432,7 +432,7 @@ where
     ) {
         let mut local_types_outter = LocalTypes::new();
         // Local 0_ will be return value, args start at 1_
-        if let Some((place_to, _)) = callee_info.destination {
+        if let Some(place_to) = callee_info.destination {
             local_types_outter.push(self.local_types.borrow()[place_to.local].clone());
         } else {
             // If none, the call necessarily diverges.
@@ -664,7 +664,7 @@ where
              => CalleeInfo {
                  location: Some(location),
                  args: (*args).clone(),
-                 destination: *destination,
+                 destination: Some(*destination),
                  callee_def_id,
                  substs_ref
              },
