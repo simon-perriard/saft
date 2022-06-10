@@ -154,8 +154,9 @@ pub(crate) mod dispatchables_getter {
                 _ => go_down_dispatch_bypass_filter(tcx, &exprs[0].kind, match_target),
             },
 
-            rustc_hir::ExprKind::Call(_, args) => 
-                go_down_dispatch_bypass_filter(tcx, &args[0].kind, match_target),
+            rustc_hir::ExprKind::Call(_, args) => {
+                go_down_dispatch_bypass_filter(tcx, &args[0].kind, match_target)
+            }
 
             rustc_hir::ExprKind::Closure(_, _, body_id, _, _) => {
                 let body = tcx.hir().body(*body_id);

@@ -333,6 +333,11 @@ impl fmt::Display for Cost {
 }
 
 pub(crate) fn get_big_o_from_storage_size(size: Cost) -> Cost {
+
+    if size.is_zero() {
+        return Cost::Concrete(0);
+    }
+
     match size.clone() {
         Cost::Concrete(_) => Cost::Concrete(1),
         Cost::Symbolic(s) => match s {
