@@ -1,5 +1,5 @@
 use crate::analysis::types::Type;
-use crate::analysis_utils::dispatchables_getter::get_call_enum_variants_hir_ids;
+use crate::analysis_utils::dispatchables_getter::get_call_enum_variants_names;
 use crate::analysis_utils::dispatchables_getter::get_dispatch_bypass_filter_local_def_id;
 use crate::analysis_utils::dispatchables_getter::get_dispatchable_def_ids;
 use rustc_hir::def::Res;
@@ -191,7 +191,7 @@ fn get_fields(tcx: TyCtxt) -> HashMap<DefId, Field> {
 
 fn get_dispatchables(tcx: TyCtxt) -> HashMap<DefId, Dispatchable> {
     // Retrieve the variants of the Call enum, aka names of extrinsics
-    let variant_ids = get_call_enum_variants_hir_ids(tcx);
+    let variant_ids = get_call_enum_variants_names(tcx);
     // Retrieve local def id of the 'dispatch_bypass_filter' function, aka the function that
     // dispatches the calls at the pallet level
     let dispatch_local_def_id = get_dispatch_bypass_filter_local_def_id(tcx);

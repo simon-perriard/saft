@@ -742,6 +742,12 @@ pub(crate) mod std_instrinsics_specs {
             "std::intrinsics::saturating_add" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1))
             }
+            "std::intrinsics::add_with_overflow" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1))
+            }
+            "std::intrinsics::unlikely" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1))
+            }
             _ => unimplemented!(
                 "{} --- {:?}",
                 path,

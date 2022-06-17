@@ -14,11 +14,9 @@ pub(crate) enum Type {
     Uint(ty::UintTy),
     Float(ty::FloatTy),
     Adt(Adt),
-    Str,
     Array(Box<Type>, u64),
-    Slice(Box<Type>),
     Ref(Box<Type>, Mutability),
-    FnPtr(Vec<Type>, Box<Type>),
+    //FnPtr(Vec<Type>, Box<Type>),
     Tuple(Vec<Type>),
     Projection(DefId),
     Unsupported,
@@ -52,16 +50,16 @@ impl Type {
                 }
                 _ => Type::Adt(Adt::Unknown(adt_def.did())),
             },
-            TyKind::Str => Type::Str,
+            //TyKind::Str => Type::Str,
             TyKind::Array(t, size) => Type::Array(
                 Box::new(Self::from_mir_ty(tcx, t)),
                 size.val().try_to_machine_usize(tcx).unwrap(),
             ),
-            TyKind::Slice(t) => Type::Slice(Box::new(Self::from_mir_ty(tcx, t))),
+            //TyKind::Slice(t) => Type::Slice(Box::new(Self::from_mir_ty(tcx, t))),
             TyKind::Ref(_, t, mutability) => {
                 Type::Ref(Box::new(Self::from_mir_ty(tcx, t)), mutability)
             }
-            TyKind::FnPtr(poly_fn_sig) => {
+            /*TyKind::FnPtr(poly_fn_sig) => {
                 let fn_sig = poly_fn_sig
                     .no_bound_vars()
                     .expect("Polymorphic functions not supported.");
@@ -73,7 +71,7 @@ impl Type {
                         .collect(),
                     Box::new(Self::from_mir_ty(tcx, fn_sig.output())),
                 )
-            }
+            }*/
             TyKind::Tuple(_) => Type::Tuple(
                 ty.tuple_fields()
                     .iter()
@@ -142,11 +140,9 @@ impl HasSize for Type {
                     max_size.symbolic_mul(ty.get_size(tcx))
                 }
             },
-            Type::Str => todo!(),
             Type::Array(ty, size) => Cost::Concrete(*size).concrete_mul(ty.get_size(tcx)),
-            Type::Slice(_) => todo!(),
             Type::Ref(ty, _) => ty.get_size(tcx),
-            Type::FnPtr(_, ret_ty) => ret_ty.get_size(tcx),
+            //Type::FnPtr(_, ret_ty) => ret_ty.get_size(tcx),
             Type::Tuple(tys) => tys
                 .iter()
                 .map(|ty| ty.get_size(tcx))

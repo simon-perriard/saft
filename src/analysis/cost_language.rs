@@ -144,6 +144,12 @@ impl Cost {
                 flat.append(&mut a.flatten_add_chain());
                 flat.append(&mut b.flatten_add_chain());
             }
+            Self::ConcreteMul(a, b) => {
+                // Open the concrete mul
+                for _ in 0..*a {
+                    flat.append(&mut b.flatten_add_chain());
+                }
+            }
             _ => flat.push(self.clone()),
         }
 
@@ -241,6 +247,8 @@ impl Cost {
                     .reduce(|accum, item| accum + item)
                     .unwrap_or_default()
             }
+            Cost::ConcreteMul(a, b) => Cost::ConcreteMul(*a, Box::new(b.reduce_add_chain())),
+            Cost::SymbolicMul(a, b) => Cost::SymbolicMul((*a).clone(), Box::new(b.reduce_add_chain())),
             Cost::Max(a, b) => a.reduce_add_chain().max(b.reduce_add_chain()),
             _ => (*self).clone(),
         }
@@ -307,6 +315,8 @@ impl std::ops::Add for Cost {
             return Self::ConcreteMul(x+1, a);
         } else if let Self::ConcreteMul(x, a) = self.clone() && let Self::ConcreteMul(y, b) = rhs.clone() && *a == *b{
             return Self::ConcreteMul(x+y, a);
+        } else if self.clone() == rhs.clone() {
+            return Self::ConcreteMul(2, Box::new(self));
         }
 
         Self::Add(Box::new(self), Box::new(rhs))
@@ -428,5 +438,18 @@ mod tests {
                 Box::new(Cost::Max(Box::new(s1), Box::new(s3)))
             )
         )
+    }
+
+    #[test]
+    fn max_opens_concrete_mul() {
+        let s1 = Cost::Symbolic(Symbolic::ValueOf(format!("sym1")));
+
+        let c_mul = s1.clone() + s1.clone();
+
+        assert_eq!(c_mul, Cost::ConcreteMul(2, Box::new(s1.clone())));
+
+        let max = s1.clone().max(c_mul.clone());
+
+        assert_eq!(max, c_mul)
     }
 }

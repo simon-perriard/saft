@@ -32,7 +32,6 @@ pub(crate) fn events_variants_analysis(tcx: TyCtxt) -> HashMap<DefId, EventVaria
         if let Some((last, _)) = rustc_middle::mir::traversal::reverse_postorder(mir).last() {
             results.seek_to_block_end(last);
             let end_state = results.get().clone();
-
             if !end_state.is_empty() {
                 event_variants.insert(crate_def_id, end_state);
             }
