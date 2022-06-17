@@ -43,7 +43,7 @@ pub(crate) mod dispatchables_getter {
                 if let rustc_hir::ItemKind::Enum(enum_def, _) = kind {
                     if ident.as_str() == "Call" {
                         for variant in enum_def.variants.iter() {
-                            let rustc_hir::Variant { ident, id, .. } = variant;
+                            let rustc_hir::Variant { ident, .. } = variant;
                             // The __Ignore variant is automatically added and
                             // we are not interested in it
                             if ident.as_str() != "__Ignore" {
@@ -87,8 +87,8 @@ pub(crate) mod dispatchables_getter {
     /// * `tcx` - Compilation context
     /// * `dispatch_local_def_id` - LocalDefId of the pallet's `dispatch_bypass_filter` function, can be given by [`get_dispatch_bypass_filter_local_def_id`]
     /// * `variant_ids` - Vector containing the extrinsincs' names, can be given by [`get_call_enum_variants_names`]
-    pub(crate) fn get_dispatchable_def_ids<'tcx>(
-        tcx: TyCtxt<'tcx>,
+    pub(crate) fn get_dispatchable_def_ids(
+        tcx: TyCtxt,
         dispatch_local_def_id: LocalDefId,
         variant_ids: Vec<&str>,
     ) -> Vec<DefId> {

@@ -10,6 +10,7 @@ use self::std_specs::std_dispatch;
 use super::cost_analysis::SummaryKey;
 
 pub(crate) fn needs_early_catch(path: &str) -> bool {
+    #[allow(clippy::match_like_matches_macro)]
     match path {
         "std::slice::<impl [T]>::to_vec" => true,
         _ => false,

@@ -248,7 +248,9 @@ impl Cost {
                     .unwrap_or_default()
             }
             Cost::ConcreteMul(a, b) => Cost::ConcreteMul(*a, Box::new(b.reduce_add_chain())),
-            Cost::SymbolicMul(a, b) => Cost::SymbolicMul((*a).clone(), Box::new(b.reduce_add_chain())),
+            Cost::SymbolicMul(a, b) => {
+                Cost::SymbolicMul((*a).clone(), Box::new(b.reduce_add_chain()))
+            }
             Cost::Max(a, b) => a.reduce_add_chain().max(b.reduce_add_chain()),
             _ => (*self).clone(),
         }
@@ -315,7 +317,7 @@ impl std::ops::Add for Cost {
             return Self::ConcreteMul(x+1, a);
         } else if let Self::ConcreteMul(x, a) = self.clone() && let Self::ConcreteMul(y, b) = rhs.clone() && *a == *b{
             return Self::ConcreteMul(x+y, a);
-        } else if self.clone() == rhs.clone() {
+        } else if self == rhs {
             return Self::ConcreteMul(2, Box::new(self));
         }
 
@@ -343,7 +345,6 @@ impl fmt::Display for Cost {
 }
 
 pub(crate) fn get_big_o_from_storage_size(size: Cost) -> Cost {
-
     if size.is_zero() {
         return Cost::Concrete(0);
     }

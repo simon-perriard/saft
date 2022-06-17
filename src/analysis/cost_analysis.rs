@@ -197,6 +197,7 @@ pub(crate) struct TransferFunction<'tcx, 'inter, 'intra> {
 }
 
 impl<'tcx, 'inter, 'intra> TransferFunction<'tcx, 'inter, 'intra> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         tcx: TyCtxt<'tcx>,
         pallet: &'inter Pallet,
@@ -313,7 +314,7 @@ where
     fn analyze_storage_access(&mut self, callee_info: CalleeInfo<'tcx>) {
         // Account for function call overhead
         self.domain_state.add_steps(Cost::Concrete(1));
-        
+
         // From Subtrate storage access implementation, if there is a closure it is as last argument
         let maybe_closure_arg = callee_info.args.last().and_then(|arg| {
             arg.place().map(|place| {
