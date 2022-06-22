@@ -181,36 +181,42 @@ pub(crate) mod frame_support_dispatch_specs {
 
         match path {
             "frame_support::dispatch::UnfilteredDispatchable::dispatch_bypass_filter" => {
-                // This specifications are far from optimal, but at least we see that another call is made
-                let call_name = callee_info.substs_ref.type_at(0);
+                // We try to get they variable's symbol, otherwise we fallback on the type
+                let call_name = transfer_function
+                    .get_local_type(&callee_info.args[0].place().unwrap())
+                    .get_symbol()
+                    .unwrap_or_else(|| callee_info.substs_ref.type_at(0).to_string());
                 transfer_function
                     .domain_state
-                    .add_reads(Cost::Symbolic(Symbolic::ReadsOf(format!("{}", call_name))));
+                    .add_reads(Cost::Symbolic(Symbolic::ReadsOf(call_name.clone())));
                 transfer_function
                     .domain_state
-                    .add_writes(Cost::Symbolic(Symbolic::WritesOf(format!("{}", call_name))));
+                    .add_writes(Cost::Symbolic(Symbolic::WritesOf(call_name.clone())));
                 transfer_function
                     .domain_state
-                    .add_events(Cost::Symbolic(Symbolic::EventsOf(format!("{}", call_name))));
+                    .add_events(Cost::Symbolic(Symbolic::EventsOf(call_name.clone())));
                 transfer_function
                     .domain_state
-                    .add_steps(Cost::Symbolic(Symbolic::StepsOf(format!("{}", call_name))));
+                    .add_steps(Cost::Symbolic(Symbolic::StepsOf(call_name)));
             }
             "frame_support::dispatch::Dispatchable::dispatch" => {
-                // This specifications are far from optimal, but at least we see that another call is made
-                let call_name = callee_info.substs_ref.type_at(0);
+                // We try to get they variable's symbol, otherwise we fallback on the type
+                let call_name = transfer_function
+                    .get_local_type(&callee_info.args[0].place().unwrap())
+                    .get_symbol()
+                    .unwrap_or_else(|| callee_info.substs_ref.type_at(0).to_string());
                 transfer_function
                     .domain_state
-                    .add_reads(Cost::Symbolic(Symbolic::ReadsOf(format!("{}", call_name))));
+                    .add_reads(Cost::Symbolic(Symbolic::ReadsOf(call_name.clone())));
                 transfer_function
                     .domain_state
-                    .add_writes(Cost::Symbolic(Symbolic::WritesOf(format!("{}", call_name))));
+                    .add_writes(Cost::Symbolic(Symbolic::WritesOf(call_name.clone())));
                 transfer_function
                     .domain_state
-                    .add_events(Cost::Symbolic(Symbolic::EventsOf(format!("{}", call_name))));
+                    .add_events(Cost::Symbolic(Symbolic::EventsOf(call_name.clone())));
                 transfer_function
                     .domain_state
-                    .add_steps(Cost::Symbolic(Symbolic::StepsOf(format!("{}", call_name))));
+                    .add_steps(Cost::Symbolic(Symbolic::StepsOf(call_name)));
             }
             "frame_support::dispatch::GetDispatchInfo::get_dispatch_info" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));

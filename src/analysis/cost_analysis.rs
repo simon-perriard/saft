@@ -10,6 +10,7 @@ use rustc_index::vec::IndexVec;
 use rustc_middle::mir::{
     self, traversal::*, visit::*, BasicBlock, Body, Local, Location, Operand, Place,
     ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
+    VarDebugInfoContents,
 };
 use rustc_middle::ty::{subst::SubstsRef, Ty, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
@@ -19,8 +20,56 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::vec;
 
+#[derive(Clone, Debug, Default, Hash, PartialEq, Eq)]
+pub(crate) struct LocalSymbol {
+    symbol: Option<String>,
+}
+
+impl<'tcx> LocalSymbol {
+    pub fn new(symbol: String) -> Self {
+        LocalSymbol {
+            symbol: Some(symbol),
+        }
+    }
+
+    pub fn concat(&self, field: String) -> Self {
+        if let Some(symbol) = &self.symbol {
+            Self::new(format!("{}.{}", symbol, field))
+        } else {
+            Self::new(field)
+        }
+    }
+
+    pub fn get_symbol_for_local(tcx: TyCtxt<'tcx>, def_id: DefId, local: Local) -> Self {
+        let body = tcx.optimized_mir(def_id);
+
+        let locals_to_symbol = body.var_debug_info.iter().filter_map(|var_debug_info| {
+            if let VarDebugInfoContents::Place(place) = var_debug_info.value {
+                Some((place.local, var_debug_info.name.to_ident_string()))
+            } else {
+                None
+            }
+        });
+
+        for (l, symbol) in locals_to_symbol {
+            if local == l {
+                return LocalSymbol::new(symbol);
+            }
+        }
+
+        LocalSymbol::default()
+    }
+}
+
+impl From<String> for LocalSymbol {
+    fn from(string: String) -> Self {
+        Self::new(string)
+    }
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct LocalType<'tcx> {
+    symbol: LocalSymbol,
     ty: Ty<'tcx>,
     fields: Vec<LocalType<'tcx>>,
 }
@@ -42,16 +91,26 @@ impl<'tcx> LocalType<'tcx> {
         self.fields.get(field.index())
     }
 
+    pub fn get_symbol(&self) -> Option<String> {
+        self.symbol.symbol.clone()
+    }
+
     pub fn set_field(&mut self, field: mir::Field, local_type: LocalType<'tcx>) {
         self.fields.remove(field.index());
         self.fields.insert(field.index(), local_type);
     }
 
-    pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
+    pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>, symbol: LocalSymbol) -> Self {
         let fields = match ty.kind() {
             TyKind::Adt(adt_def, substs) => adt_def
                 .all_fields()
-                .map(|field| LocalType::new(field.ty(tcx, substs), tcx))
+                .map(|field| {
+                    LocalType::new(
+                        field.ty(tcx, substs),
+                        tcx,
+                        symbol.concat(field.ident(tcx).to_string()),
+                    )
+                })
                 .collect::<Vec<_>>(),
             TyKind::Closure(closure_def_id, _) if tcx.has_typeck_results(closure_def_id) => {
                 let typeck_res = tcx.typeck(LocalDefId {
@@ -59,17 +118,19 @@ impl<'tcx> LocalType<'tcx> {
                 });
                 typeck_res
                     .closure_min_captures_flattened(*closure_def_id)
-                    .map(|captured_place| LocalType::new(captured_place.place.ty(), tcx))
+                    .map(|captured_place| {
+                        LocalType::new(captured_place.place.ty(), tcx, LocalSymbol::default())
+                    })
                     .collect::<Vec<_>>()
             }
             TyKind::Tuple(list_ty) => list_ty
                 .iter()
-                .map(|ty| LocalType::new(ty, tcx))
+                .map(|ty| LocalType::new(ty, tcx, LocalSymbol::default()))
                 .collect::<Vec<_>>(),
             _ => Vec::new(),
         };
 
-        LocalType { ty, fields }
+        LocalType { symbol, ty, fields }
     }
 }
 
@@ -141,21 +202,7 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
         summaries: Rc<RefCell<Summary<'tcx>>>,
         state: Rc<RefCell<AnalysisState>>,
     ) -> Self {
-        // Fill the map with current body type
-        let body = tcx.optimized_mir(def_id);
-
-        let mut local_types: LocalTypes<'tcx> = body
-            .local_decls
-            .iter()
-            .map(|local_decl| LocalType::new(local_decl.ty, tcx))
-            .collect();
-
-        // Replace with more precise types from local_types_outter
-        for (local, local_type_outter) in local_types_outter.iter_enumerated() {
-            local_types[local] = local_type_outter.clone();
-        }
-
-        let local_types = Rc::new(RefCell::new(local_types));
+        let local_types = Self::fill_and_override_local_types(tcx, def_id, local_types_outter);
 
         CostAnalysis {
             tcx,
@@ -182,6 +229,50 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
             state,
             self.analysis_state.clone(),
         )
+    }
+
+    fn fill_and_override_local_types(
+        tcx: TyCtxt<'tcx>,
+        def_id: DefId,
+        local_types_outter: LocalTypes<'tcx>,
+    ) -> Rc<RefCell<LocalTypes<'tcx>>> {
+        // Fill the map with current body type
+        let body = tcx.optimized_mir(def_id);
+
+        let locals_debug_info: HashMap<Local, LocalSymbol> = body
+            .var_debug_info
+            .iter()
+            .filter_map(|var_debug_info| {
+                if let VarDebugInfoContents::Place(place) = var_debug_info.value {
+                    Some((place.local, var_debug_info.name.to_ident_string()))
+                } else {
+                    None
+                }
+            })
+            .fold(HashMap::new(), |mut accum, (local, name)| {
+                accum.insert(local, name.into());
+                accum
+            });
+
+        let mut local_types: LocalTypes<'tcx> = body
+            .local_decls
+            .iter_enumerated()
+            .map(|(local, local_decl)| {
+                let symbol = locals_debug_info
+                    .get(&local)
+                    .map(|o| (*o).clone())
+                    .unwrap_or_default();
+
+                LocalType::new(local_decl.ty, tcx, symbol)
+            })
+            .collect();
+
+        // Replace with more precise types from local_types_outter
+        for (local, local_type_outter) in local_types_outter.iter_enumerated() {
+            local_types[local] = local_type_outter.clone();
+        }
+
+        Rc::new(RefCell::new(local_types))
     }
 }
 
@@ -444,6 +535,11 @@ where
             local_types_outter.push(LocalType::new(
                 target_mir.local_decls.iter().next().unwrap().ty,
                 self.tcx,
+                LocalSymbol::get_symbol_for_local(
+                    self.tcx,
+                    callee_info.callee_def_id,
+                    mir::Local::from_usize(0),
+                ),
             ));
         }
 
@@ -459,9 +555,14 @@ where
                         local_types_outter.push(LocalType::new(
                             self.tcx.mk_fn_def(def_id, substs_ref),
                             self.tcx,
+                            LocalSymbol::default(),
                         ));
                     } else {
-                        local_types_outter.push(LocalType::new(constant.ty(), self.tcx));
+                        local_types_outter.push(LocalType::new(
+                            constant.ty(),
+                            self.tcx,
+                            LocalSymbol::default(),
+                        ));
                     }
                 }
             };
@@ -680,8 +781,14 @@ where
             .map(|arg| match arg.place() {
                 Some(place) => self.get_local_type(&place),
                 None => match arg.const_fn_def() {
-                    Some((def_id, _)) => LocalType::new(self.tcx.type_of(def_id), self.tcx),
-                    None => LocalType::new(arg.constant().unwrap().ty(), self.tcx),
+                    Some((def_id, _)) => {
+                        LocalType::new(self.tcx.type_of(def_id), self.tcx, LocalSymbol::default())
+                    }
+                    None => LocalType::new(
+                        arg.constant().unwrap().ty(),
+                        self.tcx,
+                        LocalSymbol::default(),
+                    ),
                 },
             })
             .collect::<Vec<_>>()
@@ -737,6 +844,9 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                                     // we cannot infer more precise type information for them
                                 {
                                     self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from);
+                                }  else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
+                                    // Reflect the whole reference
+                                    self.local_types.borrow_mut()[place_to.local] = local_type_from;
                                 }
                             }
                         } else {
@@ -751,7 +861,6 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                                 if place_to.projection.is_empty() {
                                     // Reflect the type of the given field of "place_from" to whole type of "place_to"
                                     self.local_types.borrow_mut()[place_to.local] = local_type_from;
-
                                 } else {
                                     // Reflect the type of the given field of "place_from" to the given field of "place_to"
                                     if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
@@ -760,6 +869,30 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                                     // we cannot infer more precise type information for them
                                     {
                                         self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from);
+                                    }  else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
+                                        // Reflect the whole reference
+                                        self.local_types.borrow_mut()[place_to.local] = local_type_from;
+                                    }
+                                }
+                            } else if let ProjectionElem::Deref = place_from.projection.last().unwrap() {
+                                // For Deref we reflect the underlying type
+                                let local_type_from = self.get_local_type(place_from).clone();
+
+                                // Reflect the type behind the reference of "place_from" to the given field of "place_to"
+                                if place_to.projection.is_empty() {
+                                    // Reflect the type of the given field of "place_from" to whole type of "place_to"
+                                    self.local_types.borrow_mut()[place_to.local] = local_type_from;
+                                } else {
+                                    // Reflect the type of the given field of "place_from" to the given field of "place_to"
+                                    if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
+                                    && self.get_local_type(place_to).has_fields()
+                                    // Second condition is for types that are Adt or closures but no typeck result is available
+                                    // we cannot infer more precise type information for them
+                                    {
+                                        self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from);
+                                    }  else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
+                                        // Reflect the whole reference
+                                        self.local_types.borrow_mut()[place_to.local] = local_type_from;
                                     }
                                 }
                             }
