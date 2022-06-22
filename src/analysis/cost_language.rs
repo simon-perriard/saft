@@ -21,6 +21,7 @@ pub(crate) enum Symbolic {
     EventsOf(String),
     StepsOf(String),
     BigO(String),
+    Log(String),
 }
 
 impl Symbolic {
@@ -45,6 +46,7 @@ impl fmt::Display for Symbolic {
             Symbolic::EventsOf(s) => write!(f, "EVENTSOF({})", s),
             Symbolic::StepsOf(s) => write!(f, "STEPSOF({})", s),
             Symbolic::BigO(s) => write!(f, "O({})", s),
+            Symbolic::Log(s) => write!(f, "LOG({})", s),
         }
     }
 }

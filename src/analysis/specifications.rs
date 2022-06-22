@@ -1,5 +1,6 @@
 use crate::analysis::cost_analysis::{CalleeInfo, TransferFunction};
 
+use self::core_specs::core_dispatch;
 use self::frame_support_specs::frame_support_dispatch;
 use self::frame_system_specs::frame_system_dispatch;
 use self::parity_scale_codec_specs::parity_scale_codec_dispatch;
@@ -10,9 +11,9 @@ use self::std_specs::std_dispatch;
 use super::cost_analysis::SummaryKey;
 
 pub(crate) fn needs_early_catch(path: &str) -> bool {
-    #[allow(clippy::match_like_matches_macro)]
     match path {
         "std::slice::<impl [T]>::to_vec" => true,
+        "core::slice::<impl [T]>::binary_search_by" => true,
         _ => false,
     }
 }
@@ -25,8 +26,9 @@ pub(crate) fn dispatch_to_specifications<'tcx>(
     let path = transfer_function
         .tcx
         .def_path_str(callee_info.callee_def_id);
-
-    if path.starts_with("frame_support::") {
+    if path.starts_with("core::") {
+        core_dispatch(transfer_function, callee_info, args_summary_keys);
+    } else if path.starts_with("frame_support::") {
         frame_support_dispatch(transfer_function, callee_info, args_summary_keys);
     } else if path.starts_with("frame_system::") {
         frame_system_dispatch(transfer_function, callee_info, args_summary_keys);
@@ -48,6 +50,78 @@ pub(crate) fn dispatch_to_specifications<'tcx>(
                 .tcx
                 .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
         );
+    }
+}
+
+pub(crate) mod core_specs {
+    use crate::analysis::cost_analysis::{CalleeInfo, SummaryKey, TransferFunction};
+
+    use super::core_slice_specs::core_slice_dispatch;
+
+    pub(crate) fn core_dispatch<'tcx>(
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+        callee_info: CalleeInfo<'tcx>,
+        args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
+    ) {
+        let path = transfer_function
+            .tcx
+            .def_path_str(callee_info.callee_def_id);
+
+        if path.starts_with("core::slice::") {
+            core_slice_dispatch(transfer_function, callee_info, args_summary_keys);
+        } else {
+            unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            );
+        }
+    }
+}
+
+pub(crate) mod core_slice_specs {
+    use crate::analysis::{
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
+        cost_language::{get_big_o_from_storage_size, HasSize, Cost, Symbolic},
+        types::Type,
+    };
+
+    pub(crate) fn core_slice_dispatch<'tcx>(
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+        callee_info: CalleeInfo<'tcx>,
+        args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
+    ) {
+        let path = transfer_function
+            .tcx
+            .def_path_str(callee_info.callee_def_id);
+        let path = path.as_str();
+        match path {
+            "core::slice::<impl [T]>::binary_search_by" => {
+
+                let summary_key = (*args_summary_keys.get(1).unwrap()).clone();
+                // Get closure cost first
+                let mut total_cost = transfer_function.get_summary_for_key(&summary_key.unwrap());
+
+                let vec_ty = Type::from_mir_ty(transfer_function.tcx, transfer_function.get_local_type(&callee_info.args[0].place().unwrap()).get_ty());
+                let vec_big_o_size = get_big_o_from_storage_size(vec_ty.get_size(transfer_function.tcx));
+
+                let binary_search_complexity = Cost::Symbolic(Symbolic::Log(format!("{}", vec_big_o_size)));
+
+                // Then multiply it by complexity
+                total_cost.cost_big_o_mul(binary_search_complexity);
+
+                transfer_function.domain_state.inter_join(&total_cost);
+            },
+            _ => unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            ),
+        }
     }
 }
 
@@ -146,17 +220,45 @@ pub(crate) mod frame_support_bounded_vec_specs {
             "frame_support::BoundedVec::<T, S>::get_mut" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
+            "frame_support::BoundedVec::<T, S>::remove" => {
+                // call "remove" https://paritytech.github.io/substrate/master/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.remove
+                // upperbound grow amortized by max size
+
+                // extract the name of the type for readability
+                let ty_name = callee_info.substs_ref.type_at(1).to_string();
+                let ty_name = ty_name.split("::").last().unwrap();
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::BigO(format!(
+                        "VALUEOF({}::get())",
+                        ty_name
+                    ))));
+            }
             "frame_support::BoundedVec::<T, S>::retain" => {
                 // call "retain" https://paritytech.github.io/substrate/master/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.retain
                 // extract the name of the type for readability
                 let ty_name = callee_info.substs_ref.type_at(1).to_string();
                 let ty_name = ty_name.split("::").last().unwrap();
                 let length = Cost::Symbolic(Symbolic::BigO(format!("VALUEOF({}::get())", ty_name)));
-                let summary_key = (*args_summary_keys.get(0).unwrap()).clone();
+                let summary_key = (*args_summary_keys.get(1).unwrap()).clone();
                 let mut total_cost = transfer_function.get_summary_for_key(&summary_key.unwrap());
                 total_cost.cost_big_o_mul(length);
 
                 transfer_function.domain_state.inter_join(&total_cost);
+            }
+            "frame_support::BoundedVec::<T, S>::try_insert" => {
+                // call "try_insert" https://paritytech.github.io/substrate/master/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.try_insert
+                // upperbound grow amortized by max size
+
+                // extract the name of the type for readability
+                let ty_name = callee_info.substs_ref.type_at(1).to_string();
+                let ty_name = ty_name.split("::").last().unwrap();
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::BigO(format!(
+                        "VALUEOF({}::get())",
+                        ty_name
+                    ))));
             }
             _ => unimplemented!("{}", path),
         }
@@ -817,6 +919,10 @@ pub(crate) mod std_ops_specs {
             | "std::ops::SubAssign::sub_assign" => {
                 // Soundness inconsistency here, we would need Instance to
                 // resolve to the concrete implementation
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+            }
+            "std::ops::Index::index"
+            | "std::ops::IndexMut::index_mut" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
             _ => {

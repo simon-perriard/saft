@@ -2,8 +2,8 @@ use super::cost_domain::CostDomain;
 use super::cost_language::{Cost, Symbolic};
 use super::events_variants_domain::Variants;
 use super::pallet::Pallet;
-use super::specifications::needs_early_catch;
 use super::specifications::storage_actions_specs::HasAccessCost;
+use super::specifications::needs_early_catch;
 use crate::analysis::events_variants_domain::EventVariantsDomain;
 use crate::analysis::specifications::dispatch_to_specifications;
 use rustc_index::vec::IndexVec;
@@ -32,15 +32,7 @@ impl<'tcx> LocalSymbol {
         }
     }
 
-    pub fn concat(&self, field: String) -> Self {
-        if let Some(symbol) = &self.symbol {
-            Self::new(format!("{}.{}", symbol, field))
-        } else {
-            Self::new(field)
-        }
-    }
-
-    pub fn get_symbol_for_local(tcx: TyCtxt<'tcx>, def_id: DefId, local: Local) -> Self {
+    pub fn get_symbol_for_local(tcx: TyCtxt<'tcx>, def_id: DefId, local: Local) -> Self {        
         let body = tcx.optimized_mir(def_id);
 
         let locals_to_symbol = body.var_debug_info.iter().filter_map(|var_debug_info| {
@@ -101,6 +93,7 @@ impl<'tcx> LocalType<'tcx> {
     }
 
     pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>, symbol: LocalSymbol) -> Self {
+    
         let fields = match ty.kind() {
             TyKind::Adt(adt_def, substs) => adt_def
                 .all_fields()
@@ -108,7 +101,7 @@ impl<'tcx> LocalType<'tcx> {
                     LocalType::new(
                         field.ty(tcx, substs),
                         tcx,
-                        symbol.concat(field.ident(tcx).to_string()),
+                        LocalSymbol::new(field.ident(tcx).to_string()),
                     )
                 })
                 .collect::<Vec<_>>(),
@@ -129,7 +122,7 @@ impl<'tcx> LocalType<'tcx> {
                 .collect::<Vec<_>>(),
             _ => Vec::new(),
         };
-
+        
         LocalType { symbol, ty, fields }
     }
 }
@@ -262,7 +255,9 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
                     .get(&local)
                     .map(|o| (*o).clone())
                     .unwrap_or_default();
-
+                    if symbol.symbol == Some(String::from("0")) {
+                        panic!("{:?}", local)
+                    }
                 LocalType::new(local_decl.ty, tcx, symbol)
             })
             .collect();
@@ -504,7 +499,8 @@ where
         let target_mir = self.tcx.optimized_mir(callee_info.callee_def_id);
 
         // Detect loops in analyzed function
-        if target_mir.is_cfg_cyclic() {
+        if target_mir.is_cfg_cyclic()
+        {
             println!(
                 "Loop detected in function {}, loops are not supported",
                 self.tcx.def_path_str(callee_info.callee_def_id)
@@ -636,6 +632,8 @@ where
                             Some(vec![(*arg).clone()])
                         );
                         args_summary_keys.push(Some(summary_key));
+                    } else {
+                        args_summary_keys.push(None);
                     }
                 }
                 Operand::Constant(_) if let Some((const_fn_def_id, const_fn_substs_ref)) = arg.const_fn_def() => {
@@ -645,7 +643,7 @@ where
                 _ => args_summary_keys.push(None)
             }
             } else {
-                break;
+                return;
             }
         }
 
