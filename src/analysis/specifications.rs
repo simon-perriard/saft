@@ -11,11 +11,10 @@ use self::std_specs::std_dispatch;
 use super::cost_analysis::SummaryKey;
 
 pub(crate) fn needs_early_catch(path: &str) -> bool {
-    match path {
-        "std::slice::<impl [T]>::to_vec" => true,
-        "core::slice::<impl [T]>::binary_search_by" => true,
-        _ => false,
-    }
+    matches!(
+        path,
+        "std::slice::<impl [T]>::to_vec" | "core::slice::<impl [T]>::binary_search_by"
+    )
 }
 
 pub(crate) fn dispatch_to_specifications<'tcx>(
@@ -84,7 +83,7 @@ pub(crate) mod core_specs {
 pub(crate) mod core_slice_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
-        cost_language::{get_big_o_from_storage_size, HasSize, Cost, Symbolic},
+        cost_language::{get_big_o_from_storage_size, Cost, HasSize, Symbolic},
         types::Type,
     };
 
@@ -99,21 +98,27 @@ pub(crate) mod core_slice_specs {
         let path = path.as_str();
         match path {
             "core::slice::<impl [T]>::binary_search_by" => {
-
                 let summary_key = (*args_summary_keys.get(1).unwrap()).clone();
                 // Get closure cost first
                 let mut total_cost = transfer_function.get_summary_for_key(&summary_key.unwrap());
 
-                let vec_ty = Type::from_mir_ty(transfer_function.tcx, transfer_function.get_local_type(&callee_info.args[0].place().unwrap()).get_ty());
-                let vec_big_o_size = get_big_o_from_storage_size(vec_ty.get_size(transfer_function.tcx));
+                let vec_ty = Type::from_mir_ty(
+                    transfer_function.tcx,
+                    transfer_function
+                        .get_local_type(&callee_info.args[0].place().unwrap())
+                        .get_ty(),
+                );
+                let vec_big_o_size =
+                    get_big_o_from_storage_size(vec_ty.get_size(transfer_function.tcx));
 
-                let binary_search_complexity = Cost::Symbolic(Symbolic::Log(format!("{}", vec_big_o_size)));
+                let binary_search_complexity =
+                    Cost::Symbolic(Symbolic::Log(format!("{}", vec_big_o_size)));
 
                 // Then multiply it by complexity
                 total_cost.cost_big_o_mul(binary_search_complexity);
 
                 transfer_function.domain_state.inter_join(&total_cost);
-            },
+            }
             _ => unimplemented!(
                 "{} --- {:?}",
                 path,
@@ -921,8 +926,7 @@ pub(crate) mod std_ops_specs {
                 // resolve to the concrete implementation
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
-            "std::ops::Index::index"
-            | "std::ops::IndexMut::index_mut" => {
+            "std::ops::Index::index" | "std::ops::IndexMut::index_mut" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
             _ => {

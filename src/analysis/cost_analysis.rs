@@ -2,8 +2,8 @@ use super::cost_domain::CostDomain;
 use super::cost_language::{Cost, Symbolic};
 use super::events_variants_domain::Variants;
 use super::pallet::Pallet;
-use super::specifications::storage_actions_specs::HasAccessCost;
 use super::specifications::needs_early_catch;
+use super::specifications::storage_actions_specs::HasAccessCost;
 use crate::analysis::events_variants_domain::EventVariantsDomain;
 use crate::analysis::specifications::dispatch_to_specifications;
 use rustc_index::vec::IndexVec;
@@ -14,7 +14,7 @@ use rustc_middle::mir::{
 };
 use rustc_middle::ty::{subst::SubstsRef, Ty, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
-use rustc_span::def_id::{DefId, LocalDefId};
+use rustc_span::def_id::DefId;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -32,7 +32,7 @@ impl<'tcx> LocalSymbol {
         }
     }
 
-    pub fn get_symbol_for_local(tcx: TyCtxt<'tcx>, def_id: DefId, local: Local) -> Self {        
+    pub fn get_symbol_for_local(tcx: TyCtxt<'tcx>, def_id: DefId, local: Local) -> Self {
         let body = tcx.optimized_mir(def_id);
 
         let locals_to_symbol = body.var_debug_info.iter().filter_map(|var_debug_info| {
@@ -93,7 +93,6 @@ impl<'tcx> LocalType<'tcx> {
     }
 
     pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>, symbol: LocalSymbol) -> Self {
-    
         let fields = match ty.kind() {
             TyKind::Adt(adt_def, substs) => adt_def
                 .all_fields()
@@ -105,24 +104,25 @@ impl<'tcx> LocalType<'tcx> {
                     )
                 })
                 .collect::<Vec<_>>(),
-            TyKind::Closure(closure_def_id, _) if tcx.has_typeck_results(closure_def_id) => {
-                let typeck_res = tcx.typeck(LocalDefId {
-                    local_def_index: closure_def_id.index,
-                });
-                typeck_res
-                    .closure_min_captures_flattened(*closure_def_id)
-                    .map(|captured_place| {
-                        LocalType::new(captured_place.place.ty(), tcx, LocalSymbol::default())
-                    })
-                    .collect::<Vec<_>>()
-            }
+            // For closures, taken from https://doc.rust-lang.org/nightly/nightly-rustc/rustc_borrowck/type_check/struct.TypeVerifier.html#method.field_ty
+            TyKind::Closure(_, substs) => substs
+                .as_closure()
+                .tupled_upvars_ty()
+                .tuple_fields()
+                .iter()
+                .map(|ty| LocalType::new(ty, tcx, LocalSymbol::default()))
+                .collect::<Vec<_>>(),
             TyKind::Tuple(list_ty) => list_ty
                 .iter()
                 .map(|ty| LocalType::new(ty, tcx, LocalSymbol::default()))
                 .collect::<Vec<_>>(),
+            TyKind::Ref(_, ty, _) => Self::new(*ty, tcx, symbol.clone()).fields,
+            TyKind::Projection(projection_ty) => {
+                Self::new(projection_ty.self_ty(), tcx, symbol.clone()).fields
+            }
             _ => Vec::new(),
         };
-        
+
         LocalType { symbol, ty, fields }
     }
 }
@@ -255,9 +255,9 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
                     .get(&local)
                     .map(|o| (*o).clone())
                     .unwrap_or_default();
-                    if symbol.symbol == Some(String::from("0")) {
-                        panic!("{:?}", local)
-                    }
+                if symbol.symbol == Some(String::from("0")) {
+                    panic!("{:?}", local)
+                }
                 LocalType::new(local_decl.ty, tcx, symbol)
             })
             .collect();
@@ -499,8 +499,7 @@ where
         let target_mir = self.tcx.optimized_mir(callee_info.callee_def_id);
 
         // Detect loops in analyzed function
-        if target_mir.is_cfg_cyclic()
-        {
+        if target_mir.is_cfg_cyclic() {
             println!(
                 "Loop detected in function {}, loops are not supported",
                 self.tcx.def_path_str(callee_info.callee_def_id)
@@ -799,6 +798,39 @@ where
             self.get_callee_args_types(callee_info),
         )
     }
+
+    fn overwrite_place_to(&self, place_from: &Place, place_to: &Place) {
+        let local_type_from = if place_from.projection.is_empty() {
+            // No projection, we reflect the whole type from "place_from"
+            Some(self.get_local_type(place_from))
+        } else if let ProjectionElem::Field(field, _) = place_from.projection.last().unwrap()
+        && self.get_local_type(place_from).has_fields() {
+            // Projection of a field, we reflect the type of the given field of "place_from"
+            Some((*self.get_local_type(place_from).get_field(*field).unwrap()).clone())
+        } else if let ProjectionElem::Deref = place_from.projection.last().unwrap(){
+            // For Deref, we reflect the whole type from "place_from"
+            Some(self.get_local_type(place_from).clone())
+        } else {
+            None
+        };
+
+        if let Some(local_type_from) = local_type_from {
+            if place_to.projection.is_empty() {
+                // Reflect the type of the given field of "place_from" to whole type of "place_to"
+                self.local_types.borrow_mut()[place_to.local] = local_type_from;
+            } else {
+                // Reflect the type of the given field of "place_from" to the given field of "place_to"
+                if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
+                && self.get_local_type(place_to).has_fields()
+                {
+                    self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from);
+                }  else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
+                    // Reflect the whole reference
+                    self.local_types.borrow_mut()[place_to.local] = local_type_from;
+                }
+            }
+        }
+    }
 }
 
 impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
@@ -827,74 +859,8 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 match operand {
                     Operand::Copy(place_from)
                     | Operand::Move(place_from) => {
-                        if place_from.projection.is_empty() {
-                            // Reflect the whole type from "place_from"
-                            let local_type_from = self.get_local_type(place_from);
 
-                            if place_to.projection.is_empty() {
-                                // Reflect the whole type from "place_from" to whole type of "place_to"
-                                self.local_types.borrow_mut()[place_to.local] = local_type_from;
-                            } else {
-                                // Reflect the whole type from "place_from" to the given field of "place_to"
-                                if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
-                                    && self.get_local_type(place_to).has_fields()
-                                    // Second condition is for types that are Adt or closures but no typeck result is available
-                                    // we cannot infer more precise type information for them
-                                {
-                                    self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from);
-                                }  else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
-                                    // Reflect the whole reference
-                                    self.local_types.borrow_mut()[place_to.local] = local_type_from;
-                                }
-                            }
-                        } else {
-                            // Reflect the type of the given field of "place_from"
-                            if let ProjectionElem::Field(field, _) = place_from.projection.last().unwrap()
-                                && self.get_local_type(place_from).has_fields()
-                                // Second condition is for types that are Adt or closures but no typeck result is available
-                                // we cannot infer more precise type information for them    
-                            {
-                                let local_type_from = (*self.get_local_type(place_from).get_field(*field).unwrap()).clone();
-
-                                if place_to.projection.is_empty() {
-                                    // Reflect the type of the given field of "place_from" to whole type of "place_to"
-                                    self.local_types.borrow_mut()[place_to.local] = local_type_from;
-                                } else {
-                                    // Reflect the type of the given field of "place_from" to the given field of "place_to"
-                                    if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
-                                    && self.get_local_type(place_to).has_fields()
-                                    // Second condition is for types that are Adt or closures but no typeck result is available
-                                    // we cannot infer more precise type information for them
-                                    {
-                                        self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from);
-                                    }  else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
-                                        // Reflect the whole reference
-                                        self.local_types.borrow_mut()[place_to.local] = local_type_from;
-                                    }
-                                }
-                            } else if let ProjectionElem::Deref = place_from.projection.last().unwrap() {
-                                // For Deref we reflect the underlying type
-                                let local_type_from = self.get_local_type(place_from).clone();
-
-                                // Reflect the type behind the reference of "place_from" to the given field of "place_to"
-                                if place_to.projection.is_empty() {
-                                    // Reflect the type of the given field of "place_from" to whole type of "place_to"
-                                    self.local_types.borrow_mut()[place_to.local] = local_type_from;
-                                } else {
-                                    // Reflect the type of the given field of "place_from" to the given field of "place_to"
-                                    if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
-                                    && self.get_local_type(place_to).has_fields()
-                                    // Second condition is for types that are Adt or closures but no typeck result is available
-                                    // we cannot infer more precise type information for them
-                                    {
-                                        self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from);
-                                    }  else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
-                                        // Reflect the whole reference
-                                        self.local_types.borrow_mut()[place_to.local] = local_type_from;
-                                    }
-                                }
-                            }
-                        }
+                        self.overwrite_place_to(place_from, place_to);
                     }
                     Operand::Constant(_) => {
                         if let Some((def_id, substs_ref)) = operand.const_fn_def() {
@@ -910,48 +876,7 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
             StatementKind::Assign(box (place_to, r_value)) if let Rvalue::Ref(_, _, place_from) = r_value => {
                 // Replace references by their underlying types
 
-                if place_from.projection.is_empty() {
-                    // Reflect the whole type from "place_from"
-                    let local_type_from = self.get_local_type(place_from);
-
-                    if place_to.projection.is_empty() {
-                        // Reflect the whole type from "place_from" to whole type of "place_to"
-                        self.local_types.borrow_mut()[place_to.local] = local_type_from;
-                    } else {
-                        // Reflect the whole type from "place_from" to the given field of "place_to"
-                        if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
-                            && self.get_local_type(place_to).has_fields()
-                            // Second condition is for types that are Adt or closures but no typeck result is available
-                            // we cannot infer more precise type information for them
-                        {
-                            self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from);
-                        }
-                    }
-                } else {
-                    // Reflect the type of the given field of "place_from"
-                    if let ProjectionElem::Field(field, _) = place_from.projection.last().unwrap()
-                        && self.get_local_type(place_from).has_fields()
-                        // Second condition is for types that are Adt or closures but no typeck result is available
-                        // we cannot infer more precise type information for them    
-                    {
-                        let local_type_from = (*self.get_local_type(place_from).get_field(*field).unwrap()).clone();
-
-                        if place_to.projection.is_empty() {
-                            // Reflect the type of the given field of "place_from" to whole type of "place_to"
-                            self.local_types.borrow_mut()[place_to.local] = local_type_from;
-
-                        } else {
-                            // Reflect the type of the given field of "place_from" to the given field of "place_to"
-                            if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
-                            && self.get_local_type(place_to).has_fields()
-                            // Second condition is for types that are Adt or closures but no typeck result is available
-                            // we cannot infer more precise type information for them
-                            {
-                                self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from);
-                            }
-                        }
-                    }
-                }
+                self.overwrite_place_to(place_from, place_to);
             }
             _ => self.super_statement(statement, location),
         }
