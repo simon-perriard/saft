@@ -37,7 +37,14 @@ impl<'tcx> LocalSymbol {
 
         let locals_to_symbol = body.var_debug_info.iter().filter_map(|var_debug_info| {
             if let VarDebugInfoContents::Place(place) = var_debug_info.value {
-                Some((place.local, var_debug_info.name.to_ident_string()))
+                Some((
+                    place.local,
+                    format!(
+                        "{}-<{:?}>",
+                        var_debug_info.name.to_ident_string(),
+                        var_debug_info.source_info.span
+                    ),
+                ))
             } else {
                 None
             }
@@ -59,8 +66,15 @@ impl From<String> for LocalSymbol {
     }
 }
 
+impl From<Option<String>> for LocalSymbol {
+    fn from(option: Option<String>) -> Self {
+        Self { symbol: option }
+    }
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct LocalType<'tcx> {
+    // rename symbolic value
     symbol: LocalSymbol,
     ty: Ty<'tcx>,
     fields: Vec<LocalType<'tcx>>,
@@ -83,6 +97,20 @@ impl<'tcx> LocalType<'tcx> {
         self.fields.get(field.index())
     }
 
+    pub fn set_symbol_if_none_or_n(&mut self, symbol: Option<String>, tcx: TyCtxt<'tcx>) {
+        match self.get_symbol() {
+            Some(s) => {
+                if s.parse::<usize>().is_ok() {
+                    // Recursively replace the main structure name with the more informative name
+                    self.symbol = symbol.into();
+                    let new_fields = Self::new(self.ty, tcx, self.symbol.clone()).fields;
+                    self.fields = new_fields;
+                }
+            }
+            None => self.symbol = symbol.into(),
+        }
+    }
+
     pub fn get_symbol(&self) -> Option<String> {
         self.symbol.symbol.clone()
     }
@@ -97,10 +125,12 @@ impl<'tcx> LocalType<'tcx> {
             TyKind::Adt(adt_def, substs) => adt_def
                 .all_fields()
                 .map(|field| {
+                    let sym = symbol.symbol.clone();
+                    let container = sym.map(|s| format!("{}.", s)).unwrap_or_default();
                     LocalType::new(
                         field.ty(tcx, substs),
                         tcx,
-                        LocalSymbol::new(field.ident(tcx).to_string()),
+                        LocalSymbol::new(format!("{}{}", container, field.ident(tcx))),
                     )
                 })
                 .collect::<Vec<_>>(),
@@ -237,7 +267,14 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
             .iter()
             .filter_map(|var_debug_info| {
                 if let VarDebugInfoContents::Place(place) = var_debug_info.value {
-                    Some((place.local, var_debug_info.name.to_ident_string()))
+                    Some((
+                        place.local,
+                        format!(
+                            "{}-<{:?}>",
+                            var_debug_info.name.to_ident_string(),
+                            var_debug_info.source_info.span
+                        ),
+                    ))
                 } else {
                     None
                 }
@@ -255,9 +292,7 @@ impl<'tcx, 'inter, 'intra> CostAnalysis<'tcx, 'inter> {
                     .get(&local)
                     .map(|o| (*o).clone())
                     .unwrap_or_default();
-                if symbol.symbol == Some(String::from("0")) {
-                    panic!("{:?}", local)
-                }
+
                 LocalType::new(local_decl.ty, tcx, symbol)
             })
             .collect();
@@ -323,6 +358,7 @@ where
 {
     fn t_visit_fn_call(&mut self, location: Location) {
         let callee_info = self.get_callee_info(location);
+
         if self.is_storage_field_access(callee_info.callee_def_id) {
             // Filtering storage access, we need to catch it now otherwise we lose information about which
             // field is accessed.
@@ -805,8 +841,13 @@ where
             Some(self.get_local_type(place_from))
         } else if let ProjectionElem::Field(field, _) = place_from.projection.last().unwrap()
         && self.get_local_type(place_from).has_fields() {
-            // Projection of a field, we reflect the type of the given field of "place_from"
-            Some((*self.get_local_type(place_from).get_field(*field).unwrap()).clone())
+            // If we don't have the information, do nothing
+            if self.get_local_type(place_from).get_field(*field).is_none() {
+                None
+            } else {
+                // Projection of a field, we reflect the type of the given field of "place_from"
+                Some((*self.get_local_type(place_from).get_field(*field).unwrap()).clone())
+            }
         } else if let ProjectionElem::Deref = place_from.projection.last().unwrap(){
             // For Deref, we reflect the whole type from "place_from"
             Some(self.get_local_type(place_from).clone())
@@ -815,9 +856,18 @@ where
         };
 
         if let Some(local_type_from) = local_type_from {
+            // If FROM symbol is None or Some("n"), we better keep the one coming from TO
+            // can happen for closure's parameters when analyzed out of callsite,
+            // not upvars however.
+            // This is why we first overwrite the whole thing and then put again the
+            // old symbol if needed
+
             if place_to.projection.is_empty() {
+                let local_type_to_symbol = self.get_local_type(place_to).get_symbol();
                 // Reflect the type of the given field of "place_from" to whole type of "place_to"
                 self.local_types.borrow_mut()[place_to.local] = local_type_from;
+                self.local_types.borrow_mut()[place_to.local]
+                    .set_symbol_if_none_or_n(local_type_to_symbol, self.tcx);
             } else {
                 // Reflect the type of the given field of "place_from" to the given field of "place_to"
                 if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
@@ -825,8 +875,10 @@ where
                 {
                     self.local_types.borrow_mut()[place_to.local].set_field(*field, local_type_from);
                 }  else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
+                    let local_type_to_symbol = self.get_local_type(place_to).get_symbol();
                     // Reflect the whole reference
                     self.local_types.borrow_mut()[place_to.local] = local_type_from;
+                    self.local_types.borrow_mut()[place_to.local].set_symbol_if_none_or_n(local_type_to_symbol, self.tcx);
                 }
             }
         }
@@ -859,7 +911,6 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 match operand {
                     Operand::Copy(place_from)
                     | Operand::Move(place_from) => {
-
                         self.overwrite_place_to(place_from, place_to);
                     }
                     Operand::Constant(_) => {

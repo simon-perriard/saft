@@ -1,6 +1,8 @@
 use crate::analysis::cost_analysis::{CalleeInfo, TransferFunction};
 
+use self::alloc_specs::alloc_dispatch;
 use self::core_specs::core_dispatch;
+use self::custom_specs::custom_dispatch;
 use self::frame_support_specs::frame_support_dispatch;
 use self::frame_system_specs::frame_system_dispatch;
 use self::parity_scale_codec_specs::parity_scale_codec_dispatch;
@@ -13,7 +15,10 @@ use super::cost_analysis::SummaryKey;
 pub(crate) fn needs_early_catch(path: &str) -> bool {
     matches!(
         path,
-        "std::slice::<impl [T]>::to_vec" | "core::slice::<impl [T]>::binary_search_by"
+        "std::slice::<impl [T]>::to_vec"
+            | "core::slice::<impl [T]>::binary_search_by"
+            | "<impl pallet::Pallet<T>>::ensure_sorted_and_insert"
+            | "std::vec::Vec::<T, A>::insert"
     )
 }
 
@@ -25,7 +30,9 @@ pub(crate) fn dispatch_to_specifications<'tcx>(
     let path = transfer_function
         .tcx
         .def_path_str(callee_info.callee_def_id);
-    if path.starts_with("core::") {
+    if path.starts_with("alloc::") {
+        alloc_dispatch(transfer_function, callee_info, args_summary_keys);
+    } else if path.starts_with("core::") {
         core_dispatch(transfer_function, callee_info, args_summary_keys);
     } else if path.starts_with("frame_support::") {
         frame_support_dispatch(transfer_function, callee_info, args_summary_keys);
@@ -42,13 +49,65 @@ pub(crate) fn dispatch_to_specifications<'tcx>(
     } else if path.starts_with("weights::WeightInfo::") {
         // Ignore
     } else {
-        unimplemented!(
-            "{} --- {:?}",
-            path,
-            transfer_function
-                .tcx
-                .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
-        );
+        custom_dispatch(transfer_function, callee_info, args_summary_keys);
+    }
+}
+
+pub(crate) mod alloc_specs {
+    use crate::analysis::cost_analysis::{CalleeInfo, SummaryKey, TransferFunction};
+
+    use super::alloc_raw_vec_specs::alloc_raw_vec_dispatch;
+
+    pub(crate) fn alloc_dispatch<'tcx>(
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+        callee_info: CalleeInfo<'tcx>,
+        args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
+    ) {
+        let path = transfer_function
+            .tcx
+            .def_path_str(callee_info.callee_def_id);
+
+        if path.starts_with("alloc::raw_vec::") {
+            alloc_raw_vec_dispatch(transfer_function, callee_info, args_summary_keys);
+        } else {
+            unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            );
+        }
+    }
+}
+
+pub(crate) mod alloc_raw_vec_specs {
+
+    use crate::analysis::{
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
+        cost_language::Cost,
+    };
+
+    pub(crate) fn alloc_raw_vec_dispatch<'tcx>(
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+        callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
+    ) {
+        let path = transfer_function
+            .tcx
+            .def_path_str(callee_info.callee_def_id);
+
+        if path.starts_with("alloc::raw_vec::capacity_overflow") {
+            transfer_function.domain_state.add_steps(Cost::Concrete(1));
+        } else {
+            unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            );
+        }
     }
 }
 
@@ -118,6 +177,45 @@ pub(crate) mod core_slice_specs {
                 total_cost.cost_big_o_mul(binary_search_complexity);
 
                 transfer_function.domain_state.inter_join(&total_cost);
+            }
+            _ => unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            ),
+        }
+    }
+}
+
+pub(crate) mod custom_specs {
+    use crate::analysis::{
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
+        cost_language::{Cost, Symbolic},
+    };
+
+    pub(crate) fn custom_dispatch<'tcx>(
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+        callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
+    ) {
+        let path = transfer_function
+            .tcx
+            .def_path_str(callee_info.callee_def_id);
+        let path = path.as_str();
+        match path {
+            "<impl pallet::Pallet<T>>::ensure_sorted_and_insert" => {
+                let vec = transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
+
+                let steps_of_ensure_sorted_and_insert = Cost::Symbolic(Symbolic::BigO(format!(
+                    "LENGTHOF({})",
+                    vec.get_symbol().unwrap()
+                )));
+
+                transfer_function
+                    .domain_state
+                    .add_steps(steps_of_ensure_sorted_and_insert);
             }
             _ => unimplemented!(
                 "{} --- {:?}",
@@ -366,6 +464,21 @@ pub(crate) mod frame_support_traits_specs {
             "frame_support::traits::Get::get" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
+            "frame_support::traits::WrapperKeepOpaque::<T>::encoded"
+            | "frame_support::traits::WrapperKeepOpaque::<T>::encoded_len" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+            }
+            "frame_support::traits::WrapperKeepOpaque::<T>::try_decode" => {
+                transfer_function
+                    .domain_state
+                    .add_steps(Cost::Symbolic(Symbolic::BigO(format!(
+                        "SIZEOF({})",
+                        transfer_function
+                            .get_local_type(&callee_info.args[0].place().unwrap())
+                            .get_symbol()
+                            .unwrap()
+                    ))));
+            }
             "frame_support::traits::ReservableCurrency::can_reserve"
             | "frame_support::traits::ReservableCurrency::slash_reserved"
             | "frame_support::traits::ReservableCurrency::reserved_balance"
@@ -482,7 +595,12 @@ pub(crate) mod frame_system_specs {
                 let block_number_regex =
                     Regex::new(r"frame_system::Pallet::<.*\s*(,.*)*>::block_number").unwrap();
 
-                if block_number_regex.is_match(path) {
+                let extrinsic_index_regex = Regex::new(
+                    r"frame_system::<impl frame_system::Pallet<.*\s*(,.*)*>>::extrinsic_index",
+                )
+                .unwrap();
+
+                if block_number_regex.is_match(path) | extrinsic_index_regex.is_match(path) {
                     transfer_function.domain_state.add_steps(Cost::Concrete(1));
                 } else {
                     unimplemented!("{}", path)
@@ -646,10 +764,11 @@ pub(crate) mod std_specs {
     use super::std_cmp_specs::std_cmp_dispatch;
     use super::std_convert_specs::std_convert_dispatch;
     use super::std_default_specs::std_default_dispatch;
-    use super::std_instrinsics_specs::std_intrinsics_dispatch;
+    use super::std_intrinsics_specs::std_intrinsics_dispatch;
     use super::std_iter_specs::std_iter_dispatch;
     use super::std_result_specs::std_result_dispatch;
     use super::std_slice_specs::std_slice_dispatch;
+    use super::std_vec_specs::std_vec_dispatch;
     use super::{std_alloc_specs::std_alloc_dispatch, std_ops_specs::std_ops_dispatch};
     use crate::analysis::cost_analysis::{CalleeInfo, SummaryKey, TransferFunction};
 
@@ -682,6 +801,8 @@ pub(crate) mod std_specs {
             std_result_dispatch(transfer_function, callee_info, args_summary_keys);
         } else if path.starts_with("std::slice::") {
             std_slice_dispatch(transfer_function, callee_info, args_summary_keys);
+        } else if path.starts_with("std::vec::") {
+            std_vec_dispatch(transfer_function, callee_info, args_summary_keys);
         } else {
             unimplemented!(
                 "{} --- {:?}",
@@ -710,8 +831,17 @@ pub(crate) mod std_alloc_specs {
             .def_path_str(callee_info.callee_def_id);
         let path = path.as_str();
         match path {
+            "std::alloc::Allocator::allocate" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+            }
             "std::alloc::Allocator::deallocate" => {
                 // deallocate boils down to libc::free
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+            }
+            "std::alloc::Allocator::exchange_malloc" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1));
+            }
+            "std::alloc::handle_alloc_error" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1));
             }
             _ => unimplemented!(
@@ -825,7 +955,7 @@ pub(crate) mod std_default_specs {
     }
 }
 
-pub(crate) mod std_instrinsics_specs {
+pub(crate) mod std_intrinsics_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
         cost_language::Cost,
@@ -841,22 +971,34 @@ pub(crate) mod std_instrinsics_specs {
             .def_path_str(callee_info.callee_def_id);
         let path = path.as_str();
         match path {
-            "std::intrinsics::size_of_val" => {
-                transfer_function.domain_state.add_steps(Cost::Concrete(1))
-            }
-            "std::intrinsics::min_align_of_val" => {
-                transfer_function.domain_state.add_steps(Cost::Concrete(1))
-            }
-            "std::intrinsics::transmute" => {
+            "std::intrinsics::add_with_overflow" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1))
             }
             "std::intrinsics::assert_inhabited" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1))
             }
+            "std::intrinsics::assume" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1))
+            }
+            "std::intrinsics::min_align_of_val" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1))
+            }
+            "std::intrinsics::mul_with_overflow" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1))
+            }
+            "std::intrinsics::offset" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1))
+            }
+            "std::intrinsics::ptr_guaranteed_eq" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1))
+            }
             "std::intrinsics::saturating_add" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1))
             }
-            "std::intrinsics::add_with_overflow" => {
+            "std::intrinsics::size_of_val" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1))
+            }
+            "std::intrinsics::transmute" => {
                 transfer_function.domain_state.add_steps(Cost::Concrete(1))
             }
             "std::intrinsics::unlikely" => {
@@ -883,6 +1025,8 @@ pub(crate) mod std_iter_specs {
     ) {
         *transfer_function.analysis_state.borrow_mut() = AnalysisState::Failure;
         println!("Iterators not supported yet");
+        // TODO: see whether something can be done here
+        //panic!("{}");
     }
 }
 
@@ -1024,6 +1168,47 @@ pub(crate) mod std_slice_specs {
     }
 }
 
+pub(crate) mod std_vec_specs {
+    use crate::analysis::{
+        cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
+        cost_language::{Cost, Symbolic},
+    };
+
+    pub(crate) fn std_vec_dispatch<'tcx>(
+        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
+        callee_info: CalleeInfo<'tcx>,
+        _args_summary_keys: Vec<Option<SummaryKey<'tcx>>>,
+    ) {
+        let path = transfer_function
+            .tcx
+            .def_path_str(callee_info.callee_def_id);
+        let path = path.as_str();
+        match path {
+            "std::vec::Vec::<T, A>::insert" => {
+                let vec = transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
+
+                let steps_of_ensure_sorted_and_insert = Cost::Symbolic(Symbolic::BigO(format!(
+                    "LENGTHOF({})",
+                    vec.get_symbol().unwrap()
+                )));
+
+                transfer_function
+                    .domain_state
+                    .add_steps(steps_of_ensure_sorted_and_insert);
+            }
+            "std::vec::Vec::<T, A>::insert::assert_failed" => {
+                transfer_function.domain_state.add_steps(Cost::Concrete(1))
+            }
+            _ => unimplemented!(
+                "{} --- {:?}",
+                path,
+                transfer_function
+                    .tcx
+                    .mk_fn_def(callee_info.callee_def_id, callee_info.substs_ref)
+            ),
+        }
+    }
+}
 pub(crate) mod storage_actions_specs {
 
     use crate::analysis::{
@@ -1389,7 +1574,7 @@ pub(crate) mod storage_actions_specs {
 
     impl StorageDoubleMapActions {
         pub fn get_access_cost<'tcx>(
-            _field: &Field,
+            field: &Field,
             transfer_function: &mut TransferFunction<'tcx, '_, '_>,
             callee_info: &CalleeInfo<'tcx>,
             _closure_summary_key: Option<SummaryKey<'tcx>>,
@@ -1405,8 +1590,28 @@ pub(crate) mod storage_actions_specs {
                 "decode_len" => todo!(),
                 "drain" => todo!(),
                 "drain_prefix" => todo!(),
-                "get" => todo!(),
-                "insert" => todo!(),
+                "get" => {
+                    // call "get" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/double_map.rs.html#138
+                    transfer_function
+                        .domain_state
+                        .add_steps(get_big_o_from_storage_size(
+                            field.get_size(transfer_function.tcx),
+                        ));
+                    transfer_function
+                        .domain_state
+                        .add_reads(field.get_size(transfer_function.tcx));
+                }
+                "insert" => {
+                    // call "insert" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/double_map.rs.html#188
+                    transfer_function
+                        .domain_state
+                        .add_steps(get_big_o_from_storage_size(
+                            field.get_size(transfer_function.tcx),
+                        ));
+                    transfer_function
+                        .domain_state
+                        .add_writes(field.get_size(transfer_function.tcx));
+                }
                 "iter" => todo!(),
                 "iter_from" => todo!(),
                 "iter_key_prefix" => todo!(),
@@ -1420,7 +1625,12 @@ pub(crate) mod storage_actions_specs {
                 "migrate_keys" => todo!(),
                 "mutate" => todo!(),
                 "mutate_exists" => todo!(),
-                "remove" => todo!(),
+                "remove" => {
+                    // call "remove" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/double_map.rs.html#197
+                    transfer_function.domain_state.add_steps(Cost::Concrete(1));
+                    // Write "None" to storage
+                    transfer_function.domain_state.add_writes(Cost::Concrete(1));
+                }
                 "remove_all" => todo!(),
                 "remove_prefix" => todo!(),
                 "swap" => todo!(),

@@ -16,7 +16,7 @@ pub(crate) enum Type {
     Adt(Adt),
     Array(Box<Type>, u64),
     Ref(Box<Type>, Mutability),
-    //FnPtr(Vec<Type>, Box<Type>),
+    Slice(Box<Type>),
     Tuple(Vec<Type>),
     Projection(DefId),
     Unsupported,
@@ -26,6 +26,8 @@ pub(crate) enum Type {
 pub(crate) enum Adt {
     Unknown(DefId),
     Option(Box<Type>),
+
+    // add something to track symbolic size
     BoundedVec(Box<Type>, Box<Type>),
 }
 
@@ -38,24 +40,31 @@ impl Type {
             TyKind::Int(t) => Type::Int(t),
             TyKind::Uint(t) => Type::Uint(t),
             TyKind::Float(t) => Type::Float(t),
-            TyKind::Adt(adt_def, substs) => match tcx.def_path_str(adt_def.did()).as_str() {
-                "frame_support::BoundedVec" => {
-                    let ty = Self::from_mir_ty(tcx, substs.type_at(0));
-                    let max_size = Self::from_mir_ty(tcx, substs.type_at(1));
-                    Type::Adt(Adt::BoundedVec(Box::new(ty), Box::new(max_size)))
+            TyKind::Adt(adt_def, substs) => {
+                // Expose type if it is boxed
+                if ty.is_box() {
+                    return Self::from_mir_ty(tcx, ty.boxed_ty());
                 }
-                "std::option::Option" => {
-                    let ty = Self::from_mir_ty(tcx, substs.type_at(0));
-                    Type::Adt(Adt::Option(Box::new(ty)))
+
+                match tcx.def_path_str(adt_def.did()).as_str() {
+                    "frame_support::BoundedVec" => {
+                        let ty = Self::from_mir_ty(tcx, substs.type_at(0));
+                        let max_size = Self::from_mir_ty(tcx, substs.type_at(1));
+                        Type::Adt(Adt::BoundedVec(Box::new(ty), Box::new(max_size)))
+                    }
+                    "std::option::Option" => {
+                        let ty = Self::from_mir_ty(tcx, substs.type_at(0));
+                        Type::Adt(Adt::Option(Box::new(ty)))
+                    }
+                    _ => Type::Adt(Adt::Unknown(adt_def.did())),
                 }
-                _ => Type::Adt(Adt::Unknown(adt_def.did())),
-            },
+            }
             //TyKind::Str => Type::Str,
             TyKind::Array(t, size) => Type::Array(
                 Box::new(Self::from_mir_ty(tcx, t)),
                 size.val().try_to_machine_usize(tcx).unwrap(),
             ),
-            //TyKind::Slice(t) => Type::Slice(Box::new(Self::from_mir_ty(tcx, t))),
+            TyKind::Slice(t) => Type::Slice(Box::new(Self::from_mir_ty(tcx, t))),
             TyKind::Ref(_, t, mutability) => {
                 Type::Ref(Box::new(Self::from_mir_ty(tcx, t)), mutability)
             }
@@ -116,6 +125,7 @@ impl HasSize for Type {
                         Ok(ty_and_layout) => Cost::Concrete(ty_and_layout.layout.size().bytes()),
                         Err(_) => {
                             let path = tcx.def_path_str(*def_id);
+
                             // extract the name of the type for readability
                             let path = path.split("::").last().unwrap().to_string();
                             Cost::Symbolic(Symbolic::SizeOf(path))
@@ -142,7 +152,7 @@ impl HasSize for Type {
             },
             Type::Array(ty, size) => Cost::Concrete(*size).concrete_mul(ty.get_size(tcx)),
             Type::Ref(ty, _) => ty.get_size(tcx),
-            //Type::FnPtr(_, ret_ty) => ret_ty.get_size(tcx),
+            Type::Slice(ty) => Cost::Symbolic(Symbolic::BigO(format!("{}", ty.get_size(tcx)))),
             Type::Tuple(tys) => tys
                 .iter()
                 .map(|ty| ty.get_size(tcx))
@@ -154,7 +164,7 @@ impl HasSize for Type {
                 let path = path.split("::").last().unwrap().to_string();
                 Cost::Symbolic(Symbolic::SizeOf(path))
             }
-            Type::Unsupported => panic!(), /*Cost::default()*/
+            Type::Unsupported => panic!(),
         }
     }
 }

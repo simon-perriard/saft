@@ -1,6 +1,6 @@
 use core::fmt;
 use rustc_middle::ty::TyCtxt;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Eq, PartialEq, Clone, Debug, Hash)]
 pub(crate) enum Cost {
@@ -138,6 +138,40 @@ impl Cost {
         .extract_max_add_common()
     }
 
+    pub(crate) fn max_reduced(&self, rhs: Self) -> Self {
+        if self.is_zero() {
+            return rhs;
+        } else if rhs.is_zero() || *self == rhs {
+            return self.clone();
+        } else if let Self::Concrete(x) = *self && let Self::Concrete(y) = rhs {
+            // Compact notation: max(x, y) => x > y ? x : y
+            return if x > y {self.clone()} else {rhs};
+        } else if let Self::Max(a, _) = rhs.clone() && *self == *a {
+            // Compact notation: max(a, max(a, b)) => max(a, b)
+            return rhs;
+        }  else if let Self::Max(a, _) = (*self).clone() && rhs == *a {
+            // Compact notation: max(max(a,b), a) => max(a, b)
+            return self.clone();
+        } else if let Self::Max(_, b) = rhs.clone() && *self == *b {
+            // Compact notation: max(b, max(a, b)) => max(a, b)
+            return rhs;
+        } else if let Self::Max(_, b) = (*self).clone() && rhs == *b {
+            // Compact notation: max(max(a, b), b) => max(a, b)
+            return self.clone();
+        }
+
+        // Try to resolve the max
+        if let Some(longest) = self.cmp_add_chain(&rhs) {
+            return longest;
+        }
+
+        Self::Max(
+            Box::new(self.clone()),
+            Box::new(rhs),
+        )
+        .extract_max_add_common()
+    }
+
     fn flatten_add_chain(&self) -> Vec<Self> {
         let mut flat = Vec::new();
 
@@ -217,6 +251,7 @@ impl Cost {
     }
 
     pub fn reduce_add_chain(&self) -> Self {
+        let res;
         match self {
             Cost::Add(_, _) => {
                 let mut flat = self.flatten_add_chain();
@@ -235,8 +270,32 @@ impl Cost {
                         acc
                     })
                     .drain()
-                    .reduce(|accum, item| accum + item)
+                    .reduce(|accum, item| Cost::Add(Box::new(accum), Box::new(item)))
                     .unwrap_or_default();
+
+                // Extract reduce the other symbolic elements
+                let other_symbolics = flat
+                    .drain_filter(|c| matches!(c, Cost::Symbolic(_)))
+                    .fold(HashMap::new(), |mut acc, item| {
+                        if acc.contains_key(&item) {
+                            let current_count: &Cost = acc.get(&item).unwrap();
+                            acc.insert(item, (*current_count).clone() + Cost::Concrete(1));
+                        } else {
+                            acc.insert(item, Cost::Concrete(1));
+                        }
+                        acc
+                    })
+                    .drain()
+                    .fold(Cost::default(), |accum, (k, v)| {
+                        if accum.is_zero() {
+                            k.concrete_mul(v)
+                        } else {
+                            Cost::Add(Box::new(accum), Box::new(k.concrete_mul(v)))
+                        }
+                    });
+
+                // Push back the aggregated symbols
+                flat.push(other_symbolics);
 
                 // Push back the aggregated concretes
                 flat.push(aggregated_concretes);
@@ -245,17 +304,19 @@ impl Cost {
                 flat.push(big_os);
 
                 // drain instead of iter because we need the object, not the reference
-                flat.drain(0..)
-                    .reduce(|accum, item| accum + item)
-                    .unwrap_or_default()
+                res = flat
+                    .drain_filter(|item| !item.is_zero())
+                    .reduce(|accum, item| Cost::Add(Box::new(accum), Box::new(item)))
+                    .unwrap_or_default();
             }
-            Cost::ConcreteMul(a, b) => Cost::ConcreteMul(*a, Box::new(b.reduce_add_chain())),
+            Cost::ConcreteMul(a, b) => res = Cost::ConcreteMul(*a, Box::new(b.reduce_add_chain())),
             Cost::SymbolicMul(a, b) => {
-                Cost::SymbolicMul((*a).clone(), Box::new(b.reduce_add_chain()))
+                res = Cost::SymbolicMul((*a).clone(), Box::new(b.reduce_add_chain()))
             }
-            Cost::Max(a, b) => a.reduce_add_chain().max(b.reduce_add_chain()),
-            _ => (*self).clone(),
+            Cost::Max(a, b) => res = a.reduce_add_chain().max_reduced(b.reduce_add_chain()),
+            _ => res = (*self).clone(),
         }
+        res
     }
 
     fn extract_max_add_common(&self) -> Self {
@@ -295,7 +356,7 @@ impl Cost {
 
                 Cost::Add(
                     Box::new(extracted_common_add_chain),
-                    Box::new(Cost::Max(lhs, rhs) /*lhs.max(*rhs)*/),
+                    Box::new(Cost::Max(lhs, rhs)),
                 )
             }
             _ => unreachable!("This must only be applied on Cost::Max"),
@@ -357,6 +418,7 @@ pub(crate) fn get_big_o_from_storage_size(size: Cost) -> Cost {
             Symbolic::ValueOf(_) | Symbolic::SizeOf(_) => {
                 Cost::Symbolic(Symbolic::BigO(format!("{}", s)))
             }
+            Symbolic::BigO(_) => size,
             _ => panic!("Invalid storage size format {}", size),
         },
         Cost::Add(a, b) => get_big_o_from_storage_size(*a) + get_big_o_from_storage_size(*b),

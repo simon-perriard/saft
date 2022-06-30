@@ -29,6 +29,7 @@ pub(crate) fn cost_analysis(
             println!();
             continue;
         }
+        println!("{}", tcx.def_path_str(*dispatchable_def_id));
 
         let cost_analysis =
             cost_analysis::CostAnalysis::new(tcx, &pallet, &events_variants, *dispatchable_def_id);
