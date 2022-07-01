@@ -2,14 +2,17 @@ use core::fmt;
 use rustc_middle::ty::TyCtxt;
 use std::collections::{HashMap, HashSet};
 
+
 #[derive(Eq, PartialEq, Clone, Debug, Hash)]
 pub(crate) enum Cost {
-    Concrete(u64),
-    Symbolic(Symbolic),
+    Infinity,
+    Scalar(u64),
+    Variable(Symbolic),
     Add(Box<Cost>, Box<Cost>),
-    ConcreteMul(u64, Box<Cost>),
-    SymbolicMul(Symbolic, Box<Cost>),
+    ScalarMul(u64, Box<Cost>),
+    VariableMul(Symbolic, Box<Cost>),
     Max(Box<Cost>, Box<Cost>),
+    BigO(Box<Cost>),
 }
 
 #[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Debug, Hash)]
@@ -20,19 +23,19 @@ pub(crate) enum Symbolic {
     WritesOf(String),
     EventsOf(String),
     StepsOf(String),
-    BigO(String),
+    LengthOf(String),
     Log(String),
 }
 
 impl Symbolic {
     pub(crate) fn symbolic_mul(self, rhs: Cost) -> Cost {
         if rhs.is_zero() {
-            return Cost::Concrete(0);
-        } else if let Cost::Concrete(1) = rhs {
-            return Cost::Symbolic(self);
+            return Cost::Scalar(0);
+        } else if let Cost::Scalar(1) = rhs {
+            return Cost::Variable(self);
         }
 
-        Cost::SymbolicMul(self, Box::new(rhs))
+        Cost::VariableMul(self, Box::new(rhs))
     }
 }
 
@@ -45,7 +48,7 @@ impl fmt::Display for Symbolic {
             Symbolic::WritesOf(s) => write!(f, "WRITESOF({})", s),
             Symbolic::EventsOf(s) => write!(f, "EVENTSOF({})", s),
             Symbolic::StepsOf(s) => write!(f, "STEPSOF({})", s),
-            Symbolic::BigO(s) => write!(f, "O({})", s),
+            Symbolic::LengthOf(s) => write!(f, "LENGTHOF({})", s),
             Symbolic::Log(s) => write!(f, "LOG({})", s),
         }
     }
@@ -53,63 +56,87 @@ impl fmt::Display for Symbolic {
 
 impl Default for Cost {
     fn default() -> Self {
-        Cost::Concrete(0)
+        Cost::Scalar(0)
     }
 }
 
 impl Cost {
     pub(crate) fn is_zero(&self) -> bool {
         match self {
-            Self::Concrete(x) => *x == 0,
-            Self::Symbolic(_) => false,
+            Self::Infinity => false,
+            Self::Scalar(x) => *x == 0,
+            Self::Variable(_) => false,
             Self::Add(a, b) => a.is_zero() && b.is_zero(),
-            Self::SymbolicMul(_, b) => b.is_zero(),
-            Self::ConcreteMul(a, b) => *a == 0 || b.is_zero(),
+            Self::VariableMul(_, b) => b.is_zero(),
+            Self::ScalarMul(a, b) => *a == 0 || b.is_zero(),
             Self::Max(a, b) => a.is_zero() && b.is_zero(),
+            Self::BigO(c) => c.is_zero(),
+        }
+    }
+
+    pub(crate) fn is_infinity(&self) -> bool {
+        match self {
+            Self::Infinity => true,
+            Self::Scalar(_) => false,
+            Self::Variable(_) => false,
+            Self::Add(a, b) => a.is_infinity() || b.is_infinity(),
+            Self::VariableMul(_, b) => b.is_infinity(),
+            Self::ScalarMul(a, b) => b.is_infinity(),
+            Self::Max(a, b) => a.is_infinity() || b.is_infinity(),
+            Self::BigO(c) => c.is_infinity(),
         }
     }
 
     pub(crate) fn mul(self, rhs: Self) -> Self {
-        match self {
-            Cost::Symbolic(sym) => sym.symbolic_mul(rhs),
-            Cost::Concrete(_) | Cost::ConcreteMul(_, _) => self.concrete_mul(rhs),
-            _ => unimplemented!(),
+        match self.clone() {
+            Cost::Variable(sym) => sym.symbolic_mul(rhs),
+            Cost::Scalar(_) | Cost::ScalarMul(_, _) => self.concrete_mul(rhs),
+            Cost::BigO(_) => match rhs.clone() {
+                Cost::Scalar(_) | Cost::ScalarMul(_, _) => self.concrete_mul(rhs),
+                Cost::Variable(sym) => sym.symbolic_mul(self),
+                _ => unimplemented!("BIGO({:?})", self)
+            }
+            _ => unimplemented!("{:?}", self),
         }
     }
 
     pub(crate) fn concrete_mul(self, rhs: Self) -> Self {
-        if self.is_zero() || rhs.is_zero() {
+        if self.is_infinity() || rhs.is_infinity() {
+            return Self::Infinity;
+        } else if self.is_zero() || rhs.is_zero() {
             // Compact notation: x*y with x=0 and/or y=0 -> 0 
-            return Self::Concrete(0);
-        } else if let Self::Concrete(1) = self {
+            return Self::Scalar(0);
+        } else if let Self::Scalar(1) = self {
             // Compact notation: x*y with x=1 -> y
             return rhs;
-        } else if let Self::Concrete(1) = rhs {
+        } else if let Self::Scalar(1) = rhs {
             // Compact notation: x*y with y=1 -> x
             return self;
-        } else if let Self::Concrete(x) = self && let Self::Concrete(y) = rhs {
+        } else if let Self::Scalar(x) = self && let Self::Scalar(y) = rhs {
             // Compact notation: (x)*(y) with x and y concrete -> (x*y)
-            return Self::Concrete(x*y);
-        } else if let Self::Concrete(x) = self && let Self::ConcreteMul(y, a) = rhs {
+            return Self::Scalar(x*y);
+        } else if let Self::Scalar(x) = self && let Self::ScalarMul(y, a) = rhs {
             // Compact notation: (x)*((y)*a) with x and y concrete -> (x*y)*a
-            return Self::ConcreteMul(x*y, Box::new(a.reduce_add_chain()));
-        } else if let Self::Concrete(x) = rhs && let Self::ConcreteMul(y, a) = self {
+            return Self::ScalarMul(x*y, Box::new(a.reduce_add_chain()));
+        } else if let Self::Scalar(x) = rhs && let Self::ScalarMul(y, a) = self {
             // Compact notation: ((y)*a)*(x) with x and y concrete -> (x*y)*a
-            return Self::ConcreteMul(x*y, Box::new(a.reduce_add_chain()));
-        } else if let Self::Concrete(x) = self {
-            return Self::ConcreteMul(x, Box::new(rhs.reduce_add_chain()));
-        } else if let Self::Concrete(x) = rhs {
-            return Self::ConcreteMul(x, Box::new(self.reduce_add_chain()));
+            return Self::ScalarMul(x*y, Box::new(a.reduce_add_chain()));
+        } else if let Self::Scalar(x) = self {
+            return Self::ScalarMul(x, Box::new(rhs.reduce_add_chain()));
+        } else if let Self::Scalar(x) = rhs {
+            return Self::ScalarMul(x, Box::new(self.reduce_add_chain()));
         }
         unreachable!();
     }
 
     pub(crate) fn max(&self, rhs: Self) -> Self {
-        if self.is_zero() {
+        if self.is_infinity() || rhs.is_infinity() {
+            return Self::Infinity;
+        }else if self.is_zero() {
             return rhs.reduce_add_chain();
         } else if rhs.is_zero() || *self == rhs {
             return self.reduce_add_chain();
-        } else if let Self::Concrete(x) = *self && let Self::Concrete(y) = rhs {
+        } else if let Self::Scalar(x) = *self && let Self::Scalar(y) = rhs {
             // Compact notation: max(x, y) => x > y ? x : y
             return if x > y {self.reduce_add_chain()} else {rhs.reduce_add_chain()};
         } else if let Self::Max(a, _) = rhs.clone() && *self == *a {
@@ -143,7 +170,7 @@ impl Cost {
             return rhs;
         } else if rhs.is_zero() || *self == rhs {
             return self.clone();
-        } else if let Self::Concrete(x) = *self && let Self::Concrete(y) = rhs {
+        } else if let Self::Scalar(x) = *self && let Self::Scalar(y) = rhs {
             // Compact notation: max(x, y) => x > y ? x : y
             return if x > y {self.clone()} else {rhs};
         } else if let Self::Max(a, _) = rhs.clone() && *self == *a {
@@ -165,11 +192,7 @@ impl Cost {
             return longest;
         }
 
-        Self::Max(
-            Box::new(self.clone()),
-            Box::new(rhs),
-        )
-        .extract_max_add_common()
+        Self::Max(Box::new(self.clone()), Box::new(rhs)).extract_max_add_common()
     }
 
     fn flatten_add_chain(&self) -> Vec<Self> {
@@ -180,7 +203,7 @@ impl Cost {
                 flat.append(&mut a.flatten_add_chain());
                 flat.append(&mut b.flatten_add_chain());
             }
-            Self::ConcreteMul(a, b) => {
+            Self::ScalarMul(a, b) => {
                 // Open the concrete mul
                 for _ in 0..*a {
                     flat.append(&mut b.flatten_add_chain());
@@ -199,20 +222,20 @@ impl Cost {
 
         // Extract concretes and compute the diff
         let aggregated_concretes_1 = chain_1
-            .drain_filter(|c| matches!(c, Cost::Concrete(_)))
+            .drain_filter(|c| matches!(c, Cost::Scalar(_)))
             .reduce(|accum, item| accum + item)
             .unwrap_or_default();
 
         let aggregated_concretes_2 = chain_2
-            .drain_filter(|c| matches!(c, Cost::Concrete(_)))
+            .drain_filter(|c| matches!(c, Cost::Scalar(_)))
             .reduce(|accum, item| accum + item)
             .unwrap_or_default();
 
-        if let Cost::Concrete(concrete_1) = aggregated_concretes_1 && let Cost::Concrete(concrete_2) = aggregated_concretes_2 {
+        if let Cost::Scalar(concrete_1) = aggregated_concretes_1 && let Cost::Scalar(concrete_2) = aggregated_concretes_2 {
             match concrete_1.cmp(&concrete_2) {
-                std::cmp::Ordering::Less => chain_2.push(Cost::Concrete(concrete_2-concrete_1)),
+                std::cmp::Ordering::Less => chain_2.push(Cost::Scalar(concrete_2-concrete_1)),
                 std::cmp::Ordering::Equal => (),
-                std::cmp::Ordering::Greater => chain_1.push(Cost::Concrete(concrete_1-concrete_2)),
+                std::cmp::Ordering::Greater => chain_1.push(Cost::Scalar(concrete_1-concrete_2)),
             }
         } else {
             unreachable!();
@@ -251,6 +274,7 @@ impl Cost {
     }
 
     pub fn reduce_add_chain(&self) -> Self {
+        //return self.clone();
         let res;
         match self {
             Cost::Add(_, _) => {
@@ -258,13 +282,13 @@ impl Cost {
 
                 // Extract and aggregate concretes
                 let aggregated_concretes = flat
-                    .drain_filter(|c| matches!(c, Cost::Concrete(_)))
+                    .drain_filter(|c| matches!(c, Cost::Scalar(_)))
                     .reduce(|accum, item| accum + item)
                     .unwrap_or_default();
 
                 // Extract and reduce the BigO elements
                 let big_os = flat
-                    .drain_filter(|c| matches!(c, Cost::Symbolic(Symbolic::BigO(_))))
+                    .drain_filter(|c| matches!(c, Cost::BigO(_)))
                     .fold(HashSet::new(), |mut acc, item| {
                         acc.insert(item);
                         acc
@@ -275,13 +299,13 @@ impl Cost {
 
                 // Extract reduce the other symbolic elements
                 let other_symbolics = flat
-                    .drain_filter(|c| matches!(c, Cost::Symbolic(_)))
+                    .drain_filter(|c| matches!(c, Cost::Variable(_)))
                     .fold(HashMap::new(), |mut acc, item| {
                         if acc.contains_key(&item) {
                             let current_count: &Cost = acc.get(&item).unwrap();
-                            acc.insert(item, (*current_count).clone() + Cost::Concrete(1));
+                            acc.insert(item, (*current_count).clone() + Cost::Scalar(1));
                         } else {
-                            acc.insert(item, Cost::Concrete(1));
+                            acc.insert(item, Cost::Scalar(1));
                         }
                         acc
                     })
@@ -309,9 +333,9 @@ impl Cost {
                     .reduce(|accum, item| Cost::Add(Box::new(accum), Box::new(item)))
                     .unwrap_or_default();
             }
-            Cost::ConcreteMul(a, b) => res = Cost::ConcreteMul(*a, Box::new(b.reduce_add_chain())),
-            Cost::SymbolicMul(a, b) => {
-                res = Cost::SymbolicMul((*a).clone(), Box::new(b.reduce_add_chain()))
+            Cost::ScalarMul(a, b) => res = Cost::ScalarMul(*a, Box::new(b.reduce_add_chain())),
+            Cost::VariableMul(a, b) => {
+                res = Cost::VariableMul((*a).clone(), Box::new(b.reduce_add_chain()))
             }
             Cost::Max(a, b) => res = a.reduce_add_chain().max_reduced(b.reduce_add_chain()),
             _ => res = (*self).clone(),
@@ -320,6 +344,7 @@ impl Cost {
     }
 
     fn extract_max_add_common(&self) -> Self {
+        //return self.clone();
         match self {
             Cost::Max(a, b) => {
                 let mut chain_1 = a.reduce_add_chain().flatten_add_chain();
@@ -368,20 +393,22 @@ impl std::ops::Add for Cost {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        if self.is_zero() {
+        if self.is_infinity() || rhs.is_infinity() {
+            return Self::Infinity;
+        } else if self.is_zero() {
             return rhs;
         } else if rhs.is_zero() {
             return self;
-        } else if let Self::Concrete(x) = self && let Self::Concrete(y) = rhs {
-            return Self::Concrete(x+y);
-        } else if let Self::ConcreteMul(x, a) = self.clone() && *a == rhs {
-            return Self::ConcreteMul(x+1, a);
-        } else if let Self::ConcreteMul(x, a) = rhs.clone() && *a == self {
-            return Self::ConcreteMul(x+1, a);
-        } else if let Self::ConcreteMul(x, a) = self.clone() && let Self::ConcreteMul(y, b) = rhs.clone() && *a == *b{
-            return Self::ConcreteMul(x+y, a);
+        } else if let Self::Scalar(x) = self && let Self::Scalar(y) = rhs {
+            return Self::Scalar(x+y);
+        } else if let Self::ScalarMul(x, a) = self.clone() && *a == rhs {
+            return Self::ScalarMul(x+1, a);
+        } else if let Self::ScalarMul(x, a) = rhs.clone() && *a == self {
+            return Self::ScalarMul(x+1, a);
+        } else if let Self::ScalarMul(x, a) = self.clone() && let Self::ScalarMul(y, b) = rhs.clone() && *a == *b{
+            return Self::ScalarMul(x+y, a);
         } else if self == rhs {
-            return Self::ConcreteMul(2, Box::new(self));
+            return Self::ScalarMul(2, Box::new(self));
         }
 
         Self::Add(Box::new(self), Box::new(rhs))
@@ -391,41 +418,40 @@ impl std::ops::Add for Cost {
 impl fmt::Display for Cost {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Concrete(x) => write!(f, "{}", x),
-            Self::Symbolic(symbolic) => write!(f, "{}", symbolic),
+            Self::Infinity => write!(f, "∞"),
+            Self::Scalar(x) => write!(f, "{}", x),
+            Self::Variable(symbolic) => write!(f, "{}", symbolic),
             Self::Add(a, b) => write!(f, "{}\n + \n{}", a, b),
-            Self::SymbolicMul(a, b) => {
+            Self::VariableMul(a, b) => {
                 if b.pretty_print_need_parenthesis() {
                     write!(f, "{} * ({})", a, b)
                 } else {
                     write!(f, "{} * {}", a, b)
                 }
             }
-            Self::ConcreteMul(a, b) => write!(f, "{} * ({})", a, b),
+            Self::ScalarMul(a, b) => write!(f, "{} * ({})", a, b),
             Self::Max(a, b) => write!(f, "MAX(\n\t{}\n , \n\t{}\n)", a, b),
+            Self::BigO(s) => write!(f, "O({})", s),
         }
     }
 }
 
-pub(crate) fn get_big_o_from_storage_size(size: Cost) -> Cost {
+pub(crate) fn cost_to_big_o(size: Cost) -> Cost {
     if size.is_zero() {
-        return Cost::Concrete(0);
+        return Cost::Scalar(0);
     }
 
+    // TODO: ensure this is correct
     match size.clone() {
-        Cost::Concrete(_) => Cost::Concrete(1),
-        Cost::Symbolic(s) => match s {
-            Symbolic::ValueOf(_) | Symbolic::SizeOf(_) => {
-                Cost::Symbolic(Symbolic::BigO(format!("{}", s)))
-            }
-            Symbolic::BigO(_) => size,
-            _ => panic!("Invalid storage size format {}", size),
-        },
-        Cost::Add(a, b) => get_big_o_from_storage_size(*a) + get_big_o_from_storage_size(*b),
+        Cost::Infinity => Cost::Infinity,
+        Cost::Scalar(_) => Cost::Scalar(1),
+        Cost::Variable(s) => Cost::BigO(Box::new(Cost::Variable(s))),
+        Cost::Add(a, b) => cost_to_big_o(*a) + cost_to_big_o(*b),
         // Storage sizes are constructed such that lhs of mul is the number of elements, rhs is their size
-        Cost::ConcreteMul(a, _) => Cost::Concrete(a),
-        Cost::SymbolicMul(a, _) => get_big_o_from_storage_size(Cost::Symbolic(a)),
-        Cost::Max(a, b) => get_big_o_from_storage_size(*a).max(get_big_o_from_storage_size(*b)),
+        Cost::ScalarMul(a, _) => Cost::Scalar(a),
+        Cost::VariableMul(a, _) => cost_to_big_o(Cost::Variable(a)),
+        Cost::Max(a, b) => cost_to_big_o(*a).max(cost_to_big_o(*b)),
+        Cost::BigO(_) => size,
     }
 }
 
@@ -441,57 +467,57 @@ mod tests {
 
     #[test]
     fn concrete_add_chain_reduction() {
-        let a = Cost::Concrete(1);
-        let b = Cost::Concrete(1);
+        let a = Cost::Scalar(1);
+        let b = Cost::Scalar(1);
 
-        assert_eq!(a + b, Cost::Concrete(2))
+        assert_eq!(a + b, Cost::Scalar(2))
     }
 
     #[test]
     fn concrete_max_add_chain_reduction() {
-        let a = Cost::Concrete(1);
-        let b = Cost::Concrete(1);
-        let c = Cost::Concrete(2);
-        let d = Cost::Concrete(2);
+        let a = Cost::Scalar(1);
+        let b = Cost::Scalar(1);
+        let c = Cost::Scalar(2);
+        let d = Cost::Scalar(2);
 
         let max = (a + b).max(c + d);
 
-        assert_eq!(max, Cost::Concrete(4));
+        assert_eq!(max, Cost::Scalar(4));
     }
 
     #[test]
     fn mixed_add_chain_reduction() {
-        let a = Cost::Concrete(1);
-        let b = Cost::Concrete(1);
-        let s = Cost::Symbolic(Symbolic::ValueOf(format!("sym")));
+        let a = Cost::Scalar(1);
+        let b = Cost::Scalar(1);
+        let s = Cost::Variable(Symbolic::ValueOf(format!("sym")));
 
         let chain = a + s.clone() + b;
 
-        assert_eq!(chain.reduce_add_chain(), s + Cost::Concrete(2));
+        assert_eq!(chain.reduce_add_chain(), s + Cost::Scalar(2));
     }
 
     #[test]
     fn mixed_max_add_chain() {
-        let a = Cost::Concrete(1);
-        let b = Cost::Concrete(1);
-        let c = Cost::Concrete(2);
-        let d = Cost::Concrete(2);
-        let s = Cost::Symbolic(Symbolic::ValueOf(format!("sym")));
+        let a = Cost::Scalar(1);
+        let b = Cost::Scalar(1);
+        let c = Cost::Scalar(2);
+        let d = Cost::Scalar(2);
+        let s = Cost::Variable(Symbolic::ValueOf(format!("sym")));
 
         let chain1 = a + s.clone() + b;
         let chain2 = c + s.clone() + d;
 
         assert_eq!(
             Cost::Max(Box::new(chain1), Box::new(chain2)).reduce_add_chain(),
-            s + Cost::Concrete(4)
+            s + Cost::Scalar(4)
         );
     }
 
     #[test]
     fn extract_max_add_common() {
-        let s1 = Cost::Symbolic(Symbolic::ValueOf(format!("sym1")));
-        let s2 = Cost::Symbolic(Symbolic::ValueOf(format!("sym2")));
-        let s3 = Cost::Symbolic(Symbolic::ValueOf(format!("sym3")));
+        let s1 = Cost::Variable(Symbolic::ValueOf(format!("sym1")));
+        let s2 = Cost::Variable(Symbolic::ValueOf(format!("sym2")));
+        let s3 = Cost::Variable(Symbolic::ValueOf(format!("sym3")));
 
         let chain1 = s1.clone() + s2.clone();
         let chain2 = s2.clone() + s3.clone();
@@ -507,11 +533,11 @@ mod tests {
 
     #[test]
     fn max_opens_concrete_mul() {
-        let s1 = Cost::Symbolic(Symbolic::ValueOf(format!("sym1")));
+        let s1 = Cost::Variable(Symbolic::ValueOf(format!("sym1")));
 
         let c_mul = s1.clone() + s1.clone();
 
-        assert_eq!(c_mul, Cost::ConcreteMul(2, Box::new(s1.clone())));
+        assert_eq!(c_mul, Cost::ScalarMul(2, Box::new(s1.clone())));
 
         let max = s1.clone().max(c_mul.clone());
 

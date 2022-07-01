@@ -64,7 +64,7 @@ impl Type {
                 Box::new(Self::from_mir_ty(tcx, t)),
                 size.val().try_to_machine_usize(tcx).unwrap(),
             ),
-            TyKind::Slice(t) => Type::Slice(Box::new(Self::from_mir_ty(tcx, t))),
+            TyKind::Slice(t) => {Type::Slice(Box::new(Self::from_mir_ty(tcx, t)))},
             TyKind::Ref(_, t, mutability) => {
                 Type::Ref(Box::new(Self::from_mir_ty(tcx, t)), mutability)
             }
@@ -96,39 +96,39 @@ impl Type {
 impl HasSize for Type {
     fn get_size(&self, tcx: TyCtxt) -> Cost {
         match self {
-            Type::Bool => Cost::Concrete(size_of::<bool>().try_into().unwrap()),
-            Type::Char => Cost::Concrete(size_of::<char>().try_into().unwrap()),
+            Type::Bool => Cost::Scalar(size_of::<bool>().try_into().unwrap()),
+            Type::Char => Cost::Scalar(size_of::<char>().try_into().unwrap()),
             Type::Int(int_ty) => match int_ty {
-                ty::IntTy::Isize => Cost::Concrete(size_of::<isize>().try_into().unwrap()),
-                ty::IntTy::I8 => Cost::Concrete(size_of::<i8>().try_into().unwrap()),
-                ty::IntTy::I16 => Cost::Concrete(size_of::<i16>().try_into().unwrap()),
-                ty::IntTy::I32 => Cost::Concrete(size_of::<i32>().try_into().unwrap()),
-                ty::IntTy::I64 => Cost::Concrete(size_of::<i64>().try_into().unwrap()),
-                ty::IntTy::I128 => Cost::Concrete(size_of::<i128>().try_into().unwrap()),
+                ty::IntTy::Isize => Cost::Scalar(size_of::<isize>().try_into().unwrap()),
+                ty::IntTy::I8 => Cost::Scalar(size_of::<i8>().try_into().unwrap()),
+                ty::IntTy::I16 => Cost::Scalar(size_of::<i16>().try_into().unwrap()),
+                ty::IntTy::I32 => Cost::Scalar(size_of::<i32>().try_into().unwrap()),
+                ty::IntTy::I64 => Cost::Scalar(size_of::<i64>().try_into().unwrap()),
+                ty::IntTy::I128 => Cost::Scalar(size_of::<i128>().try_into().unwrap()),
             },
             Type::Uint(uint_ty) => match uint_ty {
-                ty::UintTy::Usize => Cost::Concrete(size_of::<usize>().try_into().unwrap()),
-                ty::UintTy::U8 => Cost::Concrete(size_of::<u8>().try_into().unwrap()),
-                ty::UintTy::U16 => Cost::Concrete(size_of::<u16>().try_into().unwrap()),
-                ty::UintTy::U32 => Cost::Concrete(size_of::<u32>().try_into().unwrap()),
-                ty::UintTy::U64 => Cost::Concrete(size_of::<u64>().try_into().unwrap()),
-                ty::UintTy::U128 => Cost::Concrete(size_of::<u128>().try_into().unwrap()),
+                ty::UintTy::Usize => Cost::Scalar(size_of::<usize>().try_into().unwrap()),
+                ty::UintTy::U8 => Cost::Scalar(size_of::<u8>().try_into().unwrap()),
+                ty::UintTy::U16 => Cost::Scalar(size_of::<u16>().try_into().unwrap()),
+                ty::UintTy::U32 => Cost::Scalar(size_of::<u32>().try_into().unwrap()),
+                ty::UintTy::U64 => Cost::Scalar(size_of::<u64>().try_into().unwrap()),
+                ty::UintTy::U128 => Cost::Scalar(size_of::<u128>().try_into().unwrap()),
             },
             Type::Float(float_ty) => match float_ty {
-                ty::FloatTy::F32 => Cost::Concrete(size_of::<f32>().try_into().unwrap()),
-                ty::FloatTy::F64 => Cost::Concrete(size_of::<f64>().try_into().unwrap()),
+                ty::FloatTy::F32 => Cost::Scalar(size_of::<f32>().try_into().unwrap()),
+                ty::FloatTy::F64 => Cost::Scalar(size_of::<f64>().try_into().unwrap()),
             },
             Type::Adt(adt) => match adt {
                 Adt::Unknown(def_id) => {
                     let ty = tcx.type_of(def_id);
                     match tcx.layout_of(tcx.param_env(def_id).and(ty)) {
-                        Ok(ty_and_layout) => Cost::Concrete(ty_and_layout.layout.size().bytes()),
+                        Ok(ty_and_layout) => Cost::Scalar(ty_and_layout.layout.size().bytes()),
                         Err(_) => {
                             let path = tcx.def_path_str(*def_id);
 
                             // extract the name of the type for readability
                             let path = path.split("::").last().unwrap().to_string();
-                            Cost::Symbolic(Symbolic::SizeOf(path))
+                            Cost::Variable(Symbolic::SizeOf(path))
                         }
                     }
                 }
@@ -150,9 +150,9 @@ impl HasSize for Type {
                     max_size.symbolic_mul(ty.get_size(tcx))
                 }
             },
-            Type::Array(ty, size) => Cost::Concrete(*size).concrete_mul(ty.get_size(tcx)),
+            Type::Array(ty, size) => Cost::Scalar(*size).concrete_mul(ty.get_size(tcx)),
             Type::Ref(ty, _) => ty.get_size(tcx),
-            Type::Slice(ty) => Cost::Symbolic(Symbolic::BigO(format!("{}", ty.get_size(tcx)))),
+            Type::Slice(_) => Cost::Infinity,
             Type::Tuple(tys) => tys
                 .iter()
                 .map(|ty| ty.get_size(tcx))
@@ -162,7 +162,7 @@ impl HasSize for Type {
                 let path = tcx.def_path_str(*def_id);
                 // extract the name of the type for readability
                 let path = path.split("::").last().unwrap().to_string();
-                Cost::Symbolic(Symbolic::SizeOf(path))
+                Cost::Variable(Symbolic::SizeOf(path))
             }
             Type::Unsupported => panic!(),
         }

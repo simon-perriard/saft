@@ -377,7 +377,7 @@ where
 
     fn t_fn_call_analysis(&mut self, callee_info: CalleeInfo<'tcx>, account_for_cost_now: bool) {
         // Account for function call overhead
-        self.domain_state.add_steps(Cost::Concrete(1));
+        self.domain_state.add_steps(Cost::Scalar(1));
 
         let summary_key = self.get_summary_key_for_callee_info(&callee_info);
 
@@ -435,7 +435,7 @@ where
 
     fn analyze_storage_access(&mut self, callee_info: CalleeInfo<'tcx>) {
         // Account for function call overhead
-        self.domain_state.add_steps(Cost::Concrete(1));
+        self.domain_state.add_steps(Cost::Scalar(1));
 
         // From Subtrate storage access implementation, if there is a closure it is as last argument
         let maybe_closure_arg = callee_info.args.last().and_then(|arg| {
@@ -463,7 +463,7 @@ where
 
     fn analyze_deposit_event(&mut self, callee_info: CalleeInfo<'tcx>) {
         // Account for function call overhead
-        self.domain_state.add_steps(Cost::Concrete(1));
+        self.domain_state.add_steps(Cost::Scalar(1));
 
         let args = callee_info.args;
         let location = callee_info.location;
@@ -490,17 +490,17 @@ where
                             let layout = ty_and_layout.layout;
                             match layout.variants() {
                                 rustc_target::abi::Variants::Single { .. } => {
-                                    Cost::Concrete(ty_and_layout.layout.size().bytes())
+                                    Cost::Scalar(ty_and_layout.layout.size().bytes())
                                 }
                                 rustc_target::abi::Variants::Multiple { variants, .. } => {
                                     let variant_layout = variants[*variant_id];
-                                    Cost::Concrete(variant_layout.size().bytes())
+                                    Cost::Scalar(variant_layout.size().bytes())
                                 }
                             }
                         }
                         Err(_) => {
                             let variant = adt_def.variant(*variant_id);
-                            Cost::Symbolic(Symbolic::SizeOf(self.tcx.def_path_str(variant.def_id)))
+                            Cost::Variable(Symbolic::SizeOf(self.tcx.def_path_str(variant.def_id)))
                         }
                     };
 
@@ -513,7 +513,7 @@ where
                         .map(|variant_id| {
                             let variant = adt_def.variant(*variant_id);
                             // For now add the variant size as symbolic
-                            Cost::Symbolic(Symbolic::SizeOf(self.tcx.def_path_str(variant.def_id)))
+                            Cost::Variable(Symbolic::SizeOf(self.tcx.def_path_str(variant.def_id)))
                         })
                         .reduce(|accum, item| accum.max(item))
                         .unwrap();
@@ -646,7 +646,7 @@ where
 
     fn analyze_with_specifications(&mut self, callee_info: CalleeInfo<'tcx>) {
         // Account for function call overhead
-        self.domain_state.add_steps(Cost::Concrete(1));
+        self.domain_state.add_steps(Cost::Scalar(1));
         // No MIR available, but symbolically account for the call cost
         let mut args_summary_keys = Vec::new();
         // Check if any closure is present in the arguments.
@@ -667,13 +667,14 @@ where
                             Some(vec![(*arg).clone()])
                         );
                         args_summary_keys.push(Some(summary_key));
+
                     } else {
                         args_summary_keys.push(None);
                     }
                 }
                 Operand::Constant(_) if let Some((const_fn_def_id, const_fn_substs_ref)) = arg.const_fn_def() => {
                     let summary_key = self.analyze_closure_as_argument(const_fn_def_id, const_fn_substs_ref, None);
-                    args_summary_keys.push(Some(summary_key));
+                    args_summary_keys.push(Some(summary_key.clone()));
                 },
                 _ => args_summary_keys.push(None)
             }
@@ -892,12 +893,12 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 self.visit_operand(lhs, location);
                 self.visit_operand(rhs, location);
 
-                self.domain_state.add_steps(Cost::Concrete(1));
+                self.domain_state.add_steps(Cost::Scalar(1));
             }
             Rvalue::UnaryOp(_, op) => {
                 self.visit_operand(op, location);
 
-                self.domain_state.add_steps(Cost::Concrete(1));
+                self.domain_state.add_steps(Cost::Scalar(1));
             }
             _ => self.super_rvalue(rvalue, location),
         }
