@@ -142,7 +142,7 @@ pub(crate) mod core_specs {
 pub(crate) mod core_slice_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
-        cost_language::{cost_to_big_o, Cost, HasSize, Symbolic},
+        cost_language::{cost_to_big_o, Cost, HasSize, CostParameter},
         types::Type,
     };
 
@@ -164,13 +164,13 @@ pub(crate) mod core_slice_specs {
                 let vec_ty = Type::from_mir_ty(
                     transfer_function.tcx,
                     transfer_function
-                        .get_local_type(&callee_info.args[0].place().unwrap())
+                        .domain_state.get_local_info_for_place(&callee_info.args[0].place().unwrap())
                         .get_ty(),
                 );
                 let vec_big_o_size = cost_to_big_o(vec_ty.get_size(transfer_function.tcx));
 
                 let binary_search_complexity =
-                    Cost::Variable(Symbolic::Log(format!("{}", vec_big_o_size)));
+                    Cost::Parameter(CostParameter::Log(format!("{}", vec_big_o_size)));
 
                 // Then multiply it by complexity
                 total_cost.cost_big_o_mul(binary_search_complexity);
@@ -191,7 +191,7 @@ pub(crate) mod core_slice_specs {
 pub(crate) mod custom_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
-        cost_language::{Cost, Symbolic},
+        cost_language::{Cost, CostParameter},
     };
 
     pub(crate) fn custom_dispatch<'tcx>(
@@ -205,10 +205,10 @@ pub(crate) mod custom_specs {
         let path = path.as_str();
         match path {
             "<impl pallet::Pallet<T>>::ensure_sorted_and_insert" => {
-                let vec = transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
+                let vec = transfer_function.domain_state.get_local_info_for_place(&callee_info.args[0].place().unwrap());
 
-                let steps_of_ensure_sorted_and_insert = Cost::BigO(Box::new(Cost::Variable(
-                    Symbolic::LengthOf(vec.get_symbol().unwrap()),
+                let steps_of_ensure_sorted_and_insert = Cost::BigO(Box::new(Cost::Parameter(
+                    CostParameter::LengthOf(vec.get_symbol().unwrap()),
                 )));
 
                 transfer_function
@@ -288,7 +288,7 @@ pub(crate) mod frame_support_bounded_vec_specs {
 
     use crate::analysis::{
         cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
-        cost_language::{Cost, Symbolic},
+        cost_language::{Cost, CostParameter},
     };
 
     pub(crate) fn frame_support_bounded_vec_dispatch<'tcx>(
@@ -311,7 +311,7 @@ pub(crate) mod frame_support_bounded_vec_specs {
                 let ty_name = ty_name.split("::").last().unwrap();
                 transfer_function
                     .domain_state
-                    .add_steps(Cost::BigO(Box::new(Cost::Variable(Symbolic::ValueOf(
+                    .add_steps(Cost::BigO(Box::new(Cost::Parameter(CostParameter::ValueOf(
                         format!("{}::get()", ty_name),
                     )))));
             }
@@ -327,7 +327,7 @@ pub(crate) mod frame_support_bounded_vec_specs {
                 let ty_name = ty_name.split("::").last().unwrap();
                 transfer_function
                     .domain_state
-                    .add_steps(Cost::BigO(Box::new(Cost::Variable(Symbolic::ValueOf(
+                    .add_steps(Cost::BigO(Box::new(Cost::Parameter(CostParameter::ValueOf(
                         format!("{}::get()", ty_name),
                     )))));
             }
@@ -336,7 +336,7 @@ pub(crate) mod frame_support_bounded_vec_specs {
                 // extract the name of the type for readability
                 let ty_name = callee_info.substs_ref.type_at(1).to_string();
                 let ty_name = ty_name.split("::").last().unwrap();
-                let length = Cost::BigO(Box::new(Cost::Variable(Symbolic::ValueOf(format!(
+                let length = Cost::BigO(Box::new(Cost::Parameter(CostParameter::ValueOf(format!(
                     "{}::get()",
                     ty_name
                 )))));
@@ -355,7 +355,7 @@ pub(crate) mod frame_support_bounded_vec_specs {
                 let ty_name = ty_name.split("::").last().unwrap();
                 transfer_function
                     .domain_state
-                    .add_steps(Cost::BigO(Box::new(Cost::Variable(Symbolic::ValueOf(
+                    .add_steps(Cost::BigO(Box::new(Cost::Parameter(CostParameter::ValueOf(
                         format!("{}::get()", ty_name),
                     )))));
             }
@@ -367,7 +367,7 @@ pub(crate) mod frame_support_bounded_vec_specs {
 pub(crate) mod frame_support_dispatch_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
-        cost_language::{Cost, Symbolic},
+        cost_language::{Cost, CostParameter},
     };
 
     pub(crate) fn frame_support_dispatch_dispatch<'tcx>(
@@ -384,40 +384,40 @@ pub(crate) mod frame_support_dispatch_specs {
             "frame_support::dispatch::UnfilteredDispatchable::dispatch_bypass_filter" => {
                 // We try to get they variable's symbol, otherwise we fallback on the type
                 let call_name = transfer_function
-                    .get_local_type(&callee_info.args[0].place().unwrap())
+                    .domain_state.get_local_info_for_place(&callee_info.args[0].place().unwrap())
                     .get_symbol()
                     .unwrap_or_else(|| callee_info.substs_ref.type_at(0).to_string());
                 transfer_function
                     .domain_state
-                    .add_reads(Cost::Variable(Symbolic::ReadsOf(call_name.clone())));
+                    .add_reads(Cost::Parameter(CostParameter::ReadsOf(call_name.clone())));
                 transfer_function
                     .domain_state
-                    .add_writes(Cost::Variable(Symbolic::WritesOf(call_name.clone())));
+                    .add_writes(Cost::Parameter(CostParameter::WritesOf(call_name.clone())));
                 transfer_function
                     .domain_state
-                    .add_events(Cost::Variable(Symbolic::EventsOf(call_name.clone())));
+                    .add_events(Cost::Parameter(CostParameter::SizeDepositedOf(call_name.clone())));
                 transfer_function
                     .domain_state
-                    .add_steps(Cost::Variable(Symbolic::StepsOf(call_name)));
+                    .add_steps(Cost::Parameter(CostParameter::StepsOf(call_name)));
             }
             "frame_support::dispatch::Dispatchable::dispatch" => {
                 // We try to get they variable's symbol, otherwise we fallback on the type
                 let call_name = transfer_function
-                    .get_local_type(&callee_info.args[0].place().unwrap())
+                    .domain_state.get_local_info_for_place(&callee_info.args[0].place().unwrap())
                     .get_symbol()
                     .unwrap_or_else(|| callee_info.substs_ref.type_at(0).to_string());
                 transfer_function
                     .domain_state
-                    .add_reads(Cost::Variable(Symbolic::ReadsOf(call_name.clone())));
+                    .add_reads(Cost::Parameter(CostParameter::ReadsOf(call_name.clone())));
                 transfer_function
                     .domain_state
-                    .add_writes(Cost::Variable(Symbolic::WritesOf(call_name.clone())));
+                    .add_writes(Cost::Parameter(CostParameter::WritesOf(call_name.clone())));
                 transfer_function
                     .domain_state
-                    .add_events(Cost::Variable(Symbolic::EventsOf(call_name.clone())));
+                    .add_events(Cost::Parameter(CostParameter::SizeDepositedOf(call_name.clone())));
                 transfer_function
                     .domain_state
-                    .add_steps(Cost::Variable(Symbolic::StepsOf(call_name)));
+                    .add_steps(Cost::Parameter(CostParameter::StepsOf(call_name)));
             }
             "frame_support::dispatch::GetDispatchInfo::get_dispatch_info" => {
                 transfer_function.domain_state.add_steps(Cost::Scalar(1));
@@ -436,7 +436,7 @@ pub(crate) mod frame_support_dispatch_specs {
 pub(crate) mod frame_support_traits_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
-        cost_language::{cost_to_big_o, Cost, HasSize, Symbolic},
+        cost_language::{cost_to_big_o, Cost, HasSize, CostParameter},
         types::Type,
     };
 
@@ -467,11 +467,11 @@ pub(crate) mod frame_support_traits_specs {
             "frame_support::traits::WrapperKeepOpaque::<T>::try_decode" => {
                 transfer_function
                     .domain_state
-                    .add_steps(Cost::BigO(Box::new(Cost::Variable(Symbolic::ValueOf(
+                    .add_steps(Cost::BigO(Box::new(Cost::Parameter(CostParameter::ValueOf(
                         format!(
                             "{}::get()",
                             transfer_function
-                                .get_local_type(&callee_info.args[0].place().unwrap())
+                                .domain_state.get_local_info_for_place(&callee_info.args[0].place().unwrap())
                                 .get_symbol()
                                 .unwrap()
                         ),
@@ -488,25 +488,25 @@ pub(crate) mod frame_support_traits_specs {
                 let fn_name = path.split("::").last().unwrap();
                 transfer_function
                     .domain_state
-                    .add_reads(Cost::Variable(Symbolic::ReadsOf(format!(
+                    .add_reads(Cost::Parameter(CostParameter::ReadsOf(format!(
                         "Currency::{}",
                         fn_name
                     ))));
                 transfer_function
                     .domain_state
-                    .add_writes(Cost::Variable(Symbolic::WritesOf(format!(
+                    .add_writes(Cost::Parameter(CostParameter::WritesOf(format!(
                         "Currency::{}",
                         fn_name
                     ))));
                 transfer_function
                     .domain_state
-                    .add_events(Cost::Variable(Symbolic::EventsOf(format!(
+                    .add_events(Cost::Parameter(CostParameter::SizeDepositedOf(format!(
                         "Currency::{}",
                         fn_name
                     ))));
                 transfer_function
                     .domain_state
-                    .add_steps(Cost::Variable(Symbolic::StepsOf(format!(
+                    .add_steps(Cost::Parameter(CostParameter::StepsOf(format!(
                         "Currency::{}",
                         fn_name
                     ))));
@@ -530,25 +530,25 @@ pub(crate) mod frame_support_traits_specs {
                 let fn_name = path.split("::").last().unwrap();
                 transfer_function
                     .domain_state
-                    .add_reads(Cost::Variable(Symbolic::ReadsOf(format!(
+                    .add_reads(Cost::Parameter(CostParameter::ReadsOf(format!(
                         "VestingSchedule::{}",
                         fn_name
                     ))));
                 transfer_function
                     .domain_state
-                    .add_writes(Cost::Variable(Symbolic::WritesOf(format!(
+                    .add_writes(Cost::Parameter(CostParameter::WritesOf(format!(
                         "VestingSchedule::{}",
                         fn_name
                     ))));
                 transfer_function
                     .domain_state
-                    .add_events(Cost::Variable(Symbolic::EventsOf(format!(
+                    .add_events(Cost::Parameter(CostParameter::SizeDepositedOf(format!(
                         "VestingSchedule::{}",
                         fn_name
                     ))));
                 transfer_function
                     .domain_state
-                    .add_steps(Cost::Variable(Symbolic::StepsOf(format!(
+                    .add_steps(Cost::Parameter(CostParameter::StepsOf(format!(
                         "VestingSchedule::{}",
                         fn_name
                     ))));
@@ -680,7 +680,7 @@ pub(crate) mod sp_io_specs {
                         Type::from_mir_ty(
                             transfer_function.tcx,
                             transfer_function
-                                .get_local_type(&callee_info.args[0].place().unwrap())
+                                .domain_state.get_local_info_for_place(&callee_info.args[0].place().unwrap())
                                 .get_ty(),
                         )
                         .get_size(transfer_function.tcx),
@@ -695,7 +695,7 @@ pub(crate) mod sp_io_specs {
 pub(crate) mod sp_runtime_traits_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
-        cost_language::{Cost, Symbolic},
+        cost_language::{Cost, CostParameter},
     };
 
     use rustc_middle::ty::TyKind;
@@ -726,7 +726,7 @@ pub(crate) mod sp_runtime_traits_specs {
                 // get the destination type to know what type is read from storage
                 // return type is Result<read_type, error_type>
                 let res = transfer_function
-                    .get_local_type(&callee_info.destination.unwrap())
+                    .domain_state.get_local_info_for_place(&callee_info.destination.unwrap())
                     .get_ty()
                     .kind();
                 let read_type = match res {
@@ -735,7 +735,7 @@ pub(crate) mod sp_runtime_traits_specs {
                 };
                 transfer_function
                     .domain_state
-                    .add_reads(Cost::Variable(Symbolic::SizeOf(read_type.to_string())));
+                    .add_reads(Cost::Parameter(CostParameter::SizeOf(read_type.to_string())));
             }
             "sp_runtime::traits::StaticLookup::unlookup" => {
                 transfer_function.domain_state.add_steps(Cost::Scalar(1));
@@ -1059,9 +1059,8 @@ pub(crate) mod std_ops_specs {
 
                 // Keep type with more information when derefencing
                 let underlying =
-                    transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
-                transfer_function.local_types.borrow_mut()
-                    [callee_info.destination.unwrap().local] = underlying;
+                    transfer_function.domain_state.get_local_info_for_place(&callee_info.args[0].place().unwrap());
+                transfer_function.domain_state.locals_info[callee_info.destination.unwrap().local] = underlying;
             }
             "std::ops::Mul::mul"
             | "std::ops::Add::add"
@@ -1134,22 +1133,21 @@ pub(crate) mod std_slice_specs {
             }
             "std::slice::<impl [T]>::to_vec" => {
                 let underlying = if let TyKind::Ref(_, ty, _) = transfer_function
-                    .get_local_type(&callee_info.args[0].place().unwrap())
+                    .domain_state.get_local_info_for_place(&callee_info.args[0].place().unwrap())
                     .get_ty()
                     .kind()
                 {
                     *ty
                 } else {
                     transfer_function
-                        .get_local_type(&callee_info.args[0].place().unwrap())
+                        .domain_state.get_local_info_for_place(&callee_info.args[0].place().unwrap())
                         .get_ty()
                 };
 
                 // Keep type with more information when converting to vec
                 let source_ty =
-                    transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
-                transfer_function.local_types.borrow_mut()
-                    [callee_info.destination.unwrap().local] = source_ty;
+                    transfer_function.domain_state.get_local_info_for_place(&callee_info.args[0].place().unwrap());
+                transfer_function.domain_state.locals_info[callee_info.destination.unwrap().local] = source_ty;
 
                 transfer_function.domain_state.add_steps(cost_to_big_o(
                     Type::from_mir_ty(transfer_function.tcx, underlying)
@@ -1170,7 +1168,7 @@ pub(crate) mod std_slice_specs {
 pub(crate) mod std_vec_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, SummaryKey, TransferFunction},
-        cost_language::{Cost, Symbolic},
+        cost_language::{Cost, CostParameter},
     };
 
     pub(crate) fn std_vec_dispatch<'tcx>(
@@ -1184,10 +1182,10 @@ pub(crate) mod std_vec_specs {
         let path = path.as_str();
         match path {
             "std::vec::Vec::<T, A>::insert" => {
-                let vec = transfer_function.get_local_type(&callee_info.args[0].place().unwrap());
+                let vec = transfer_function.domain_state.get_local_info_for_place(&callee_info.args[0].place().unwrap());
 
-                let steps_of_ensure_sorted_and_insert = Cost::BigO(Box::new(Cost::Variable(
-                    Symbolic::LengthOf(format!("{}", vec.get_symbol().unwrap())),
+                let steps_of_ensure_sorted_and_insert = Cost::BigO(Box::new(Cost::Parameter(
+                    CostParameter::LengthOf(format!("{}", vec.get_symbol().unwrap())),
                 )));
 
                 transfer_function
