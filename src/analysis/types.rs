@@ -4,7 +4,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_span::def_id::DefId;
 use std::mem::size_of;
 
-use super::cost_language::{Cost, HasSize, Symbolic};
+use super::cost_language::{Cost, CostParameter, HasSize};
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum Type {
@@ -64,7 +64,7 @@ impl Type {
                 Box::new(Self::from_mir_ty(tcx, t)),
                 size.val().try_to_machine_usize(tcx).unwrap(),
             ),
-            TyKind::Slice(t) => {Type::Slice(Box::new(Self::from_mir_ty(tcx, t)))},
+            TyKind::Slice(t) => Type::Slice(Box::new(Self::from_mir_ty(tcx, t))),
             TyKind::Ref(_, t, mutability) => {
                 Type::Ref(Box::new(Self::from_mir_ty(tcx, t)), mutability)
             }
@@ -128,7 +128,7 @@ impl HasSize for Type {
 
                             // extract the name of the type for readability
                             let path = path.split("::").last().unwrap().to_string();
-                            Cost::Variable(Symbolic::SizeOf(path))
+                            Cost::Parameter(CostParameter::SizeOf(path))
                         }
                     }
                 }
@@ -142,7 +142,7 @@ impl HasSize for Type {
                             let path = tcx.def_path_str(def_id);
                             // extract the name of the type for readability
                             let path = path.split("::").last().unwrap();
-                            Symbolic::ValueOf(format!("{}::get()", path))
+                            CostParameter::ValueOf(format!("{}::get()", path))
                         },
                         _ => unreachable!(),
                     };
@@ -162,7 +162,7 @@ impl HasSize for Type {
                 let path = tcx.def_path_str(*def_id);
                 // extract the name of the type for readability
                 let path = path.split("::").last().unwrap().to_string();
-                Cost::Variable(Symbolic::SizeOf(path))
+                Cost::Parameter(CostParameter::SizeOf(path))
             }
             Type::Unsupported => panic!(),
         }

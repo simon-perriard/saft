@@ -30,8 +30,11 @@ pub(crate) fn cost_analysis(
             continue;
         }
         println!("{}", tcx.def_path_str(*dispatchable_def_id));
-        if !tcx.def_path_str(*dispatchable_def_id).contains("as_multi_threshold_1") {
-            //continue
+        if !tcx
+            .def_path_str(*dispatchable_def_id)
+            .contains("set_identity")
+        {
+            //continue;
         }
 
         let cost_analysis =
@@ -60,11 +63,11 @@ pub(crate) fn cost_analysis(
                 None
             };
 
-        println!(
+        /*println!(
             "********************************\nSummary for dispatchable {}\n{}********************************",
             tcx.def_path_str(*dispatchable_def_id),
             state.unwrap()
-        );
+        );*/
         println!();
     }
 }

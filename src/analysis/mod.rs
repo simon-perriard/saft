@@ -5,5 +5,5 @@ pub mod cost_language;
 pub mod events_variants_analysis;
 pub mod events_variants_domain;
 pub mod pallet;
-pub mod specifications;
+//pub mod specifications;
 pub mod types;

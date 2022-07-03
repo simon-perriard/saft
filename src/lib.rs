@@ -4,6 +4,7 @@
 #![feature(drain_filter)]
 #![feature(if_let_guard)]
 #![feature(let_else)]
+#![feature(is_some_with)]
 
 extern crate rustc_ast;
 extern crate rustc_expand;

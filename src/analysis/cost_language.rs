@@ -1,55 +1,65 @@
 use core::fmt;
 use rustc_middle::ty::TyCtxt;
+use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
-
 
 #[derive(Eq, PartialEq, Clone, Debug, Hash)]
 pub(crate) enum Cost {
     Infinity,
     Scalar(u64),
-    Variable(Symbolic),
+    Parameter(CostParameter),
+    // TODO: change to Vec of Cost
     Add(Box<Cost>, Box<Cost>),
     ScalarMul(u64, Box<Cost>),
-    VariableMul(Symbolic, Box<Cost>),
+    ParameterMul(CostParameter, Box<Cost>),
+    // TODO: change to Vec of Cost
     Max(Box<Cost>, Box<Cost>),
     BigO(Box<Cost>),
 }
 
+//TODO: Struct Variable
+pub(crate) struct Variable {
+    id: u32,
+    span: Option<Span>,
+}
+
 #[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Debug, Hash)]
-pub(crate) enum Symbolic {
+pub(crate) enum CostParameter {
+    //TODO: instead of String, have some Variable
     ValueOf(String),
     SizeOf(String),
     ReadsOf(String),
     WritesOf(String),
-    EventsOf(String),
+    SizeDepositedOf(String),
     StepsOf(String),
     LengthOf(String),
+    //TODO: move Log to Cost
     Log(String),
 }
 
-impl Symbolic {
+impl CostParameter {
     pub(crate) fn symbolic_mul(self, rhs: Cost) -> Cost {
         if rhs.is_zero() {
             return Cost::Scalar(0);
         } else if let Cost::Scalar(1) = rhs {
-            return Cost::Variable(self);
+            return Cost::Parameter(self);
         }
 
-        Cost::VariableMul(self, Box::new(rhs))
+        Cost::ParameterMul(self, Box::new(rhs))
     }
 }
 
-impl fmt::Display for Symbolic {
+impl fmt::Display for CostParameter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Symbolic::ValueOf(s) => write!(f, "VALUEOF({})", s),
-            Symbolic::SizeOf(s) => write!(f, "SIZEOF({})", s),
-            Symbolic::ReadsOf(s) => write!(f, "READSOF({})", s),
-            Symbolic::WritesOf(s) => write!(f, "WRITESOF({})", s),
-            Symbolic::EventsOf(s) => write!(f, "EVENTSOF({})", s),
-            Symbolic::StepsOf(s) => write!(f, "STEPSOF({})", s),
-            Symbolic::LengthOf(s) => write!(f, "LENGTHOF({})", s),
-            Symbolic::Log(s) => write!(f, "LOG({})", s),
+            CostParameter::ValueOf(s) => write!(f, "VALUEOF({})", s),
+            CostParameter::SizeOf(s) => write!(f, "SIZEOF({})", s),
+            CostParameter::ReadsOf(s) => write!(f, "READSOF({})", s),
+            CostParameter::WritesOf(s) => write!(f, "WRITESOF({})", s),
+            CostParameter::SizeDepositedOf(s) => write!(f, "SIZEDEPOSITEDOF({})", s),
+            CostParameter::StepsOf(s) => write!(f, "STEPSOF({})", s),
+            CostParameter::LengthOf(s) => write!(f, "LENGTHOF({})", s),
+            CostParameter::Log(s) => write!(f, "LOG({})", s),
         }
     }
 }
@@ -65,9 +75,9 @@ impl Cost {
         match self {
             Self::Infinity => false,
             Self::Scalar(x) => *x == 0,
-            Self::Variable(_) => false,
+            Self::Parameter(_) => false,
             Self::Add(a, b) => a.is_zero() && b.is_zero(),
-            Self::VariableMul(_, b) => b.is_zero(),
+            Self::ParameterMul(_, b) => b.is_zero(),
             Self::ScalarMul(a, b) => *a == 0 || b.is_zero(),
             Self::Max(a, b) => a.is_zero() && b.is_zero(),
             Self::BigO(c) => c.is_zero(),
@@ -78,9 +88,9 @@ impl Cost {
         match self {
             Self::Infinity => true,
             Self::Scalar(_) => false,
-            Self::Variable(_) => false,
+            Self::Parameter(_) => false,
             Self::Add(a, b) => a.is_infinity() || b.is_infinity(),
-            Self::VariableMul(_, b) => b.is_infinity(),
+            Self::ParameterMul(_, b) => b.is_infinity(),
             Self::ScalarMul(a, b) => b.is_infinity(),
             Self::Max(a, b) => a.is_infinity() || b.is_infinity(),
             Self::BigO(c) => c.is_infinity(),
@@ -89,13 +99,13 @@ impl Cost {
 
     pub(crate) fn mul(self, rhs: Self) -> Self {
         match self.clone() {
-            Cost::Variable(sym) => sym.symbolic_mul(rhs),
+            Cost::Parameter(sym) => sym.symbolic_mul(rhs),
             Cost::Scalar(_) | Cost::ScalarMul(_, _) => self.concrete_mul(rhs),
             Cost::BigO(_) => match rhs.clone() {
                 Cost::Scalar(_) | Cost::ScalarMul(_, _) => self.concrete_mul(rhs),
-                Cost::Variable(sym) => sym.symbolic_mul(self),
-                _ => unimplemented!("BIGO({:?})", self)
-            }
+                Cost::Parameter(sym) => sym.symbolic_mul(self),
+                _ => unimplemented!("BIGO({:?})", self),
+            },
             _ => unimplemented!("{:?}", self),
         }
     }
@@ -299,7 +309,7 @@ impl Cost {
 
                 // Extract reduce the other symbolic elements
                 let other_symbolics = flat
-                    .drain_filter(|c| matches!(c, Cost::Variable(_)))
+                    .drain_filter(|c| matches!(c, Cost::Parameter(_)))
                     .fold(HashMap::new(), |mut acc, item| {
                         if acc.contains_key(&item) {
                             let current_count: &Cost = acc.get(&item).unwrap();
@@ -334,8 +344,8 @@ impl Cost {
                     .unwrap_or_default();
             }
             Cost::ScalarMul(a, b) => res = Cost::ScalarMul(*a, Box::new(b.reduce_add_chain())),
-            Cost::VariableMul(a, b) => {
-                res = Cost::VariableMul((*a).clone(), Box::new(b.reduce_add_chain()))
+            Cost::ParameterMul(a, b) => {
+                res = Cost::ParameterMul((*a).clone(), Box::new(b.reduce_add_chain()))
             }
             Cost::Max(a, b) => res = a.reduce_add_chain().max_reduced(b.reduce_add_chain()),
             _ => res = (*self).clone(),
@@ -420,9 +430,9 @@ impl fmt::Display for Cost {
         match self {
             Self::Infinity => write!(f, "∞"),
             Self::Scalar(x) => write!(f, "{}", x),
-            Self::Variable(symbolic) => write!(f, "{}", symbolic),
+            Self::Parameter(symbolic) => write!(f, "{}", symbolic),
             Self::Add(a, b) => write!(f, "{}\n + \n{}", a, b),
-            Self::VariableMul(a, b) => {
+            Self::ParameterMul(a, b) => {
                 if b.pretty_print_need_parenthesis() {
                     write!(f, "{} * ({})", a, b)
                 } else {
@@ -445,11 +455,11 @@ pub(crate) fn cost_to_big_o(size: Cost) -> Cost {
     match size.clone() {
         Cost::Infinity => Cost::Infinity,
         Cost::Scalar(_) => Cost::Scalar(1),
-        Cost::Variable(s) => Cost::BigO(Box::new(Cost::Variable(s))),
+        Cost::Parameter(s) => Cost::BigO(Box::new(Cost::Parameter(s))),
         Cost::Add(a, b) => cost_to_big_o(*a) + cost_to_big_o(*b),
         // Storage sizes are constructed such that lhs of mul is the number of elements, rhs is their size
         Cost::ScalarMul(a, _) => Cost::Scalar(a),
-        Cost::VariableMul(a, _) => cost_to_big_o(Cost::Variable(a)),
+        Cost::ParameterMul(a, _) => cost_to_big_o(Cost::Parameter(a)),
         Cost::Max(a, b) => cost_to_big_o(*a).max(cost_to_big_o(*b)),
         Cost::BigO(_) => size,
     }
@@ -461,7 +471,7 @@ pub(crate) trait HasSize {
 
 #[cfg(test)]
 mod tests {
-    use crate::analysis::cost_language::Symbolic;
+    use crate::analysis::cost_language::CostParameter;
 
     use super::Cost;
 
@@ -489,7 +499,7 @@ mod tests {
     fn mixed_add_chain_reduction() {
         let a = Cost::Scalar(1);
         let b = Cost::Scalar(1);
-        let s = Cost::Variable(Symbolic::ValueOf(format!("sym")));
+        let s = Cost::Parameter(CostParameter::ValueOf(format!("sym")));
 
         let chain = a + s.clone() + b;
 
@@ -502,7 +512,7 @@ mod tests {
         let b = Cost::Scalar(1);
         let c = Cost::Scalar(2);
         let d = Cost::Scalar(2);
-        let s = Cost::Variable(Symbolic::ValueOf(format!("sym")));
+        let s = Cost::Parameter(CostParameter::ValueOf(format!("sym")));
 
         let chain1 = a + s.clone() + b;
         let chain2 = c + s.clone() + d;
@@ -515,9 +525,9 @@ mod tests {
 
     #[test]
     fn extract_max_add_common() {
-        let s1 = Cost::Variable(Symbolic::ValueOf(format!("sym1")));
-        let s2 = Cost::Variable(Symbolic::ValueOf(format!("sym2")));
-        let s3 = Cost::Variable(Symbolic::ValueOf(format!("sym3")));
+        let s1 = Cost::Parameter(CostParameter::ValueOf(format!("sym1")));
+        let s2 = Cost::Parameter(CostParameter::ValueOf(format!("sym2")));
+        let s3 = Cost::Parameter(CostParameter::ValueOf(format!("sym3")));
 
         let chain1 = s1.clone() + s2.clone();
         let chain2 = s2.clone() + s3.clone();
@@ -533,7 +543,7 @@ mod tests {
 
     #[test]
     fn max_opens_concrete_mul() {
-        let s1 = Cost::Variable(Symbolic::ValueOf(format!("sym1")));
+        let s1 = Cost::Parameter(CostParameter::ValueOf(format!("sym1")));
 
         let c_mul = s1.clone() + s1.clone();
 
