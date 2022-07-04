@@ -31,6 +31,7 @@ pub(crate) struct LocalInfo<'tcx> {
     // keep additional set of abstract values, one per local
     // in each of them we keep symbolic values and attributes
     ty: Vec<Ty<'tcx>>,
+    //TODO: rework to represent variants
     fields: Vec<LocalInfo<'tcx>>,
 }
 
