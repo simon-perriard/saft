@@ -1,8 +1,8 @@
 use crate::analysis::cost_language::Cost;
 use core::fmt;
 use rustc_index::vec::IndexVec;
-use rustc_middle::mir::{self, Body, Local, Place, ProjectionElem};
-use rustc_middle::ty::{ProjectionTy, Ty, TyCtxt, TyKind};
+use rustc_middle::mir::{Body, Local, Place, ProjectionElem};
+use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use rustc_mir_dataflow::{fmt::DebugWithContext, lattice::JoinSemiLattice};
 use std::ops::{Deref, DerefMut};
 
@@ -27,44 +27,98 @@ impl<'tcx> DerefMut for LocalsInfo<'tcx> {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct LocalInfo<'tcx> {
-    //TODO:
+    // TODO:
     // keep additional set of abstract values, one per local
     // in each of them we keep symbolic values and attributes
+    type_info: TypeInfo<'tcx>,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct TypeInfo<'tcx> {
     ty: Vec<Ty<'tcx>>,
-    //TODO: indexVec variantidx -> variant
-    variants: Vec<Variant<'tcx>>,
+    members: Vec<TypeInfo<'tcx>>,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub(crate) struct FieldInfo<'tcx> {
-    ty: Ty<'tcx>,
-}
+impl<'tcx> TypeInfo<'tcx> {
+    pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
+        match ty.kind() {
+            TyKind::Adt(adt_def, substs) => {
+                if adt_def.is_enum() {
+                    let variants = adt_def
+                        .variants()
+                        .iter()
+                        .map(|variant_def| {
+                            let variant_ty = tcx.type_of(variant_def.def_id);
+                            let variant_fields = variant_def
+                                .fields
+                                .iter()
+                                .map(|field| TypeInfo::new(field.ty(tcx, substs), tcx))
+                                .collect::<Vec<_>>();
+                            TypeInfo {
+                                ty: vec![variant_ty],
+                                members: variant_fields,
+                            }
+                        })
+                        .collect::<Vec<_>>();
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub(crate) struct Variant<'tcx> {
-    fields: Vec<FieldInfo<'tcx>>,
-}
+                    TypeInfo {
+                        ty: vec![ty],
+                        members: variants,
+                    }
+                } else {
+                    let fields = adt_def
+                        .all_fields()
+                        .map(|field| TypeInfo::new(field.ty(tcx, substs), tcx))
+                        .collect::<Vec<_>>();
+                    TypeInfo {
+                        ty: vec![ty],
+                        members: fields,
+                    }
+                }
+            }
+            // For closures, taken from https://doc.rust-lang.org/nightly/nightly-rustc/rustc_borrowck/type_check/struct.TypeVerifier.html#method.field_ty
+            TyKind::Closure(_, substs) => {
+                let upvars = substs
+                    .as_closure()
+                    .tupled_upvars_ty()
+                    .tuple_fields()
+                    .iter()
+                    .map(|ty| TypeInfo::new(ty, tcx))
+                    .collect::<Vec<_>>();
 
-impl<'tcx> LocalInfo<'tcx> {
+                TypeInfo {
+                    ty: vec![ty],
+                    members: upvars,
+                }
+            }
+            TyKind::Tuple(list_ty) => {
+                let members = list_ty
+                    .iter()
+                    .map(|ty| TypeInfo::new(ty, tcx))
+                    .collect::<Vec<_>>();
+
+                TypeInfo {
+                    ty: vec![ty],
+                    members,
+                }
+            }
+            TyKind::Ref(_, ty, _) => Self::new(*ty, tcx),
+            TyKind::Projection(projection_ty) => {
+                let members = TypeInfo::new(projection_ty.self_ty(), tcx).members;
+                TypeInfo {
+                    ty: vec![ty],
+                    members,
+                }
+            }
+            _ => TypeInfo {
+                ty: vec![ty],
+                members: Vec::new(),
+            },
+        }
+    }
+
     pub fn has_fields(&self) -> bool {
-
-
-
-        !self.fields.is_empty()
-    }
-
-    pub fn is_enum(&self) -> bool {
-        match self.get_ty().kind() {
-            TyKind::Adt(adt_def, _) => adt_def.is_enum(),
-            _ => false,
-        }
-    }
-
-    pub fn is_struct(&self) -> bool {
-        match self.get_ty().kind() {
-            TyKind::Adt(adt_def, _) => !adt_def.is_enum(),
-            _ => false,
-        }
+        !self.members.is_empty()
     }
 
     pub fn get_ty(&self) -> Ty<'tcx> {
@@ -77,98 +131,57 @@ impl<'tcx> LocalInfo<'tcx> {
         }
     }
 
-    pub fn set_local_info(&mut self, info: LocalInfo<'tcx>) {
+    pub fn get_member(&self, index: usize) -> Option<&TypeInfo<'tcx>> {
+        self.members.get(index)
+    }
+
+    pub fn get_members(&self) -> Vec<TypeInfo<'tcx>> {
+        self.members.clone()
+    }
+
+    pub fn set_member(&mut self, index: usize, type_info: TypeInfo<'tcx>) {
+        self.members.remove(index);
+        self.members.insert(index, type_info);
+    }
+}
+
+impl<'tcx> LocalInfo<'tcx> {
+    pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
+        LocalInfo {
+            type_info: TypeInfo::new(ty, tcx),
+        }
+    }
+
+    pub fn from_type_info(type_info: TypeInfo<'tcx>) -> Self {
+        LocalInfo { type_info }
+    }
+
+    pub fn has_fields(&self) -> bool {
+        self.type_info.has_fields()
+    }
+
+    pub fn get_ty(&self) -> Ty<'tcx> {
+        self.type_info.get_ty()
+    }
+
+    pub fn set_ty(&mut self, ty: Ty<'tcx>) {
+        self.type_info.set_ty(ty);
+    }
+
+    pub fn set_local_info(&mut self, info: TypeInfo<'tcx>) {
         self.set_ty(info.get_ty());
     }
 
-    pub fn get_field(&self, field: mir::Field) -> Option<&LocalInfo<'tcx>> {
-        self.fields.get(field.index())
+    pub fn get_member(&self, index: usize) -> Option<&TypeInfo<'tcx>> {
+        self.type_info.get_member(index)
     }
 
-    pub fn get_fields(&self) -> Vec<LocalInfo<'tcx>> {
-        self.fields.clone()
+    pub fn get_members(&self) -> Vec<TypeInfo<'tcx>> {
+        self.type_info.get_members()
     }
 
-    pub fn set_field(&mut self, field: mir::Field, local_type: LocalInfo<'tcx>) {
-        self.fields.remove(field.index());
-        self.fields.insert(field.index(), local_type);
-    }
-
-    pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
-        match ty.kind() {
-            TyKind::Adt(adt_def, substs) => {
-                if adt_def.is_enum() {
-                    let fields = adt_def
-                        .variants()
-                        .iter()
-                        .map(|variant_def| {
-                            let variant_ty = tcx.type_of(variant_def.def_id);
-                            let variant_fields = variant_def
-                                .fields
-                                .iter()
-                                .map(|field| LocalInfo::new(field.ty(tcx, substs), tcx))
-                                .collect::<Vec<_>>();
-                            LocalInfo {
-                                ty: vec![variant_ty],
-                                fields: variant_fields,
-                            }
-                        })
-                        .collect::<Vec<_>>();
-
-                    LocalInfo {
-                        ty: vec![ty],
-                        fields,
-                    }
-                } else {
-                    let fields = adt_def
-                        .all_fields()
-                        .map(|field| LocalInfo::new(field.ty(tcx, substs), tcx))
-                        .collect::<Vec<_>>();
-                    LocalInfo {
-                        ty: vec![ty],
-                        fields,
-                    }
-                }
-            }
-            // For closures, taken from https://doc.rust-lang.org/nightly/nightly-rustc/rustc_borrowck/type_check/struct.TypeVerifier.html#method.field_ty
-            TyKind::Closure(_, substs) => {
-                let fields = substs
-                    .as_closure()
-                    .tupled_upvars_ty()
-                    .tuple_fields()
-                    .iter()
-                    .map(|ty| LocalInfo::new(ty, tcx))
-                    .collect::<Vec<_>>();
-
-                LocalInfo {
-                    ty: vec![ty],
-                    fields,
-                }
-            }
-            TyKind::Tuple(list_ty) => {
-                let fields = list_ty
-                    .iter()
-                    .map(|ty| LocalInfo::new(ty, tcx))
-                    .collect::<Vec<_>>();
-
-                LocalInfo {
-                    ty: vec![ty],
-                    fields,
-                }
-            }
-            TyKind::Ref(_, ty, _) => Self::new(*ty, tcx),
-            TyKind::Projection(projection_ty) => {
-                let fields = LocalInfo::new(projection_ty.self_ty(), tcx).fields;
-                LocalInfo {
-                    ty: vec![ty],
-                    fields,
-                }
-            }
-            _ => LocalInfo {
-                ty: vec![ty],
-                fields: Vec::new(),
-            },
-        }
+    pub fn set_member(&mut self, index: usize, type_info: TypeInfo<'tcx>) {
+        self.type_info.set_member(index, type_info)
     }
 }
 
@@ -225,20 +238,20 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
         self.costs.cost_big_o_mul(mul_factor);
     }
 
-    pub fn get_local_info_for_place(&self, place: &Place) -> Option<LocalInfo<'tcx>> {
+    pub fn get_type_info_for_place(&self, place: &Place) -> Option<TypeInfo<'tcx>> {
         let Place { local, projection } = place;
 
         if projection.is_empty() {
             // No projection, return the outermost LocalInfo
-            return Some(self.locals_info[*local].clone());
+            return Some(self.locals_info[*local].type_info.clone());
         } else {
             // Go down the projections
-            let mut current_local_info = self.locals_info[*local].clone();
+            let mut current_local_info = self.locals_info[*local].type_info.clone();
 
             for (_, proj) in place.iter_projections() {
                 match proj {
                     ProjectionElem::Field(field, _) => {
-                        let field_local_info = current_local_info.get_field(field);
+                        let field_local_info = current_local_info.get_member(field.index());
 
                         if let Some(field_local_info) = field_local_info {
                             current_local_info = field_local_info.clone();
@@ -251,7 +264,7 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
                     }
                     ProjectionElem::Downcast(_, variant_idx) => {
                         // Downcast if a field is available
-                        let fields = current_local_info.get_fields();
+                        let fields = current_local_info.get_members();
                         let maybe_field = fields.get(variant_idx.index());
 
                         if let Some(field_local_info) = maybe_field {
@@ -264,6 +277,18 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
                 }
             }
             return Some(current_local_info);
+        }
+    }
+
+    pub fn override_with_caller_type_context(
+        &mut self,
+        caller_context_args_type_info: &Vec<TypeInfo<'tcx>>,
+    ) {
+        let mut idx = Local::from_usize(1);
+
+        for caller_context_arg_type_info in caller_context_args_type_info.iter() {
+            self.locals_info[idx].type_info = (*caller_context_arg_type_info).clone();
+            idx = idx + 1;
         }
     }
 
@@ -376,6 +401,12 @@ impl<'tcx> JoinSemiLattice for LocalsInfo<'tcx> {
 
 impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
+        self.type_info.join(&other.type_info)
+    }
+}
+
+impl<'tcx> JoinSemiLattice for TypeInfo<'tcx> {
+    fn join(&mut self, other: &Self) -> bool {
         if self == other {
             // no change
             return false;
@@ -383,13 +414,13 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
 
         let mut fields_changed = false;
 
-        if self.fields.len() == other.fields.len() {
-            for (self_field, other_field) in self.fields.iter_mut().zip(other.fields.clone()) {
+        if self.members.len() == other.members.len() {
+            for (self_field, other_field) in self.members.iter_mut().zip(other.members.clone()) {
                 // recursively join
                 fields_changed |= self_field.join(&other_field);
             }
         } else {
-            panic!("SOUNDESS BREAKS: Fields cannot have different lengths");
+            panic!("SOUNDESS BREAKS: Fields cannot have different lengths {:#?} --- {:#?}", self, other);
         }
 
         if self.get_ty() == other.get_ty() {
@@ -427,7 +458,11 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
                 }
             */
 
-            panic!("SOUNDNESS BREAKS: {:#?} --- {:#?}", self, other);
+            panic!(
+                "SOUNDNESS BREAKS: {:#?} --- {:#?}",
+                self.get_ty().kind(),
+                other.get_ty().kind()
+            );
         }
     }
 }
