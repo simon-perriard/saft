@@ -1,4 +1,4 @@
-use super::cost_domain::{CostDomain, ExtendedCostAnalysisDomain, LocalInfo, LocalsInfo};
+use super::cost_domain::{CostDomain, ExtendedCostAnalysisDomain, LocalInfo, LocalsInfo, TypeInfo};
 use super::cost_language::{Cost, CostParameter};
 use super::events_variants_domain::Variants;
 use super::pallet::Pallet;
@@ -19,12 +19,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::vec;
-
-//TODO REPORT: we use a caching mechanism to speed up a subset of the calls
-// we cache a subset of the calls of the analysis, those considered as slow
-// fast ones are specs
-pub(crate) type SummaryKey<'tcx> = (DefId, Vec<LocalInfo<'tcx>>);
-pub(crate) type Summary<'tcx> = HashMap<SummaryKey<'tcx>, Option<CostDomain>>;
 
 #[derive(PartialEq, Eq)]
 pub(crate) enum AnalysisState {
@@ -58,7 +52,7 @@ pub(crate) struct CostAnalysis<'tcx, 'inter> {
     pallet: &'inter Pallet,
     events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     def_id: DefId,
-    pub summaries: Rc<RefCell<Summary<'tcx>>>,
+    caller_context_args_type_info: Vec<TypeInfo<'tcx>>,
     pub analysis_state: Rc<RefCell<AnalysisState>>,
 }
 
@@ -74,7 +68,7 @@ impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
             pallet,
             events_variants,
             def_id,
-            Rc::new(RefCell::new(HashMap::new())),
+            Vec::new(),
             Rc::new(RefCell::new(AnalysisState::Success)),
         )
     }
@@ -84,7 +78,7 @@ impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
         pallet: &'inter Pallet,
         events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
         def_id: DefId,
-        summaries: Rc<RefCell<Summary<'tcx>>>,
+        caller_context_args_type_info: Vec<TypeInfo<'tcx>>,
         state: Rc<RefCell<AnalysisState>>,
     ) -> Self {
         CostAnalysis {
@@ -92,7 +86,7 @@ impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
             pallet,
             events_variants,
             def_id,
-            summaries,
+            caller_context_args_type_info,
             analysis_state: state,
         }
     }
@@ -105,7 +99,6 @@ impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
             self.tcx,
             self.pallet,
             self.events_variants,
-            self.summaries.clone(),
             self.def_id,
             state,
             self.analysis_state.clone(),
@@ -117,9 +110,8 @@ pub(crate) struct TransferFunction<'tcx, 'inter, 'transformer> {
     pub tcx: TyCtxt<'tcx>,
     pallet: &'inter Pallet,
     events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
-    pub summaries: Rc<RefCell<Summary<'tcx>>>,
     pub def_id: DefId,
-    pub domain_state: &'transformer mut ExtendedCostAnalysisDomain<'tcx>,
+    pub state: &'transformer mut ExtendedCostAnalysisDomain<'tcx>,
     pub analysis_state: Rc<RefCell<AnalysisState>>,
 }
 
@@ -129,30 +121,22 @@ impl<'tcx, 'inter, 'transformer> TransferFunction<'tcx, 'inter, 'transformer> {
         tcx: TyCtxt<'tcx>,
         pallet: &'inter Pallet,
         events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
-        summaries: Rc<RefCell<Summary<'tcx>>>,
         def_id: DefId,
-        domain_state: &'transformer mut ExtendedCostAnalysisDomain<'tcx>,
+        state: &'transformer mut ExtendedCostAnalysisDomain<'tcx>,
         analysis_state: Rc<RefCell<AnalysisState>>,
     ) -> Self {
         TransferFunction {
             tcx,
             pallet,
             events_variants,
-            summaries,
             def_id,
-            domain_state,
+            state,
             analysis_state,
         }
     }
 
-    pub fn get_local_info_for_place(&self, place: &Place) -> Option<LocalInfo<'tcx>> {
-        self.domain_state.get_local_info_for_place(place)
-    }
-
-    pub fn get_summary_for_key(&self, key: &SummaryKey<'tcx>) -> CostDomain {
-        (*self.summaries.borrow().get(key).unwrap())
-            .clone()
-            .unwrap()
+    pub fn get_type_info_for_place(&self, place: &Place) -> Option<TypeInfo<'tcx>> {
+        self.state.get_type_info_for_place(place)
     }
 }
 
@@ -163,7 +147,9 @@ impl<'tcx, 'inter> AnalysisDomain<'tcx> for CostAnalysis<'tcx, 'inter> {
     type Direction = Forward;
 
     fn bottom_value(&self, body: &Body<'tcx>) -> Self::Domain {
-        ExtendedCostAnalysisDomain::new(self.tcx, body)
+        let mut state = ExtendedCostAnalysisDomain::new(self.tcx, body);
+        state.override_with_caller_type_context(&self.caller_context_args_type_info);
+        state
     }
 
     fn initialize_start_block(&self, _body: &Body<'tcx>, _state: &mut Self::Domain) {}
@@ -211,187 +197,35 @@ where
     fn t_visit_fn_call(&mut self, location: Location) {
         let callee_info = self.get_callee_info(location);
 
-        if self.is_storage_field_access(callee_info.callee_def_id) {
-            // Filtering storage access, we need to catch it now otherwise we lose information about which
-            // field is accessed.
-            self.analyze_storage_access(callee_info);
-        } else if self.is_deposit_event(callee_info.callee_def_id) {
+        if self.is_deposit_event(callee_info.callee_def_id) {
             // Filtering event deposit, pallet::deposit_event will later call frame_system::deposit_event,
             // but we can only catch the variant of the Event enum now. Or we need to pass a calling context for
             // further analysis.
-            self.analyze_deposit_event(callee_info);
+            //self.analyze_deposit_event(callee_info);
         }
         /* else if needs_early_catch(&self.tcx.def_path_str(callee_info.callee_def_id)) {
             self.analyze_with_specifications(callee_info);
         }*/
         else {
-            self.t_fn_call_analysis(callee_info, true);
+            self.t_fn_call_analysis(callee_info);
         }
     }
 
-    fn t_fn_call_analysis(&mut self, callee_info: CalleeInfo<'tcx>, account_for_cost_now: bool) {
+    fn t_fn_call_analysis(&mut self, callee_info: CalleeInfo<'tcx>) {
         // Account for function call overhead
-        self.domain_state.add_steps(Cost::Scalar(1));
+        self.state.add_steps(Cost::Scalar(1));
 
-        // TODO: refactor summary mechanism
-        /*let summary_key = self.get_summary_key_for_callee_info(&callee_info);
-
-        if self.summaries.borrow().contains_key(&summary_key) {
-            // We already have the summary for this function, retrieve it and return
-            let summaries = self.summaries.borrow();
-            let summary = summaries.get(&summary_key).unwrap();
-
-            if let Some(summary) = summary {
-                // Add the cost of calling the target function
-                if account_for_cost_now {
-                    self.domain_state.inter_join(summary);
-                }
-            } else {
-                // we are in a recursive call, just ignore it
-                println!("Recursive calls not supported.");
-                *self.analysis_state.borrow_mut() = AnalysisState::Failure;
-            }
-        } else*/
         if self.tcx.is_mir_available(callee_info.callee_def_id) {
             // We don't have the summary but MIR is available, we need to analyze the function
-            self.analyze_with_available_mir(&callee_info, account_for_cost_now);
+            self.analyze_with_available_mir(&callee_info);
         } else if self.is_closure_call(callee_info.callee_def_id) {
-            self.analyze_closure_call(callee_info);
+            println!("CLOSURE");
         } else {
-            self.analyze_with_specifications(callee_info);
+            println!("SPECS");
         }
     }
 
-    fn analyze_closure_as_argument(
-        &mut self,
-        closure_def_id: DefId,
-        closure_substs_ref: SubstsRef<'tcx>,
-        args: Option<Vec<Operand<'tcx>>>,
-    ) -> SummaryKey<'tcx> {
-        let closure_info = CalleeInfo {
-            // We do not know at what point the closure is called
-            location: None,
-
-            // precise enough args type will be inferred by the closure body
-            args: match args {
-                Some(args) => args,
-                None => vec![],
-            },
-            // cannot keep the storage access return type as it is not the same as closure's
-            // precise enough args type will be inferred by the closure body
-            destination: None,
-
-            callee_def_id: closure_def_id,
-
-            substs_ref: closure_substs_ref,
-        };
-        self.t_fn_call_analysis(closure_info.clone(), false);
-        self.get_summary_key_for_callee_info(&closure_info)
-    }
-
-    fn analyze_storage_access(&mut self, callee_info: CalleeInfo<'tcx>) {
-        // Account for function call overhead
-        self.domain_state.add_steps(Cost::Scalar(1));
-
-        // From Subtrate storage access implementation, if there is a closure it is as last argument
-        let maybe_closure_arg = callee_info.args.last().and_then(|arg| {
-            arg.place().map(|place| {
-                let local_type = self.get_local_info_for_place(&place).unwrap();
-                (Some(vec![(*arg).clone()]), local_type.get_ty().kind())
-            })
-        });
-
-        // First analyze the closure that may be in the param but do not account for its cost yet
-        // we do this in the specifications
-
-        let maybe_closure_def_id =
-            if let Some((args, TyKind::Closure(closure_def_id, closure_substs_ref))) =
-                maybe_closure_arg
-            {
-                // Storage access functions may have closures as parameters, we need to analyze them
-                Some(self.analyze_closure_as_argument(*closure_def_id, closure_substs_ref, args))
-            } else {
-                None
-            };
-
-        self.dispatch_to_storage_access_specifications(&callee_info, maybe_closure_def_id);
-    }
-
-    fn analyze_deposit_event(&mut self, callee_info: CalleeInfo<'tcx>) {
-        // Account for function call overhead
-        self.domain_state.add_steps(Cost::Scalar(1));
-
-        let args = callee_info.args;
-        let location = callee_info.location;
-
-        let body = self.tcx.optimized_mir(self.def_id);
-
-        if let TyKind::Adt(adt_def, _) = args[0].ty(body, self.tcx).kind() {
-            let event_variants = self
-                .events_variants
-                .get(&self.def_id)
-                .unwrap()
-                .get(location.unwrap())
-                .unwrap();
-
-            match event_variants {
-                Variants::Variant(variant_id) => {
-                    let ty = args[0].ty(body, self.tcx);
-
-                    let cost = match self
-                        .tcx
-                        .layout_of(self.tcx.param_env(adt_def.did()).and(ty))
-                    {
-                        Ok(ty_and_layout) => {
-                            let layout = ty_and_layout.layout;
-                            match layout.variants() {
-                                rustc_target::abi::Variants::Single { .. } => {
-                                    Cost::Scalar(ty_and_layout.layout.size().bytes())
-                                }
-                                rustc_target::abi::Variants::Multiple { variants, .. } => {
-                                    let variant_layout = variants[*variant_id];
-                                    Cost::Scalar(variant_layout.size().bytes())
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            let variant = adt_def.variant(*variant_id);
-                            Cost::Parameter(CostParameter::SizeOf(
-                                self.tcx.def_path_str(variant.def_id),
-                            ))
-                        }
-                    };
-
-                    self.domain_state.add_events(cost);
-                }
-                Variants::Or(_, _) => {
-                    let cost = event_variants
-                        .flatten_or()
-                        .iter()
-                        .map(|variant_id| {
-                            let variant = adt_def.variant(*variant_id);
-                            // For now add the variant size as CostParameter
-                            Cost::Parameter(CostParameter::SizeOf(
-                                self.tcx.def_path_str(variant.def_id),
-                            ))
-                        })
-                        .reduce(|accum, item| accum.max(item))
-                        .unwrap();
-                    self.domain_state.add_events(cost);
-                }
-            }
-        }
-    }
-
-    fn analyze_with_available_mir(
-        &mut self,
-        callee_info: &CalleeInfo<'tcx>,
-        account_for_cost_now: bool,
-    ) {
-        // Initialize the summary to None so we can detect a recursive call later
-        /*let summary_key = self.get_summary_key_for_callee_info(callee_info);
-        self.summaries.borrow_mut().insert(summary_key, None);*/
-
+    fn analyze_with_available_mir(&mut self, callee_info: &CalleeInfo<'tcx>) {
         let target_mir = self.tcx.optimized_mir(callee_info.callee_def_id);
 
         // Detect loops in analyzed function
@@ -404,23 +238,58 @@ where
             return;
         }
 
-        self.analyze_with_mir(callee_info, target_mir, account_for_cost_now);
+        self.analyze_with_mir(callee_info, target_mir);
     }
 
-    fn analyze_with_mir(
-        &mut self,
-        callee_info: &CalleeInfo<'tcx>,
-        target_mir: &Body<'tcx>,
-        account_for_cost_now: bool,
-    ) {
-        return;
+    fn analyze_with_mir(&mut self, callee_info: &CalleeInfo<'tcx>, target_mir: &Body<'tcx>) {
+        let mut caller_context_args_type_info: Vec<TypeInfo> = Vec::new();
+        // Local 0_ will be return value, args start at 1_
+        /*if let Some(place_to) = callee_info.destination {
+            caller_context_args_type_info.push(
+                self.state
+                    .get_type_info_for_place(&place_to)
+                    .unwrap(),
+            );
+        } else {
+            // If none, the call necessarily diverges.
+            // cf. https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/terminator/enum.TerminatorKind.html#variant.Call
+
+            // We also use this branch when closures are not executed in their calling context.
+            // let's force the closure's return type in.
+            caller_context_args_type_info.push(TypeInfo::new(
+                target_mir.local_decls.iter().next().unwrap().ty,
+                self.tcx,
+            ));
+        }*/
+
+        for arg in callee_info.args.iter() {
+            match arg {
+                Operand::Copy(place) | Operand::Move(place) => {
+                    caller_context_args_type_info
+                        .push(self.state.get_type_info_for_place(place).unwrap());
+                }
+                Operand::Constant(constant) => {
+                    if let Some((def_id, substs_ref)) = arg.const_fn_def() {
+                        // Constant function,
+                        // cf. https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/enum.Operand.html#method.const_fn_def
+                        caller_context_args_type_info.push(TypeInfo::new(
+                            self.tcx.mk_fn_def(def_id, substs_ref),
+                            self.tcx,
+                        ));
+                    } else {
+                        caller_context_args_type_info.push(TypeInfo::new(constant.ty(), self.tcx));
+                    }
+                }
+            }
+        }
+
         // Analyze the target function
         let mut results = CostAnalysis::new_with_init(
             self.tcx,
             self.pallet,
             self.events_variants,
             callee_info.callee_def_id,
-            self.summaries.clone(),
+            caller_context_args_type_info,
             self.analysis_state.clone(),
         )
         .into_engine(self.tcx, target_mir)
@@ -445,109 +314,9 @@ where
         };
 
         if let Some(end_state) = end_state {
-            if account_for_cost_now {
-                // Update caller function state
-                self.domain_state.inter_join(&end_state);
-            }
-
-            // Add the callee function summary to our summaries map
-            /*let summary_key = self.get_summary_key_for_callee_info(callee_info);
-            self.summaries
-                .borrow_mut()
-                .insert(summary_key, Some(end_state.costs));*/
+            // Update caller function state
+            self.state.inter_join(&end_state);
         }
-    }
-
-    fn analyze_with_specifications(&mut self, callee_info: CalleeInfo<'tcx>) {
-        // Account for function call overhead
-        self.domain_state.add_steps(Cost::Scalar(1));
-        // No MIR available, but CostParameterally account for the call cost
-
-        if *self.analysis_state.borrow() == AnalysisState::Success {
-            println!("SPECS");
-            //dispatch_to_specifications(self, callee_info);
-        }
-    }
-
-    fn analyze_closure_call(&mut self, callee_info: CalleeInfo<'tcx>) {
-        // First arg is closure or action
-        let callee_def_id = match self
-            .domain_state
-            .locals_info
-            .get(callee_info.args[0].place().unwrap().local)
-            .unwrap()
-            .get_ty()
-            .kind()
-        {
-            TyKind::Closure(closure_def_id, _) => Some(*closure_def_id),
-            TyKind::FnDef(def_id, _) => Some(*def_id),
-            TyKind::Ref(_, _, _) => None,  //No further analysis needed
-            TyKind::Projection(_) => None, //No further analysis needed
-            _ => unreachable!(),
-        };
-
-        if let Some(callee_def_id) = callee_def_id {
-            let mut closure_args = callee_info.args.clone();
-            // First arg is closure, we remove it to keep only its args
-            closure_args.pop();
-            let closure_info = CalleeInfo {
-                callee_def_id,
-                args: closure_args,
-                ..callee_info
-            };
-            self.t_fn_call_analysis(closure_info, true);
-        }
-    }
-
-    fn dispatch_to_storage_access_specifications(
-        &mut self,
-        callee_info: &CalleeInfo<'tcx>,
-        closure_summary_key: Option<SummaryKey<'tcx>>,
-    ) {
-        let def_id = callee_info.callee_def_id;
-        let substs = callee_info.substs_ref;
-
-        if !self.is_storage_field_access(def_id) {
-            panic!(
-                "This is not a storage call: {}",
-                self.tcx.def_path_str(def_id)
-            );
-        }
-
-        let pallet = self.pallet;
-        let tcx = self.tcx;
-        let key = tcx.def_key(def_id);
-        let parent_def_id = DefId {
-            index: key.parent.unwrap(),
-            ..def_id
-        };
-        let generics = tcx.generics_of(def_id);
-        let parent_substs = &substs[..generics.parent_count.min(substs.len())];
-
-        if let TyKind::Adt(adt_def_data, _) = tcx.type_of(parent_def_id).kind() {
-            let reconstructed_ty = tcx.mk_adt(*adt_def_data, tcx.intern_substs(parent_substs));
-
-            let ty_field_hash_map = pallet
-                .fields
-                .iter()
-                .map(|(field_def_id, field)| (tcx.type_of(field_def_id), (*field).clone()))
-                .fold(HashMap::new(), |mut accum, (field_ty, field)| {
-                    accum.insert(field_ty, field);
-                    accum
-                });
-
-            let field = ty_field_hash_map.get(&reconstructed_ty).unwrap();
-
-            //field.get_access_cost(self, callee_info, closure_summary_key)
-        } else {
-            unreachable!();
-        }
-    }
-
-    fn is_storage_field_access(&self, def_id: DefId) -> bool {
-        self.tcx
-            .def_path_str(def_id)
-            .starts_with("frame_support::pallet_prelude::Storage")
     }
 
     fn is_deposit_event(&self, target_def_id: DefId) -> bool {
@@ -594,7 +363,9 @@ where
             .args
             .iter()
             .map(|arg| match arg.place() {
-                Some(place) => self.get_local_info_for_place(&place).unwrap(),
+                Some(place) => {
+                    LocalInfo::from_type_info(self.get_type_info_for_place(&place).unwrap())
+                }
                 None => match arg.const_fn_def() {
                     Some((def_id, _)) => LocalInfo::new(self.tcx.type_of(def_id), self.tcx),
                     None => LocalInfo::new(arg.constant().unwrap().ty(), self.tcx),
@@ -603,34 +374,26 @@ where
             .collect::<Vec<_>>()
     }
 
-    fn get_summary_key_for_callee_info(&self, callee_info: &CalleeInfo<'tcx>) -> SummaryKey<'tcx> {
-        // Second part of the key is the calling context (types of callee function's args)
-        (
-            callee_info.callee_def_id,
-            self.get_callee_args_types(callee_info),
-        )
-    }
-
     fn overwrite_place_to(&mut self, place_from: &Place, place_to: &Place) {
-        let local_info_from = self.domain_state.get_local_info_for_place(place_from);
+        let place_type_info = self.state.get_type_info_for_place(place_from);
 
-        if local_info_from == self.domain_state.get_local_info_for_place(place_to) {
+        if place_type_info == self.state.get_type_info_for_place(place_to) {
             return;
         }
 
-        if let Some(local_info_from) = local_info_from {
+        if let Some(place_type_info) = place_type_info {
             if place_to.projection.is_empty() {
                 // Reflect the whole type
-                self.domain_state.locals_info[place_to.local].set_local_info(local_info_from);
+                self.state.locals_info[place_to.local].set_local_info(place_type_info);
             } else {
                 // Reflect the type of the given field of "place_from" to the given field of "place_to"
                 if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
-                && self.get_local_info_for_place(place_to).unwrap().has_fields()
+                && self.get_type_info_for_place(place_to).unwrap().has_fields()
                 {
-                    self.domain_state.locals_info[place_to.local].set_field(*field, local_info_from);
+                    self.state.locals_info[place_to.local].set_member(field.index(), place_type_info);
                 }  else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
                     // Reflect the whole reference
-                    self.domain_state.locals_info[place_to.local].set_local_info(local_info_from);
+                    self.state.locals_info[place_to.local].set_local_info(place_type_info);
                 }
             }
         }
@@ -644,12 +407,12 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 self.visit_operand(lhs, location);
                 self.visit_operand(rhs, location);
 
-                self.domain_state.add_steps(Cost::Scalar(1));
+                self.state.add_steps(Cost::Scalar(1));
             }
             Rvalue::UnaryOp(_, op) => {
                 self.visit_operand(op, location);
 
-                self.domain_state.add_steps(Cost::Scalar(1));
+                self.state.add_steps(Cost::Scalar(1));
             }
             _ => self.super_rvalue(rvalue, location),
         }
@@ -668,17 +431,16 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                     Operand::Constant(_) => {
                         if let Some((def_id, substs_ref)) = operand.const_fn_def() {
                             // In case of constant function, update with the function type
-                            self.domain_state.locals_info[place_to.local].set_ty(self.tcx.mk_fn_def(def_id, substs_ref));
+                            self.state.locals_info[place_to.local].set_ty(self.tcx.mk_fn_def(def_id, substs_ref));
                         } else if let Some(constant) = operand.constant() {
                             // In case of standard constant, update with its type
-                            self.domain_state.locals_info[place_to.local].set_ty(constant.ty());
+                            self.state.locals_info[place_to.local].set_ty(constant.ty());
                         }
                     }
                 }
             }
             StatementKind::Assign(box (place_to, r_value)) if let Rvalue::Ref(_, _, place_from) = r_value => {
                 // Replace references by their underlying types
-
                 self.overwrite_place_to(place_from, place_to);
             }
             _ => self.super_statement(statement, location),
