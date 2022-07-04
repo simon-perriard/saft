@@ -35,6 +35,8 @@ pub(crate) struct LocalInfo<'tcx> {
     fields: Vec<LocalInfo<'tcx>>,
 }
 
+
+
 impl<'tcx> LocalInfo<'tcx> {
     pub fn has_fields(&self) -> bool {
         !self.fields.is_empty()
@@ -53,7 +55,7 @@ impl<'tcx> LocalInfo<'tcx> {
     pub fn set_local_info(&mut self, info: LocalInfo<'tcx>) {
         self.set_ty(info.get_ty());
 
-        self.fields = info.get_fields();
+        //self.fields = info.get_fields();
     }
 
     pub fn get_field(&self, field: mir::Field) -> Option<&LocalInfo<'tcx>> {
@@ -358,15 +360,13 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
 
         let mut fields_changed = false;
 
-        if self.fields.len() > 0 && other.fields.len() > 0 {
-            if self.fields.len() < other.fields.len() {
-                self.fields = other.fields.clone();
-                fields_changed |= true;
-            } else if self.fields.len() == other.fields.len() {
-                for (self_field, other_field) in self.fields.iter_mut().zip(other.fields.clone()) {
-                    fields_changed |= self_field.join(&other_field);
-                }
+        if self.fields.len() == other.fields.len() {
+            for (self_field, other_field) in self.fields.iter_mut().zip(other.fields.clone()) {
+                // recursively join
+                fields_changed |= self_field.join(&other_field);
             }
+        } else {
+            panic!("SOUNDESS BREAKS: Fields cannot have different lengths");
         }
 
         if self.get_ty() == other.get_ty() {
