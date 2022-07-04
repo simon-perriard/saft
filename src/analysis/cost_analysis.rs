@@ -620,7 +620,8 @@ where
 
         if let Some(local_info_from) = local_info_from {
             if place_to.projection.is_empty() {
-                // The place should already have a good enough type precision
+                // Reflect the whole type
+                self.domain_state.locals_info[place_to.local].set_local_info(local_info_from);
             } else {
                 // Reflect the type of the given field of "place_from" to the given field of "place_to"
                 if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
@@ -629,7 +630,7 @@ where
                     self.domain_state.locals_info[place_to.local].set_field(*field, local_info_from);
                 }  else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
                     // Reflect the whole reference
-                    self.domain_state.locals_info[place_to.local] = local_info_from;
+                    self.domain_state.locals_info[place_to.local].set_local_info(local_info_from);
                 }
             }
         }
