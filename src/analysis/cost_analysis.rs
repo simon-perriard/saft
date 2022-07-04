@@ -612,34 +612,24 @@ where
     }
 
     fn overwrite_place_to(&mut self, place_from: &Place, place_to: &Place) {
-        if self.domain_state.get_local_info_for_place(place_from)
-            == self.domain_state.get_local_info_for_place(place_to)
-        {
+        let local_info_from = self.domain_state.get_local_info_for_place(place_from);
+
+        if local_info_from == self.domain_state.get_local_info_for_place(place_to) {
             return;
         }
 
-        let local_type_from = self.domain_state.get_local_info_for_place(place_from);
-
-        if let Some(local_type_from) = local_type_from {
-            // If FROM symbol is None or Some("n"), we better keep the one coming from TO
-            // can happen for closure's parameters when analyzed out of callsite,
-            // not upvars however.
-            // This is why we first overwrite the whole thing and then put again the
-            // old symbol if needed
-
+        if let Some(local_info_from) = local_info_from {
             if place_to.projection.is_empty() {
-                // Reflect the type of the given field of "place_from" to whole type of "place_to"
-                self.domain_state.locals_info[place_to.local] = local_type_from;
+                // The place should already have a good enough type precision
             } else {
-                println!("{:#?} --> {:#?}", place_from, place_to);
                 // Reflect the type of the given field of "place_from" to the given field of "place_to"
                 if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
                 && self.get_local_info_for_place(place_to).unwrap().has_fields()
                 {
-                    self.domain_state.locals_info[place_to.local].set_field(*field, local_type_from);
+                    self.domain_state.locals_info[place_to.local].set_field(*field, local_info_from);
                 }  else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
                     // Reflect the whole reference
-                    self.domain_state.locals_info[place_to.local] = local_type_from;
+                    self.domain_state.locals_info[place_to.local] = local_info_from;
                 }
             }
         }
