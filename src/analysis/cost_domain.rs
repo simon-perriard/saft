@@ -31,15 +31,40 @@ pub(crate) struct LocalInfo<'tcx> {
     // keep additional set of abstract values, one per local
     // in each of them we keep symbolic values and attributes
     ty: Vec<Ty<'tcx>>,
-    //TODO: rework to represent variants
-    fields: Vec<LocalInfo<'tcx>>,
+    //TODO: indexVec variantidx -> variant
+    variants: Vec<Variant<'tcx>>,
 }
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct FieldInfo<'tcx> {
+    ty: Ty<'tcx>,
+}
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct Variant<'tcx> {
+    fields: Vec<FieldInfo<'tcx>>,
+}
 
 impl<'tcx> LocalInfo<'tcx> {
     pub fn has_fields(&self) -> bool {
+
+
+
         !self.fields.is_empty()
+    }
+
+    pub fn is_enum(&self) -> bool {
+        match self.get_ty().kind() {
+            TyKind::Adt(adt_def, _) => adt_def.is_enum(),
+            _ => false,
+        }
+    }
+
+    pub fn is_struct(&self) -> bool {
+        match self.get_ty().kind() {
+            TyKind::Adt(adt_def, _) => !adt_def.is_enum(),
+            _ => false,
+        }
     }
 
     pub fn get_ty(&self) -> Ty<'tcx> {
@@ -54,8 +79,6 @@ impl<'tcx> LocalInfo<'tcx> {
 
     pub fn set_local_info(&mut self, info: LocalInfo<'tcx>) {
         self.set_ty(info.get_ty());
-
-        //self.fields = info.get_fields();
     }
 
     pub fn get_field(&self, field: mir::Field) -> Option<&LocalInfo<'tcx>> {
