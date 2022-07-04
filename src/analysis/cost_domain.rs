@@ -1,17 +1,17 @@
 use crate::analysis::cost_language::Cost;
 use core::fmt;
-use std::ops::{Deref, DerefMut};
-use rustc_mir_dataflow::{fmt::DebugWithContext, lattice::JoinSemiLattice};
-use rustc_middle::ty::{Ty, TyCtxt, TyKind, ProjectionTy};
-use rustc_middle::mir::{self, Body, Local, Place, ProjectionElem};
 use rustc_index::vec::IndexVec;
+use rustc_middle::mir::{self, Body, Local, Place, ProjectionElem};
+use rustc_middle::ty::{ProjectionTy, Ty, TyCtxt, TyKind};
+use rustc_mir_dataflow::{fmt::DebugWithContext, lattice::JoinSemiLattice};
+use std::ops::{Deref, DerefMut};
 
 use super::cost_language::cost_to_big_o;
 
 #[derive(Eq, PartialEq, Clone, Debug, Default)]
 pub(crate) struct LocalsInfo<'tcx>(IndexVec<Local, LocalInfo<'tcx>>);
 
-impl<'tcx> Deref for LocalsInfo<'tcx>{
+impl<'tcx> Deref for LocalsInfo<'tcx> {
     type Target = IndexVec<Local, LocalInfo<'tcx>>;
 
     fn deref(&self) -> &Self::Target {
@@ -27,6 +27,9 @@ impl<'tcx> DerefMut for LocalsInfo<'tcx> {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct LocalInfo<'tcx> {
+    //TODO:
+    // keep additional set of abstract values, one per local
+    // in each of them we keep symbolic values and attributes
     ty: Vec<Ty<'tcx>>,
     fields: Vec<LocalInfo<'tcx>>,
 }
@@ -42,8 +45,14 @@ impl<'tcx> LocalInfo<'tcx> {
 
     pub fn set_ty(&mut self, ty: Ty<'tcx>) {
         if !self.ty.contains(&ty) {
-            self.ty.push(ty);   
+            self.ty.push(ty);
         }
+    }
+
+    pub fn set_local_info(&mut self, info: LocalInfo<'tcx>) {
+        self.set_ty(info.get_ty());
+
+        self.fields = info.get_fields();
     }
 
     pub fn get_field(&self, field: mir::Field) -> Option<&LocalInfo<'tcx>> {
@@ -60,68 +69,82 @@ impl<'tcx> LocalInfo<'tcx> {
     }
 
     pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
-
         match ty.kind() {
             TyKind::Adt(adt_def, substs) => {
-
                 if adt_def.is_enum() {
-                    let fields = adt_def.variants().iter().map(|variant_def| {
-                        let variant_ty = tcx.type_of(variant_def.def_id);
-                        let variant_fields = variant_def.fields.iter().map(|field| {
-                            LocalInfo::new(
-                                field.ty(tcx, substs),
-                                tcx,
-                            )
+                    let fields = adt_def
+                        .variants()
+                        .iter()
+                        .map(|variant_def| {
+                            let variant_ty = tcx.type_of(variant_def.def_id);
+                            let variant_fields = variant_def
+                                .fields
+                                .iter()
+                                .map(|field| LocalInfo::new(field.ty(tcx, substs), tcx))
+                                .collect::<Vec<_>>();
+                            LocalInfo {
+                                ty: vec![variant_ty],
+                                fields: variant_fields,
+                            }
                         })
                         .collect::<Vec<_>>();
-                        LocalInfo { ty: vec![variant_ty], fields: variant_fields }
-                    }).collect::<Vec<_>>();
-    
-                    LocalInfo { ty: vec![ty], fields}
+
+                    LocalInfo {
+                        ty: vec![ty],
+                        fields,
+                    }
                 } else {
                     let fields = adt_def
-                    .all_fields()
-                    .map(|field| {
-                        LocalInfo::new(
-                            field.ty(tcx, substs),
-                            tcx
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                    LocalInfo { ty: vec![ty], fields}
+                        .all_fields()
+                        .map(|field| LocalInfo::new(field.ty(tcx, substs), tcx))
+                        .collect::<Vec<_>>();
+                    LocalInfo {
+                        ty: vec![ty],
+                        fields,
+                    }
                 }
-                
             }
             // For closures, taken from https://doc.rust-lang.org/nightly/nightly-rustc/rustc_borrowck/type_check/struct.TypeVerifier.html#method.field_ty
             TyKind::Closure(_, substs) => {
                 let fields = substs
-                .as_closure()
-                .tupled_upvars_ty()
-                .tuple_fields()
-                .iter()
-                .map(|ty| LocalInfo::new(ty, tcx))
-                .collect::<Vec<_>>();
+                    .as_closure()
+                    .tupled_upvars_ty()
+                    .tuple_fields()
+                    .iter()
+                    .map(|ty| LocalInfo::new(ty, tcx))
+                    .collect::<Vec<_>>();
 
-                LocalInfo { ty: vec![ty], fields}
+                LocalInfo {
+                    ty: vec![ty],
+                    fields,
+                }
             }
             TyKind::Tuple(list_ty) => {
                 let fields = list_ty
-                .iter()
-                .map(|ty| LocalInfo::new(ty, tcx))
-                .collect::<Vec<_>>();
+                    .iter()
+                    .map(|ty| LocalInfo::new(ty, tcx))
+                    .collect::<Vec<_>>();
 
-                LocalInfo { ty: vec![ty], fields}
+                LocalInfo {
+                    ty: vec![ty],
+                    fields,
+                }
             }
             TyKind::Ref(_, ty, _) => Self::new(*ty, tcx),
             TyKind::Projection(projection_ty) => {
                 let fields = LocalInfo::new(projection_ty.self_ty(), tcx).fields;
-                LocalInfo { ty: vec![ty], fields }
+                LocalInfo {
+                    ty: vec![ty],
+                    fields,
+                }
+            }
+            _ => LocalInfo {
+                ty: vec![ty],
+                fields: Vec::new(),
             },
-            _ => LocalInfo { ty: vec![ty], fields: Vec::new()},
         }
     }
 }
-
 
 #[derive(Eq, PartialEq, Clone, Debug, Default)]
 pub(crate) struct CostDomain {
@@ -129,10 +152,6 @@ pub(crate) struct CostDomain {
     bytes_written: Cost,
     bytes_deposited: Cost,
     steps_executed: Cost,
-
-    //TODO:
-    // keep additional set of abstract values, one per local
-    // in each of them we keep symbolic values and attributes
 }
 
 #[derive(Eq, PartialEq, Clone, Debug, Default)]
@@ -143,25 +162,19 @@ pub(crate) struct ExtendedCostAnalysisDomain<'tcx> {
 
 impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> Self {
-
         ExtendedCostAnalysisDomain {
             costs: CostDomain::new(),
             locals_info: Self::get_local_infos(tcx, body),
         }
     }
 
-    fn get_local_infos (
-        tcx: TyCtxt<'tcx>,
-        body: &Body<'tcx>
-    ) -> LocalsInfo<'tcx> {
+    fn get_local_infos(tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> LocalsInfo<'tcx> {
         // Fill the map with current body type
 
         let locals_info: IndexVec<Local, LocalInfo<'tcx>> = body
             .local_decls
             .iter_enumerated()
-            .map(|(_, local_decl)| {
-                LocalInfo::new(local_decl.ty, tcx)
-            })
+            .map(|(_, local_decl)| LocalInfo::new(local_decl.ty, tcx))
             .collect();
 
         LocalsInfo(locals_info)
@@ -187,12 +200,11 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
     }
 
     pub fn get_local_info_for_place(&self, place: &Place) -> Option<LocalInfo<'tcx>> {
-
-        let Place {local, projection} = place;
+        let Place { local, projection } = place;
 
         if projection.is_empty() {
             // No projection, return the outermost LocalInfo
-            return Some(self.locals_info[*local].clone())
+            return Some(self.locals_info[*local].clone());
         } else {
             // Go down the projections
             let mut current_local_info = self.locals_info[*local].clone();
@@ -200,7 +212,6 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
             for (_, proj) in place.iter_projections() {
                 match proj {
                     ProjectionElem::Field(field, _) => {
-
                         let field_local_info = current_local_info.get_field(field);
 
                         if let Some(field_local_info) = field_local_info {
@@ -210,8 +221,7 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
                         }
                     }
                     ProjectionElem::Deref => {
-                        // references are abstracted away
-                        // no need to deref the LocalInfo
+                        // References should already be abstracted away, just continue
                     }
                     ProjectionElem::Downcast(_, variant_idx) => {
                         // Downcast if a field is available
@@ -222,10 +232,12 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
                             current_local_info = field_local_info.clone();
                         }
                     }
-                    _ => {panic!("{:#?}", proj)}
+                    _ => {
+                        panic!("{:#?}", proj)
+                    }
                 }
             }
-            return Some(current_local_info)
+            return Some(current_local_info);
         }
     }
 
@@ -234,7 +246,6 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
 
         //self.locals_info.inter_join(&other.locals_info);
     }
-
 }
 
 impl<'tcx> JoinSemiLattice for ExtendedCostAnalysisDomain<'tcx> {
@@ -324,7 +335,6 @@ impl fmt::Display for CostDomain {
     }
 }
 
-
 impl<'tcx> JoinSemiLattice for LocalsInfo<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
         // Locals are in the same order since we are in the same function
@@ -340,8 +350,10 @@ impl<'tcx> JoinSemiLattice for LocalsInfo<'tcx> {
 
 impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
-
-        panic!();
+        if self == other {
+            // no change
+            return false;
+        }
 
         let mut fields_changed = false;
 
@@ -360,7 +372,7 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
             // we have the same higher type info
             // join will depend on the fields
             return false || fields_changed;
-        }else if self.ty.len() > other.ty.len() {
+        } else if self.ty.len() > other.ty.len() {
             // we already have a more precise information
             return false || fields_changed;
         } else if self.ty.len() < other.ty.len() {
@@ -388,12 +400,10 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
                     }
 
                     res
-                }            
-            */ 
+                }
+            */
 
-            //if self.
-                panic!("{:#?} --- {:#?}", self, other);
-                false
+            panic!("SOUNDNESS BREAKS: {:#?} --- {:#?}", self, other);
         }
     }
 }
