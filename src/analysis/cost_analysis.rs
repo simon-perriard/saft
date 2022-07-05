@@ -1,4 +1,4 @@
-use super::cost_domain::{CostDomain, ExtendedCostAnalysisDomain, LocalInfo, LocalsInfo, TypeInfo};
+use super::cost_domain::{ExtendedCostAnalysisDomain, LocalInfo, LocalsInfo, TypeInfo};
 use super::cost_language::{Cost, CostParameter};
 use super::events_variants_domain::Variants;
 use super::pallet::Pallet;
@@ -6,14 +6,12 @@ use super::pallet::Pallet;
 //use super::specifications::storage_actions_specs::HasAccessCost;
 use crate::analysis::events_variants_domain::EventVariantsDomain;
 //use crate::analysis::specifications::dispatch_to_specifications;
-use rustc_index::vec::IndexVec;
 use rustc_middle::mir::{
     self, traversal::*, visit::*, BasicBlock, Body, Local, Location, Operand, Place,
     ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
-    VarDebugInfoContents,
 };
-use rustc_middle::ty::{subst::SubstsRef, Ty, TyCtxt, TyKind};
-use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
+use rustc_middle::ty::{Instance, ParamEnv, subst::SubstsRef, Ty, TyCtxt, TyKind};
+use rustc_mir_dataflow::{Analysis, AnalysisDomain, Backward, CallReturnPlaces, Forward};
 use rustc_span::def_id::DefId;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -134,10 +132,6 @@ impl<'tcx, 'inter, 'transformer> TransferFunction<'tcx, 'inter, 'transformer> {
             analysis_state,
         }
     }
-
-    pub fn get_type_info_for_place(&self, place: &Place) -> Option<TypeInfo<'tcx>> {
-        self.state.get_type_info_for_place(place)
-    }
 }
 
 impl<'tcx, 'inter> AnalysisDomain<'tcx> for CostAnalysis<'tcx, 'inter> {
@@ -149,6 +143,7 @@ impl<'tcx, 'inter> AnalysisDomain<'tcx> for CostAnalysis<'tcx, 'inter> {
     fn bottom_value(&self, body: &Body<'tcx>) -> Self::Domain {
         let mut state = ExtendedCostAnalysisDomain::new(self.tcx, body);
         state.override_with_caller_type_context(&self.caller_context_args_type_info);
+
         state
     }
 
@@ -202,6 +197,7 @@ where
             // but we can only catch the variant of the Event enum now. Or we need to pass a calling context for
             // further analysis.
             //self.analyze_deposit_event(callee_info);
+            println!("EVENT");
         }
         /* else if needs_early_catch(&self.tcx.def_path_str(callee_info.callee_def_id)) {
             self.analyze_with_specifications(callee_info);
@@ -216,10 +212,9 @@ where
         self.state.add_steps(Cost::Scalar(1));
 
         if self.tcx.is_mir_available(callee_info.callee_def_id) {
-            // We don't have the summary but MIR is available, we need to analyze the function
             self.analyze_with_available_mir(&callee_info);
         } else if self.is_closure_call(callee_info.callee_def_id) {
-            println!("CLOSURE");
+            self.analyze_closure_call(&callee_info);
         } else {
             println!("SPECS");
         }
@@ -243,24 +238,6 @@ where
 
     fn analyze_with_mir(&mut self, callee_info: &CalleeInfo<'tcx>, target_mir: &Body<'tcx>) {
         let mut caller_context_args_type_info: Vec<TypeInfo> = Vec::new();
-        // Local 0_ will be return value, args start at 1_
-        /*if let Some(place_to) = callee_info.destination {
-            caller_context_args_type_info.push(
-                self.state
-                    .get_type_info_for_place(&place_to)
-                    .unwrap(),
-            );
-        } else {
-            // If none, the call necessarily diverges.
-            // cf. https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/terminator/enum.TerminatorKind.html#variant.Call
-
-            // We also use this branch when closures are not executed in their calling context.
-            // let's force the closure's return type in.
-            caller_context_args_type_info.push(TypeInfo::new(
-                target_mir.local_decls.iter().next().unwrap().ty,
-                self.tcx,
-            ));
-        }*/
 
         for arg in callee_info.args.iter() {
             match arg {
@@ -319,6 +296,12 @@ where
         }
     }
 
+    fn analyze_closure_call(&mut self, callee_info: &CalleeInfo<'tcx>) {
+        // We apply the action of {"std::ops::FnOnce", "std::ops::Fn", "std::ops::FnMut"}.call
+
+        println!("CLOSURE");
+    }
+
     fn is_deposit_event(&self, target_def_id: DefId) -> bool {
         let path = self.tcx.def_path_str(target_def_id);
         path.starts_with("pallet::Pallet") && path.ends_with("deposit_event")
@@ -364,7 +347,7 @@ where
             .iter()
             .map(|arg| match arg.place() {
                 Some(place) => {
-                    LocalInfo::from_type_info(self.get_type_info_for_place(&place).unwrap())
+                    LocalInfo::from_type_info(self.state.get_type_info_for_place(&place).unwrap())
                 }
                 None => match arg.const_fn_def() {
                     Some((def_id, _)) => LocalInfo::new(self.tcx.type_of(def_id), self.tcx),
@@ -375,25 +358,25 @@ where
     }
 
     fn overwrite_place_to(&mut self, place_from: &Place, place_to: &Place) {
-        let place_type_info = self.state.get_type_info_for_place(place_from);
+        let place_from_type_info = self.state.get_type_info_for_place(place_from);
 
-        if place_type_info == self.state.get_type_info_for_place(place_to) {
+        if place_from_type_info == self.state.get_type_info_for_place(place_to) {
             return;
         }
 
-        if let Some(place_type_info) = place_type_info {
+        if let Some(place_from_type_info) = place_from_type_info {
             if place_to.projection.is_empty() {
                 // Reflect the whole type
-                self.state.locals_info[place_to.local].set_local_info(place_type_info);
+                self.state.locals_info[place_to.local].set_local_info(place_from_type_info);
             } else {
                 // Reflect the type of the given field of "place_from" to the given field of "place_to"
                 if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
-                && self.get_type_info_for_place(place_to).unwrap().has_fields()
+                && self.state.locals_info[place_to.local].type_info.has_members()
                 {
-                    self.state.locals_info[place_to.local].set_member(field.index(), place_type_info);
-                }  else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
+                    self.state.locals_info[place_to.local].set_member(field.index(), place_from_type_info);
+                } else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
                     // Reflect the whole reference
-                    self.state.locals_info[place_to.local].set_local_info(place_type_info);
+                    self.state.locals_info[place_to.local].set_local_info(place_from_type_info);
                 }
             }
         }
@@ -455,6 +438,7 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 func: Operand::Constant(c),
                 ..
             } if let TyKind::FnDef(target_def_id, substs) = c.ty().kind() => {
+
                 self.t_visit_fn_call(location);
             }
             _ => self.super_terminator(terminator, location),
