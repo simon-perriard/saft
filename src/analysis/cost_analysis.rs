@@ -297,9 +297,58 @@ where
     }
 
     fn analyze_closure_call(&mut self, callee_info: &CalleeInfo<'tcx>) {
-        // We apply the action of {"std::ops::FnOnce", "std::ops::Fn", "std::ops::FnMut"}.call
+        // We apply the action of {"std::ops::FnOnce", "std::ops::Fn", "std::ops::FnMut"}.call/call_once
 
-        println!("CLOSURE");
+        assert!(callee_info.args.len() == 2);
+
+        // Extract closure adt
+        let closure_adt_place = callee_info.args[0].place().unwrap();
+        let closure_adt = self.state.get_type_info_for_place(&closure_adt_place).unwrap();
+        let (closure_fn_ptr, closure_substs_ref) = if let TyKind::Closure(def_id, substs_ref) = closure_adt.get_ty().kind() {
+            (*def_id, substs_ref)
+        } else if let TyKind::FnDef(def_id, substs_ref) = closure_adt.get_ty().kind() {
+            (*def_id, substs_ref)
+        } else {
+            unreachable!();
+        };
+
+        // The arguments are packed in a Tuple, we need to 
+        // create the projections on the local to target the places
+        // to unpack them
+        let closure_args_place = callee_info.args[0].place().unwrap();
+        let args_count = self.state.get_type_info_for_place(&closure_args_place).unwrap().get_members().len();
+        let mut closure_args_operands = Vec::new();
+        assert!(closure_args_place.projection.is_empty());
+        // We can forge direct field access
+        for i in 0..args_count {
+            let field_ty = self.state.get_type_info_for_place(&closure_args_place).unwrap().get_member(i).unwrap().get_ty();
+            let arg_field_projection_place_elem = vec![ProjectionElem::Field(mir::Field::from_usize(i), field_ty)];
+            let closure_arg_place = closure_args_place.project_deeper(&arg_field_projection_place_elem, self.tcx);
+            let closure_arg_operand = Operand::Move(closure_arg_place);
+
+            closure_args_operands.push(closure_arg_operand);
+        }
+
+        // Put closure adt operand in front of argument list
+        closure_args_operands.insert(0, callee_info.args[0].clone());
+
+        // Used for debug, let's set the closure's call location where
+        // is called {"std::ops::FnOnce", "std::ops::Fn", "std::ops::FnMut"}.call/call_once
+        let closure_call_location = callee_info.location;
+
+        // The return value of the closure will eventually get there as well
+        let closure_call_destination = callee_info.destination;
+        
+        let closure_callee_info = CalleeInfo {
+            location: closure_call_location,
+            args: closure_args_operands,
+            destination: closure_call_destination,
+            callee_def_id: closure_fn_ptr,
+            substs_ref: closure_substs_ref,
+        };
+
+        self.t_fn_call_analysis(closure_callee_info.clone());
+        println!("ANALYZED CLOSURE {}", self.tcx.def_path_str(closure_callee_info.callee_def_id));
     }
 
     fn is_deposit_event(&self, target_def_id: DefId) -> bool {
