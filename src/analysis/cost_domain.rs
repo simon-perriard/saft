@@ -25,12 +25,65 @@ impl<'tcx> DerefMut for LocalsInfo<'tcx> {
     }
 }
 
+impl<'tcx> LocalsInfo<'tcx> {
+    pub fn inter_join(&mut self, _other: &Self) {
+        // nothing to join for now we only carry type info
+    }
+
+    /*pub fn insert_type_info_for_place(&mut self, place: &Place, type_info: TypeInfo<'tcx>) {
+        let Place { local, projection } = place;
+    }*/
+
+    pub fn get_type_info_for_place(&self, place: &Place) -> Option<TypeInfo<'tcx>> {
+        let Place { local, projection } = place;
+
+        if projection.is_empty() {
+            // No projection, return the outermost LocalInfo
+            return Some(self[*local].type_info.clone());
+        } else {
+            // Go down the projections
+            let mut current_local_info = self[*local].type_info.clone();
+
+            for (_, proj) in place.iter_projections() {
+                match proj {
+                    ProjectionElem::Field(field, _) => {
+                        let field_local_info = current_local_info.get_member(field.index());
+
+                        if let Some(field_local_info) = field_local_info {
+                            current_local_info = field_local_info.clone();
+                        } else {
+                            return None;
+                        }
+                    }
+                    ProjectionElem::Deref => {
+                        // References should already be abstracted away, just continue
+                    }
+                    ProjectionElem::Downcast(_, variant_idx) => {
+                        // Downcast if a field is available
+                        let fields = current_local_info.get_members();
+                        let maybe_field = fields.get(variant_idx.index());
+
+                        if let Some(field_local_info) = maybe_field {
+                            current_local_info = field_local_info.clone();
+                        }
+                    }
+                    _ => {
+                        panic!("{:#?}", proj)
+                    }
+                }
+            }
+            return Some(current_local_info);
+        }
+    }
+
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct LocalInfo<'tcx> {
     // TODO:
     // keep additional set of abstract values, one per local
     // in each of them we keep symbolic values and attributes
-    type_info: TypeInfo<'tcx>,
+    pub type_info: TypeInfo<'tcx>,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -117,7 +170,7 @@ impl<'tcx> TypeInfo<'tcx> {
         }
     }
 
-    pub fn has_fields(&self) -> bool {
+    pub fn has_members(&self) -> bool {
         !self.members.is_empty()
     }
 
@@ -157,7 +210,7 @@ impl<'tcx> LocalInfo<'tcx> {
     }
 
     pub fn has_fields(&self) -> bool {
-        self.type_info.has_fields()
+        self.type_info.has_members()
     }
 
     pub fn get_ty(&self) -> Ty<'tcx> {
@@ -170,6 +223,10 @@ impl<'tcx> LocalInfo<'tcx> {
 
     pub fn set_local_info(&mut self, info: TypeInfo<'tcx>) {
         self.set_ty(info.get_ty());
+
+        if self.type_info.members.is_empty() {
+            self.type_info.members = info.members.clone();
+        }
     }
 
     pub fn get_member(&self, index: usize) -> Option<&TypeInfo<'tcx>> {
@@ -239,45 +296,7 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
     }
 
     pub fn get_type_info_for_place(&self, place: &Place) -> Option<TypeInfo<'tcx>> {
-        let Place { local, projection } = place;
-
-        if projection.is_empty() {
-            // No projection, return the outermost LocalInfo
-            return Some(self.locals_info[*local].type_info.clone());
-        } else {
-            // Go down the projections
-            let mut current_local_info = self.locals_info[*local].type_info.clone();
-
-            for (_, proj) in place.iter_projections() {
-                match proj {
-                    ProjectionElem::Field(field, _) => {
-                        let field_local_info = current_local_info.get_member(field.index());
-
-                        if let Some(field_local_info) = field_local_info {
-                            current_local_info = field_local_info.clone();
-                        } else {
-                            return None;
-                        }
-                    }
-                    ProjectionElem::Deref => {
-                        // References should already be abstracted away, just continue
-                    }
-                    ProjectionElem::Downcast(_, variant_idx) => {
-                        // Downcast if a field is available
-                        let fields = current_local_info.get_members();
-                        let maybe_field = fields.get(variant_idx.index());
-
-                        if let Some(field_local_info) = maybe_field {
-                            current_local_info = field_local_info.clone();
-                        }
-                    }
-                    _ => {
-                        panic!("{:#?}", proj)
-                    }
-                }
-            }
-            return Some(current_local_info);
-        }
+        self.locals_info.get_type_info_for_place(place)
     }
 
     pub fn override_with_caller_type_context(
@@ -295,7 +314,7 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
     pub fn inter_join(&mut self, other: &Self) {
         self.costs.inter_join(&other.costs);
 
-        //self.locals_info.inter_join(&other.locals_info);
+        self.locals_info.inter_join(&other.locals_info);
     }
 }
 
@@ -407,29 +426,45 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
 
 impl<'tcx> JoinSemiLattice for TypeInfo<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
+        assert!(self.ty.len() <= 2 && other.ty.len() <= 2);
+
         if self == other {
             // no change
             return false;
         }
 
-        let mut fields_changed = false;
+        let mut members_changed = false;
 
         if self.members.len() == other.members.len() {
             for (self_field, other_field) in self.members.iter_mut().zip(other.members.clone()) {
                 // recursively join
-                fields_changed |= self_field.join(&other_field);
+                members_changed |= self_field.join(&other_field);
             }
         } else {
-            panic!("SOUNDESS BREAKS: Fields cannot have different lengths {:#?} --- {:#?}", self, other);
+            // This is ok for complex types since we allow the full specialization
+            // the types must have the same history (prefix)
+            if self.ty[0] == other.ty[0] {
+                if self.ty.len() < other.ty.len() {
+                    self.members = other.members.clone();
+                    members_changed |= true;
+                } else {
+                    panic!();
+                }
+            } else {
+
+                // Trait implementation
+                self.set_ty(other.get_ty());
+                self.members = other.members.clone();
+            }
         }
 
         if self.get_ty() == other.get_ty() {
             // we have the same higher type info
             // join will depend on the fields
-            return false || fields_changed;
+            return false || members_changed;
         } else if self.ty.len() > other.ty.len() {
             // we already have a more precise information
-            return false || fields_changed;
+            return false || members_changed;
         } else if self.ty.len() < other.ty.len() {
             // other is more informative
             self.ty = other.ty.clone();
