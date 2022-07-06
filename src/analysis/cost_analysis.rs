@@ -1,17 +1,14 @@
-use super::cost_domain::{ExtendedCostAnalysisDomain, LocalInfo, LocalsInfo, TypeInfo};
-use super::cost_language::{Cost, CostParameter};
-use super::events_variants_domain::Variants;
+use super::cost_domain::{ExtendedCostAnalysisDomain, TypeInfo};
+use super::cost_language::Cost;
 use super::pallet::Pallet;
-//use super::specifications::needs_early_catch;
-//use super::specifications::storage_actions_specs::HasAccessCost;
+use super::specifications_v2::try_dispatch_to_specifications;
 use crate::analysis::events_variants_domain::EventVariantsDomain;
-//use crate::analysis::specifications::dispatch_to_specifications;
 use rustc_middle::mir::{
-    self, traversal::*, visit::*, BasicBlock, Body, Local, Location, Operand, Place,
-    ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
+    self, traversal::*, visit::*, BasicBlock, Body, Location, Operand, Place, ProjectionElem,
+    Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
 };
-use rustc_middle::ty::{Instance, ParamEnv, subst::SubstsRef, Ty, TyCtxt, TyKind};
-use rustc_mir_dataflow::{Analysis, AnalysisDomain, Backward, CallReturnPlaces, Forward};
+use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
+use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
 use rustc_span::def_id::DefId;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -107,7 +104,7 @@ impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
 pub(crate) struct TransferFunction<'tcx, 'inter, 'transformer> {
     pub tcx: TyCtxt<'tcx>,
     pallet: &'inter Pallet,
-    events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
+    pub events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     pub def_id: DefId,
     pub state: &'transformer mut ExtendedCostAnalysisDomain<'tcx>,
     pub analysis_state: Rc<RefCell<AnalysisState>>,
@@ -189,34 +186,26 @@ impl<'visitor, 'tcx> TransferFunction<'tcx, '_, '_>
 where
     Self: Visitor<'visitor>,
 {
-    fn t_visit_fn_call(&mut self, location: Location) {
+    fn visit_fn_call(&mut self, location: Location) {
         let callee_info = self.get_callee_info(location);
 
-        if self.is_deposit_event(callee_info.callee_def_id) {
-            // Filtering event deposit, pallet::deposit_event will later call frame_system::deposit_event,
-            // but we can only catch the variant of the Event enum now. Or we need to pass a calling context for
-            // further analysis.
-            //self.analyze_deposit_event(callee_info);
-            println!("EVENT");
-        }
-        /* else if needs_early_catch(&self.tcx.def_path_str(callee_info.callee_def_id)) {
-            self.analyze_with_specifications(callee_info);
-        }*/
-        else {
-            self.t_fn_call_analysis(callee_info);
-        }
+        self.fn_call_analysis(callee_info);
     }
 
-    fn t_fn_call_analysis(&mut self, callee_info: CalleeInfo<'tcx>) {
+    fn fn_call_analysis(&mut self, callee_info: CalleeInfo<'tcx>) {
         // Account for function call overhead
         self.state.add_steps(Cost::Scalar(1));
 
-        if self.tcx.is_mir_available(callee_info.callee_def_id) {
+        if try_dispatch_to_specifications(self, &callee_info) {
+            // we found specs for the call
+        } else if self.tcx.is_mir_available(&callee_info.callee_def_id) {
             self.analyze_with_available_mir(&callee_info);
-        } else if self.is_closure_call(callee_info.callee_def_id) {
-            self.analyze_closure_call(&callee_info);
         } else {
-            println!("SPECS");
+            println!(
+                "Cannot analyze: {}.",
+                self.tcx.def_path_str(callee_info.callee_def_id)
+            );
+            *self.analysis_state.borrow_mut() = AnalysisState::Failure;
         }
     }
 
@@ -237,6 +226,7 @@ where
     }
 
     fn analyze_with_mir(&mut self, callee_info: &CalleeInfo<'tcx>, target_mir: &Body<'tcx>) {
+        // Fill the calling context (arguments) for the function to be analyzes
         let mut caller_context_args_type_info: Vec<TypeInfo> = Vec::new();
 
         for arg in callee_info.args.iter() {
@@ -296,34 +286,52 @@ where
         }
     }
 
-    fn analyze_closure_call(&mut self, callee_info: &CalleeInfo<'tcx>) {
+    pub(crate) fn analyze_closure_call(&mut self, callee_info: &CalleeInfo<'tcx>) {
         // We apply the action of {"std::ops::FnOnce", "std::ops::Fn", "std::ops::FnMut"}.call/call_once
 
+        // First arg is Closure of FnDef, second is a packed tuple of their arguments
         assert!(callee_info.args.len() == 2);
 
         // Extract closure adt
         let closure_adt_place = callee_info.args[0].place().unwrap();
-        let closure_adt = self.state.get_type_info_for_place(&closure_adt_place).unwrap();
-        let (closure_fn_ptr, closure_substs_ref) = if let TyKind::Closure(def_id, substs_ref) = closure_adt.get_ty().kind() {
-            (*def_id, substs_ref)
-        } else if let TyKind::FnDef(def_id, substs_ref) = closure_adt.get_ty().kind() {
-            (*def_id, substs_ref)
-        } else {
-            unreachable!();
-        };
+        let closure_adt = self
+            .state
+            .get_type_info_for_place(&closure_adt_place)
+            .unwrap();
+        let (closure_fn_ptr, closure_substs_ref) =
+            if let TyKind::Closure(def_id, substs_ref) = closure_adt.get_ty().kind() {
+                (*def_id, substs_ref)
+            } else if let TyKind::FnDef(def_id, substs_ref) = closure_adt.get_ty().kind() {
+                (*def_id, substs_ref)
+            } else {
+                unreachable!();
+            };
 
-        // The arguments are packed in a Tuple, we need to 
+        // The arguments are packed in a Tuple, we need to
         // create the projections on the local to target the places
         // to unpack them
         let closure_args_place = callee_info.args[0].place().unwrap();
-        let args_count = self.state.get_type_info_for_place(&closure_args_place).unwrap().get_members().len();
+        let args_count = self
+            .state
+            .get_type_info_for_place(&closure_args_place)
+            .unwrap()
+            .get_members()
+            .len();
         let mut closure_args_operands = Vec::new();
         assert!(closure_args_place.projection.is_empty());
         // We can forge direct field access
         for i in 0..args_count {
-            let field_ty = self.state.get_type_info_for_place(&closure_args_place).unwrap().get_member(i).unwrap().get_ty();
-            let arg_field_projection_place_elem = vec![ProjectionElem::Field(mir::Field::from_usize(i), field_ty)];
-            let closure_arg_place = closure_args_place.project_deeper(&arg_field_projection_place_elem, self.tcx);
+            let field_ty = self
+                .state
+                .get_type_info_for_place(&closure_args_place)
+                .unwrap()
+                .get_member(i)
+                .unwrap()
+                .get_ty();
+            let arg_field_projection_place_elem =
+                vec![ProjectionElem::Field(mir::Field::from_usize(i), field_ty)];
+            let closure_arg_place =
+                closure_args_place.project_deeper(&arg_field_projection_place_elem, self.tcx);
             let closure_arg_operand = Operand::Move(closure_arg_place);
 
             closure_args_operands.push(closure_arg_operand);
@@ -338,7 +346,7 @@ where
 
         // The return value of the closure will eventually get there as well
         let closure_call_destination = callee_info.destination;
-        
+
         let closure_callee_info = CalleeInfo {
             location: closure_call_location,
             args: closure_args_operands,
@@ -347,26 +355,7 @@ where
             substs_ref: closure_substs_ref,
         };
 
-        self.t_fn_call_analysis(closure_callee_info.clone());
-        println!("ANALYZED CLOSURE {}", self.tcx.def_path_str(closure_callee_info.callee_def_id));
-    }
-
-    fn is_deposit_event(&self, target_def_id: DefId) -> bool {
-        let path = self.tcx.def_path_str(target_def_id);
-        path.starts_with("pallet::Pallet") && path.ends_with("deposit_event")
-    }
-
-    fn is_closure_call(&self, target_def_id: DefId) -> bool {
-        let path: &str = &self.tcx.def_path_str(target_def_id);
-        let closure_calls_list = vec!["std::ops::FnOnce", "std::ops::Fn", "std::ops::FnMut"];
-
-        for closure_call in closure_calls_list {
-            if path.contains(closure_call) {
-                return true;
-            }
-        }
-
-        false
+        self.fn_call_analysis(closure_callee_info.clone());
     }
 
     fn get_callee_info(&self, location: Location) -> CalleeInfo<'tcx> {
@@ -388,22 +377,6 @@ where
              },
             _ => unreachable!("{:?}", terminator.kind),
         }
-    }
-
-    fn get_callee_args_types(&self, callee_info: &CalleeInfo<'tcx>) -> Vec<LocalInfo<'tcx>> {
-        callee_info
-            .args
-            .iter()
-            .map(|arg| match arg.place() {
-                Some(place) => {
-                    LocalInfo::from_type_info(self.state.get_type_info_for_place(&place).unwrap())
-                }
-                None => match arg.const_fn_def() {
-                    Some((def_id, _)) => LocalInfo::new(self.tcx.type_of(def_id), self.tcx),
-                    None => LocalInfo::new(arg.constant().unwrap().ty(), self.tcx),
-                },
-            })
-            .collect::<Vec<_>>()
     }
 
     fn overwrite_place_to(&mut self, place_from: &Place, place_to: &Place) {
@@ -488,7 +461,7 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 ..
             } if let TyKind::FnDef(target_def_id, substs) = c.ty().kind() => {
 
-                self.t_visit_fn_call(location);
+                self.visit_fn_call(location);
             }
             _ => self.super_terminator(terminator, location),
         }
