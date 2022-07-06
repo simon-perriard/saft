@@ -1,5 +1,4 @@
 use super::cost_domain::{ExtendedCostAnalysisDomain, TypeInfo};
-use super::cost_language::Cost;
 use super::pallet::Pallet;
 use super::specifications_v2::try_dispatch_to_specifications;
 use crate::analysis::events_variants_domain::EventVariantsDomain;
@@ -103,7 +102,7 @@ impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
 
 pub(crate) struct TransferFunction<'tcx, 'inter, 'transformer> {
     pub tcx: TyCtxt<'tcx>,
-    pallet: &'inter Pallet,
+    pub pallet: &'inter Pallet,
     pub events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     pub def_id: DefId,
     pub state: &'transformer mut ExtendedCostAnalysisDomain<'tcx>,
@@ -194,7 +193,7 @@ where
 
     fn fn_call_analysis(&mut self, callee_info: CalleeInfo<'tcx>) {
         // Account for function call overhead
-        self.state.add_steps(Cost::Scalar(1));
+        self.state.add_step();
 
         if try_dispatch_to_specifications(self, &callee_info) {
             // we found specs for the call
@@ -202,9 +201,17 @@ where
             self.analyze_with_available_mir(&callee_info);
         } else {
             println!(
-                "Cannot analyze: {}.",
-                self.tcx.def_path_str(callee_info.callee_def_id)
+                "Cannot analyze: {}.\nComplementary info:\n\tsubsts_ref: {:?}\n\targs_type:\n",
+                self.tcx.def_path_str(callee_info.callee_def_id),
+                callee_info.substs_ref,
             );
+            for arg in callee_info.args.iter() {
+                println!(
+                    "\t\t{:#?}",
+                    self.state.get_type_info_for_place(&arg.place().unwrap())
+                );
+            }
+
             *self.analysis_state.borrow_mut() = AnalysisState::Failure;
         }
     }
@@ -412,12 +419,12 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 self.visit_operand(lhs, location);
                 self.visit_operand(rhs, location);
 
-                self.state.add_steps(Cost::Scalar(1));
+                self.state.add_step();
             }
             Rvalue::UnaryOp(_, op) => {
                 self.visit_operand(op, location);
 
-                self.state.add_steps(Cost::Scalar(1));
+                self.state.add_step();
             }
             _ => self.super_rvalue(rvalue, location),
         }

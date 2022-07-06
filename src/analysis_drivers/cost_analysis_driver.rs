@@ -32,9 +32,9 @@ pub(crate) fn cost_analysis(
         println!("{}", tcx.def_path_str(*dispatchable_def_id));
         if !tcx
             .def_path_str(*dispatchable_def_id)
-            .contains("set_balance")
+            .contains("add_registrar")
         {
-            //continue;
+            continue;
         }
 
         let cost_analysis =
