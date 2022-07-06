@@ -35,7 +35,7 @@ impl<'tcx> LocalsInfo<'tcx> {
 
         if projection.is_empty() {
             // No projection, return the outermost LocalInfo
-            return Some(self[*local].type_info.clone());
+            Some(self[*local].type_info.clone())
         } else {
             // Go down the projections
             let mut current_local_info = self[*local].type_info.clone();
@@ -68,7 +68,7 @@ impl<'tcx> LocalsInfo<'tcx> {
                     }
                 }
             }
-            return Some(current_local_info);
+            Some(current_local_info)
         }
     }
 }
@@ -320,11 +320,17 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
 
 impl<'tcx> JoinSemiLattice for ExtendedCostAnalysisDomain<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
-        return self.costs.join(&other.costs) && self.locals_info.join(&other.locals_info);
+        self.costs.join(&other.costs) && self.locals_info.join(&other.locals_info)
     }
 }
 
 impl<'tcx, C> DebugWithContext<C> for ExtendedCostAnalysisDomain<'tcx> {}
+
+impl<'tcx> fmt::Display for ExtendedCostAnalysisDomain<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.costs)
+    }
+}
 
 impl CostDomain {
     pub fn new() -> Self {

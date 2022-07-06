@@ -3,8 +3,8 @@ use super::pallet::Pallet;
 use super::specifications_v2::try_dispatch_to_specifications;
 use crate::analysis::events_variants_domain::EventVariantsDomain;
 use rustc_middle::mir::{
-    self, traversal::*, visit::*, BasicBlock, Body, Location, Operand, Place, ProjectionElem,
-    Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
+    traversal::*, visit::*, BasicBlock, Body, Location, Operand, Place, ProjectionElem, Rvalue,
+    Statement, StatementKind, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
@@ -12,7 +12,6 @@ use rustc_span::def_id::DefId;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::vec;
 
 #[derive(PartialEq, Eq)]
 pub(crate) enum AnalysisState {
@@ -35,7 +34,7 @@ impl AnalysisState {
 #[derive(Clone, Debug)]
 pub(crate) struct CalleeInfo<'tcx> {
     pub location: Option<Location>,
-    pub args: Vec<Operand<'tcx>>,
+    pub args_type_info: Vec<TypeInfo<'tcx>>,
     pub destination: Option<Place<'tcx>>,
     pub callee_def_id: DefId,
     pub substs_ref: SubstsRef<'tcx>,
@@ -47,7 +46,7 @@ pub(crate) struct CostAnalysis<'tcx, 'inter> {
     events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     def_id: DefId,
     caller_context_args_type_info: Vec<TypeInfo<'tcx>>,
-    pub analysis_state: Rc<RefCell<AnalysisState>>,
+    pub analysis_success_state: Rc<RefCell<AnalysisState>>,
 }
 
 impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
@@ -81,7 +80,7 @@ impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
             events_variants,
             def_id,
             caller_context_args_type_info,
-            analysis_state: state,
+            analysis_success_state: state,
         }
     }
 
@@ -95,7 +94,7 @@ impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
             self.events_variants,
             self.def_id,
             state,
-            self.analysis_state.clone(),
+            self.analysis_success_state.clone(),
         )
     }
 }
@@ -106,7 +105,7 @@ pub(crate) struct TransferFunction<'tcx, 'inter, 'transformer> {
     pub events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     pub def_id: DefId,
     pub state: &'transformer mut ExtendedCostAnalysisDomain<'tcx>,
-    pub analysis_state: Rc<RefCell<AnalysisState>>,
+    pub analysis_success_state: Rc<RefCell<AnalysisState>>,
 }
 
 impl<'tcx, 'inter, 'transformer> TransferFunction<'tcx, 'inter, 'transformer> {
@@ -117,7 +116,7 @@ impl<'tcx, 'inter, 'transformer> TransferFunction<'tcx, 'inter, 'transformer> {
         events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
         def_id: DefId,
         state: &'transformer mut ExtendedCostAnalysisDomain<'tcx>,
-        analysis_state: Rc<RefCell<AnalysisState>>,
+        analysis_success_state: Rc<RefCell<AnalysisState>>,
     ) -> Self {
         TransferFunction {
             tcx,
@@ -125,7 +124,7 @@ impl<'tcx, 'inter, 'transformer> TransferFunction<'tcx, 'inter, 'transformer> {
             events_variants,
             def_id,
             state,
-            analysis_state,
+            analysis_success_state,
         }
     }
 }
@@ -153,7 +152,7 @@ impl<'tcx, 'inter> Analysis<'tcx> for CostAnalysis<'tcx, 'inter> {
         statement: &Statement<'tcx>,
         location: Location,
     ) {
-        if *self.analysis_state.borrow() == AnalysisState::Success {
+        if *self.analysis_success_state.borrow() == AnalysisState::Success {
             self.transfer_function(state)
                 .visit_statement(statement, location)
         }
@@ -165,7 +164,7 @@ impl<'tcx, 'inter> Analysis<'tcx> for CostAnalysis<'tcx, 'inter> {
         terminator: &Terminator<'tcx>,
         location: Location,
     ) {
-        if *self.analysis_state.borrow() == AnalysisState::Success {
+        if *self.analysis_success_state.borrow() == AnalysisState::Success {
             self.transfer_function(state)
                 .visit_terminator(terminator, location);
         }
@@ -188,35 +187,42 @@ where
     fn visit_fn_call(&mut self, location: Location) {
         let callee_info = self.get_callee_info(location);
 
-        self.fn_call_analysis(callee_info);
+        self.fn_call_analysis(callee_info, false);
     }
 
-    fn fn_call_analysis(&mut self, callee_info: CalleeInfo<'tcx>) {
+    pub(crate) fn fn_call_analysis(
+        &mut self,
+        callee_info: CalleeInfo<'tcx>,
+        run_in_isolation: bool,
+    ) -> ExtendedCostAnalysisDomain<'tcx> {
         // Account for function call overhead
         self.state.add_step();
 
-        if try_dispatch_to_specifications(self, &callee_info) {
+        if let Some(end_state) = try_dispatch_to_specifications(self, &callee_info) {
             // we found specs for the call
+            end_state
         } else if self.tcx.is_mir_available(&callee_info.callee_def_id) {
-            self.analyze_with_available_mir(&callee_info);
+            self.analyze_with_available_mir(&callee_info, run_in_isolation)
         } else {
             println!(
                 "Cannot analyze: {}.\nComplementary info:\n\tsubsts_ref: {:?}\n\targs_type:\n",
                 self.tcx.def_path_str(callee_info.callee_def_id),
                 callee_info.substs_ref,
             );
-            for arg in callee_info.args.iter() {
-                println!(
-                    "\t\t{:#?}",
-                    self.state.get_type_info_for_place(&arg.place().unwrap())
-                );
+            for arg in callee_info.args_type_info.iter() {
+                println!("\t\t{:#?}", arg);
             }
 
-            *self.analysis_state.borrow_mut() = AnalysisState::Failure;
+            *self.analysis_success_state.borrow_mut() = AnalysisState::Failure;
+            (*self.state).clone()
         }
     }
 
-    fn analyze_with_available_mir(&mut self, callee_info: &CalleeInfo<'tcx>) {
+    fn analyze_with_available_mir(
+        &mut self,
+        callee_info: &CalleeInfo<'tcx>,
+        run_in_isolation: bool,
+    ) -> ExtendedCostAnalysisDomain<'tcx> {
         let target_mir = self.tcx.optimized_mir(callee_info.callee_def_id);
 
         // Detect loops in analyzed function
@@ -225,46 +231,27 @@ where
                 "Loop detected in function {}, loops are not supported",
                 self.tcx.def_path_str(callee_info.callee_def_id)
             );
-            *self.analysis_state.borrow_mut() = AnalysisState::Failure;
-            return;
+            *self.analysis_success_state.borrow_mut() = AnalysisState::Failure;
+            return (*self.state).clone();
         }
 
-        self.analyze_with_mir(callee_info, target_mir);
+        self.analyze_with_mir(callee_info, target_mir, run_in_isolation)
     }
 
-    fn analyze_with_mir(&mut self, callee_info: &CalleeInfo<'tcx>, target_mir: &Body<'tcx>) {
-        // Fill the calling context (arguments) for the function to be analyzes
-        let mut caller_context_args_type_info: Vec<TypeInfo> = Vec::new();
-
-        for arg in callee_info.args.iter() {
-            match arg {
-                Operand::Copy(place) | Operand::Move(place) => {
-                    caller_context_args_type_info
-                        .push(self.state.get_type_info_for_place(place).unwrap());
-                }
-                Operand::Constant(constant) => {
-                    if let Some((def_id, substs_ref)) = arg.const_fn_def() {
-                        // Constant function,
-                        // cf. https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/enum.Operand.html#method.const_fn_def
-                        caller_context_args_type_info.push(TypeInfo::new(
-                            self.tcx.mk_fn_def(def_id, substs_ref),
-                            self.tcx,
-                        ));
-                    } else {
-                        caller_context_args_type_info.push(TypeInfo::new(constant.ty(), self.tcx));
-                    }
-                }
-            }
-        }
-
+    fn analyze_with_mir(
+        &mut self,
+        callee_info: &CalleeInfo<'tcx>,
+        target_mir: &Body<'tcx>,
+        run_in_isolation: bool,
+    ) -> ExtendedCostAnalysisDomain<'tcx> {
         // Analyze the target function
         let mut results = CostAnalysis::new_with_init(
             self.tcx,
             self.pallet,
             self.events_variants,
             callee_info.callee_def_id,
-            caller_context_args_type_info,
-            self.analysis_state.clone(),
+            callee_info.args_type_info.clone(),
+            self.analysis_success_state.clone(),
         )
         .into_engine(self.tcx, target_mir)
         .pass_name("cost_analysis")
@@ -273,11 +260,12 @@ where
 
         let updated_state;
         {
-            let self_success_state = self.analysis_state.borrow();
+            let self_success_state = self.analysis_success_state.borrow();
             // Retrieve target function analysis success flag and
-            updated_state = self_success_state.and(&results.analysis().analysis_state.borrow());
+            updated_state =
+                self_success_state.and(&results.analysis().analysis_success_state.borrow());
         }
-        *self.analysis_state.borrow_mut() = updated_state;
+        *self.analysis_success_state.borrow_mut() = updated_state;
 
         // Retrieve last state of callee function as its summary
         let end_state = if let Some((last, _)) = reverse_postorder(target_mir).last() {
@@ -287,24 +275,22 @@ where
             unreachable!();
         };
 
-        if let Some(end_state) = end_state {
+        if !run_in_isolation && let Some(end_state) = end_state.clone() {
             // Update caller function state
             self.state.inter_join(&end_state);
         }
+
+        end_state.unwrap()
     }
 
     pub(crate) fn analyze_closure_call(&mut self, callee_info: &CalleeInfo<'tcx>) {
-        // We apply the action of {"std::ops::FnOnce", "std::ops::Fn", "std::ops::FnMut"}.call/call_once
+        // We apply the action of {"std::ops::FnOnce", "std::ops::Fn", "std::ops::FnMut"}.call/call_once/call_mut
 
         // First arg is Closure of FnDef, second is a packed tuple of their arguments
-        assert!(callee_info.args.len() == 2);
+        assert!(callee_info.args_type_info.len() == 2);
 
         // Extract closure adt
-        let closure_adt_place = callee_info.args[0].place().unwrap();
-        let closure_adt = self
-            .state
-            .get_type_info_for_place(&closure_adt_place)
-            .unwrap();
+        let closure_adt = callee_info.args_type_info[0].clone();
         let (closure_fn_ptr, closure_substs_ref) =
             if let TyKind::Closure(def_id, substs_ref) = closure_adt.get_ty().kind() {
                 (*def_id, substs_ref)
@@ -317,35 +303,18 @@ where
         // The arguments are packed in a Tuple, we need to
         // create the projections on the local to target the places
         // to unpack them
-        let closure_args_place = callee_info.args[0].place().unwrap();
-        let args_count = self
-            .state
-            .get_type_info_for_place(&closure_args_place)
-            .unwrap()
-            .get_members()
-            .len();
-        let mut closure_args_operands = Vec::new();
-        assert!(closure_args_place.projection.is_empty());
-        // We can forge direct field access
-        for i in 0..args_count {
-            let field_ty = self
-                .state
-                .get_type_info_for_place(&closure_args_place)
-                .unwrap()
-                .get_member(i)
-                .unwrap()
-                .get_ty();
-            let arg_field_projection_place_elem =
-                vec![ProjectionElem::Field(mir::Field::from_usize(i), field_ty)];
-            let closure_arg_place =
-                closure_args_place.project_deeper(&arg_field_projection_place_elem, self.tcx);
-            let closure_arg_operand = Operand::Move(closure_arg_place);
+        let closure_args_packed = callee_info.args_type_info[1].clone();
+        let args_count = closure_args_packed.get_members().len();
+        let mut closure_args_type_info = Vec::new();
 
-            closure_args_operands.push(closure_arg_operand);
+        // We can simply unpack the Tuple,
+        // MIR does direct field access as projection for this
+        for i in 0..args_count {
+            closure_args_type_info.push(closure_args_packed.get_member(i).unwrap().clone());
         }
 
         // Put closure adt operand in front of argument list
-        closure_args_operands.insert(0, callee_info.args[0].clone());
+        closure_args_type_info.insert(0, callee_info.args_type_info[0].clone());
 
         // Used for debug, let's set the closure's call location where
         // is called {"std::ops::FnOnce", "std::ops::Fn", "std::ops::FnMut"}.call/call_once
@@ -356,13 +325,13 @@ where
 
         let closure_callee_info = CalleeInfo {
             location: closure_call_location,
-            args: closure_args_operands,
+            args_type_info: closure_args_type_info,
             destination: closure_call_destination,
             callee_def_id: closure_fn_ptr,
             substs_ref: closure_substs_ref,
         };
 
-        self.fn_call_analysis(closure_callee_info.clone());
+        self.fn_call_analysis(closure_callee_info.clone(), false);
     }
 
     fn get_callee_info(&self, location: Location) -> CalleeInfo<'tcx> {
@@ -375,13 +344,37 @@ where
                 destination,
                 ..
             } if let Operand::Constant(c) = func && let TyKind::FnDef(callee_def_id, substs_ref) = *c.ty().kind()
-             => CalleeInfo {
+             => {
+                let mut args_type_info: Vec<TypeInfo> = Vec::new();
+
+                for arg in args.iter() {
+                    match arg {
+                        Operand::Copy(place) | Operand::Move(place) => {
+                            args_type_info
+                                .push(self.state.get_type_info_for_place(place).unwrap());
+                        }
+                        Operand::Constant(constant) => {
+                            if let Some((def_id, substs_ref)) = arg.const_fn_def() {
+                                // Constant function,
+                                // cf. https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/enum.Operand.html#method.const_fn_def
+                                args_type_info.push(TypeInfo::new(
+                                    self.tcx.mk_fn_def(def_id, substs_ref),
+                                    self.tcx,
+                                ));
+                            } else {
+                                args_type_info.push(TypeInfo::new(constant.ty(), self.tcx));
+                            }
+                        }
+                    }
+                }
+                CalleeInfo {
                  location: Some(location),
-                 args: (*args).clone(),
+                 args_type_info,
                  destination: Some(*destination),
                  callee_def_id,
                  substs_ref
-             },
+             }
+            },
             _ => unreachable!("{:?}", terminator.kind),
         }
     }

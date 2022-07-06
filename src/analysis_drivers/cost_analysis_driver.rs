@@ -46,7 +46,7 @@ pub(crate) fn cost_analysis(
             .iterate_to_fixpoint()
             .into_results_cursor(mir);
 
-        if *results.analysis().analysis_state.borrow() == AnalysisState::Failure {
+        if *results.analysis().analysis_success_state.borrow() == AnalysisState::Failure {
             println!(
                 "Analysis failed for {}",
                 tcx.def_path_str(*dispatchable_def_id)
@@ -63,11 +63,11 @@ pub(crate) fn cost_analysis(
                 None
             };
 
-        /*println!(
+        println!(
             "********************************\nSummary for dispatchable {}\n{}********************************",
             tcx.def_path_str(*dispatchable_def_id),
             state.unwrap()
-        );*/
+        );
         println!();
     }
 }
