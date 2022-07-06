@@ -30,10 +30,6 @@ impl<'tcx> LocalsInfo<'tcx> {
         // nothing to join for now we only carry type info
     }
 
-    /*pub fn insert_type_info_for_place(&mut self, place: &Place, type_info: TypeInfo<'tcx>) {
-        let Place { local, projection } = place;
-    }*/
-
     pub fn get_type_info_for_place(&self, place: &Place) -> Option<TypeInfo<'tcx>> {
         let Place { local, projection } = place;
 
@@ -75,7 +71,6 @@ impl<'tcx> LocalsInfo<'tcx> {
             return Some(current_local_info);
         }
     }
-
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -291,6 +286,11 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
     pub fn add_steps(&mut self, size: Cost) {
         self.costs.add_steps(size);
     }
+
+    pub fn add_step(&mut self) {
+        self.costs.add_step();
+    }
+
     pub fn cost_big_o_mul(&mut self, mul_factor: Cost) {
         self.costs.cost_big_o_mul(mul_factor);
     }
@@ -345,6 +345,10 @@ impl CostDomain {
 
     pub fn add_steps(&mut self, steps: Cost) {
         self.steps_executed = self.steps_executed.clone() + steps;
+    }
+
+    pub fn add_step(&mut self) {
+        self.steps_executed = self.steps_executed.clone() + Cost::Scalar(1);
     }
 
     pub fn cost_big_o_mul(&mut self, mul_factor: Cost) {
@@ -451,10 +455,10 @@ impl<'tcx> JoinSemiLattice for TypeInfo<'tcx> {
                     panic!();
                 }
             } else {
-
-                // Trait implementation
+                // Trait specialization
                 self.set_ty(other.get_ty());
                 self.members = other.members.clone();
+                return true;
             }
         }
 
