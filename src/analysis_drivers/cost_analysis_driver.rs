@@ -34,7 +34,7 @@ pub(crate) fn cost_analysis(
             .def_path_str(*dispatchable_def_id)
             .contains("add_registrar")
         {
-            continue;
+            //continue;
         }
 
         let cost_analysis =

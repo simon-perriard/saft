@@ -74,6 +74,7 @@ impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
         caller_context_args_type_info: Vec<TypeInfo<'tcx>>,
         state: Rc<RefCell<AnalysisState>>,
     ) -> Self {
+        //println!("{}", tcx.def_path_str(def_id));
         CostAnalysis {
             tcx,
             pallet,
@@ -204,8 +205,9 @@ where
         } else if self.tcx.is_mir_available(&callee_info.callee_def_id) {
             self.analyze_with_available_mir(&callee_info, run_in_isolation)
         } else {
+            //rustc_middle::mir::pretty::write_mir_fn(self.tcx, &self.tcx.optimized_mir(self.def_id), &mut |_, _| Ok(()), &mut std::io::stdout());
             println!(
-                "Cannot analyze: {}.\nComplementary info:\n\tsubsts_ref: {:?}\n\targs_type:\n",
+                "Cannot analyze: {}.\nComplementary info:\n\tsubsts_ref: {:#?}\n\targs_type:\n",
                 self.tcx.def_path_str(callee_info.callee_def_id),
                 callee_info.substs_ref,
             );
@@ -297,7 +299,12 @@ where
             } else if let TyKind::FnDef(def_id, substs_ref) = closure_adt.get_ty().kind() {
                 (*def_id, substs_ref)
             } else {
-                unreachable!();
+                //rustc_middle::mir::pretty::write_mir_fn(tcx, &body_instance, &mut |_, _| Ok(()), &mut std::io::stdout());
+                unreachable!(
+                    "Caller: {} --- {:#?}",
+                    self.tcx.def_path_str(self.def_id),
+                    callee_info
+                );
             };
 
         // The arguments are packed in a Tuple, we need to
@@ -389,7 +396,7 @@ where
         if let Some(place_from_type_info) = place_from_type_info {
             if place_to.projection.is_empty() {
                 // Reflect the whole type
-                self.state.locals_info[place_to.local].set_local_info(place_from_type_info);
+                self.state.locals_info[place_to.local].set_type_info(place_from_type_info);
             } else {
                 // Reflect the type of the given field of "place_from" to the given field of "place_to"
                 if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
@@ -398,7 +405,7 @@ where
                     self.state.locals_info[place_to.local].set_member(field.index(), place_from_type_info);
                 } else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
                     // Reflect the whole reference
-                    self.state.locals_info[place_to.local].set_local_info(place_from_type_info);
+                    self.state.locals_info[place_to.local].set_type_info(place_from_type_info);
                 }
             }
         }

@@ -216,7 +216,7 @@ impl<'tcx> LocalInfo<'tcx> {
         self.type_info.set_ty(ty);
     }
 
-    pub fn set_local_info(&mut self, info: TypeInfo<'tcx>) {
+    pub fn set_type_info(&mut self, info: TypeInfo<'tcx>) {
         self.set_ty(info.get_ty());
 
         if self.type_info.members.is_empty() {
@@ -406,7 +406,7 @@ impl fmt::Display for CostDomain {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "== bytes read ==\n{:#?}\n\n== bytes written ==\n{:#?}\n\n== bytes deposited ==\n{:#?}\n\n== steps executed ==\n{:#?}\n",
+            "== bytes read ==\n{}\n\n== bytes written ==\n{}\n\n== bytes deposited ==\n{}\n\n== steps executed ==\n{}\n",
             self.bytes_read,
             self.bytes_written,
             self.bytes_deposited,
@@ -436,8 +436,6 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
 
 impl<'tcx> JoinSemiLattice for TypeInfo<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
-        assert!(self.ty.len() <= 2 && other.ty.len() <= 2);
-
         if self == other {
             // no change
             return false;
@@ -457,8 +455,11 @@ impl<'tcx> JoinSemiLattice for TypeInfo<'tcx> {
                 if self.ty.len() < other.ty.len() {
                     self.members = other.members.clone();
                     members_changed |= true;
+                } else if self.ty.len() > other.ty.len() {
+                    //Other is less precise
+                    members_changed |= false;
                 } else {
-                    panic!();
+                    panic!("Should be the same type:\nSELF:\n{:#?}\nOTHER\n{:#?}", self, other);
                 }
             } else {
                 // Trait specialization
@@ -471,14 +472,14 @@ impl<'tcx> JoinSemiLattice for TypeInfo<'tcx> {
         if self.get_ty() == other.get_ty() {
             // we have the same higher type info
             // join will depend on the fields
-            return false || members_changed;
+            false || members_changed
         } else if self.ty.len() > other.ty.len() {
             // we already have a more precise information
-            return false || members_changed;
+            false || members_changed
         } else if self.ty.len() < other.ty.len() {
             // other is more informative
             self.ty = other.ty.clone();
-            return true;
+            true
         } else {
             //COND: self.ty.len() == other.ty.len()
             // but final type is not the same
