@@ -284,8 +284,6 @@ impl Cost {
     }
 
     pub fn reduce_add_chain(&self) -> Self {
-        //return self.clone();
-        let res;
         match self {
             Cost::Add(_, _) => {
                 let mut flat = self.flatten_add_chain();
@@ -338,19 +336,18 @@ impl Cost {
                 flat.push(big_os);
 
                 // drain instead of iter because we need the object, not the reference
-                res = flat
+                flat
                     .drain_filter(|item| !item.is_zero())
                     .reduce(|accum, item| Cost::Add(Box::new(accum), Box::new(item)))
-                    .unwrap_or_default();
+                    .unwrap_or_default()
             }
-            Cost::ScalarMul(a, b) => res = Cost::ScalarMul(*a, Box::new(b.reduce_add_chain())),
+            Cost::ScalarMul(a, b) => Cost::ScalarMul(*a, Box::new(b.reduce_add_chain())),
             Cost::ParameterMul(a, b) => {
-                res = Cost::ParameterMul((*a).clone(), Box::new(b.reduce_add_chain()))
+                Cost::ParameterMul((*a).clone(), Box::new(b.reduce_add_chain()))
             }
-            Cost::Max(a, b) => res = a.reduce_add_chain().max_reduced(b.reduce_add_chain()),
-            _ => res = (*self).clone(),
+            Cost::Max(a, b) => a.reduce_add_chain().max_reduced(b.reduce_add_chain()),
+            _ => (*self).clone(),
         }
-        res
     }
 
     fn extract_max_add_common(&self) -> Self {

@@ -146,7 +146,7 @@ impl HasSize for Type {
                         },
                         _ => unreachable!(),
                     };
-
+                    //TODO: check that the size of 1 element is bounded
                     max_size.symbolic_mul(ty.get_size(tcx))
                 }
             },
