@@ -299,7 +299,7 @@ where
 
                 let callee_return_place = Place::return_place();
                 let returned_local_info = end_state.get_local_info_for_place(&callee_return_place).unwrap();
-                self.state.locals_info[dest_place.local].set_local_info(returned_local_info);
+                self.state.locals_info[dest_place.local].set_length_of(returned_local_info);
             }
         }
 
@@ -417,6 +417,9 @@ where
         let place_from_type_info = self.state.get_local_info_for_place(place_from);
 
         if place_from_type_info == self.state.get_local_info_for_place(place_to) {
+            if let Some(place_from_type_info) = place_from_type_info {
+                self.state.forward_symbolic_attributes(place_to, place_from_type_info);
+            }
             return;
         }
 
