@@ -1,9 +1,9 @@
 use self::{
-    alloc_specs::try_alloc_dispatch, core_specs::try_core_dispatch,
-    custom_specs::try_custom_dispatch, frame_support_specs::try_frame_support_dispatch,
-    frame_system_specs::try_frame_system_dispatch, pallet_specs::try_pallet_dispatch,
-    parity_scale_codec_specs::try_parity_scale_codec_dispatch, sp_io_specs::try_sp_io_dispatch,
-    sp_runtime_specs::try_sp_runtime_dispatch, std_specs::try_std_dispatch,
+    core_specs::try_core_dispatch, custom_specs::try_custom_dispatch,
+    frame_support_specs::try_frame_support_dispatch, frame_system_specs::try_frame_system_dispatch,
+    pallet_specs::try_pallet_dispatch, parity_scale_codec_specs::try_parity_scale_codec_dispatch,
+    sp_io_specs::try_sp_io_dispatch, sp_runtime_specs::try_sp_runtime_dispatch,
+    std_specs::try_std_dispatch,
 };
 
 use super::{
@@ -22,8 +22,6 @@ pub(super) fn try_dispatch_to_specifications<'tcx>(
     if path.starts_with("weights::") || path.starts_with("frame_support::weights::") {
         // Ignore
         Some((*transfer_function.state).clone())
-    } else if path.starts_with("alloc::") {
-        try_alloc_dispatch(transfer_function, callee_info)
     } else if path.starts_with("core::") {
         try_core_dispatch(transfer_function, callee_info)
     } else if path.starts_with("frame_support::") {
@@ -42,50 +40,6 @@ pub(super) fn try_dispatch_to_specifications<'tcx>(
         try_std_dispatch(transfer_function, callee_info)
     } else {
         try_custom_dispatch(transfer_function, callee_info)
-    }
-}
-
-pub(super) mod alloc_specs {
-    use crate::analysis::{
-        cost_analysis::{CalleeInfo, TransferFunction},
-        cost_domain::ExtendedCostAnalysisDomain,
-    };
-
-    use self::alloc_raw_vec_specs::try_alloc_raw_vec_dispatch;
-
-    pub(super) fn try_alloc_dispatch<'tcx>(
-        transfer_function: &mut TransferFunction<'tcx, '_, '_>,
-        callee_info: &CalleeInfo<'tcx>,
-    ) -> Option<ExtendedCostAnalysisDomain<'tcx>> {
-        let path = transfer_function
-            .tcx
-            .def_path_str(callee_info.callee_def_id);
-
-        if path.starts_with("alloc::raw_vec::") {
-            try_alloc_raw_vec_dispatch(transfer_function, callee_info)
-        } else {
-            None
-        }
-    }
-
-    mod alloc_raw_vec_specs {
-
-        use crate::analysis::{
-            cost_analysis::{CalleeInfo, TransferFunction},
-            cost_domain::ExtendedCostAnalysisDomain,
-            cost_language::Cost,
-        };
-
-        pub(super) fn try_alloc_raw_vec_dispatch<'tcx>(
-            transfer_function: &mut TransferFunction<'tcx, '_, '_>,
-            callee_info: &CalleeInfo<'tcx>,
-        ) -> Option<ExtendedCostAnalysisDomain<'tcx>> {
-            let path = transfer_function
-                .tcx
-                .def_path_str(callee_info.callee_def_id);
-
-            None
-        }
     }
 }
 
@@ -115,7 +69,7 @@ pub(super) mod core_specs {
     mod core_slice_specs {
         use crate::analysis::{
             cost_analysis::{CalleeInfo, TransferFunction},
-            cost_domain::{ExtendedCostAnalysisDomain, TypeInfo},
+            cost_domain::{ExtendedCostAnalysisDomain, LocalInfo},
             cost_language::{cost_to_big_o, Cost, CostParameter, HasSize},
             types::Type,
         };
@@ -154,9 +108,11 @@ pub(super) mod core_specs {
                     // Account for closure call
                     let closure_call_simulation = CalleeInfo {
                         location: None,
-                        args_type_info: vec![TypeInfo::new(
+                        args_type_info: vec![LocalInfo::new(
                             vector_element_type,
                             transfer_function.tcx,
+                            None,
+                            transfer_function.fresh_var_id.clone(),
                         )],
                         destination: callee_info.destination,
                         callee_def_id: closure_fn_ptr,
@@ -205,9 +161,11 @@ pub(super) mod core_specs {
                     // Account for closure call
                     let closure_call_simulation = CalleeInfo {
                         location: None,
-                        args_type_info: vec![TypeInfo::new(
+                        args_type_info: vec![LocalInfo::new(
                             vector_element_type,
                             transfer_function.tcx,
+                            None,
+                            transfer_function.fresh_var_id.clone(),
                         )],
                         destination: callee_info.destination,
                         callee_def_id: closure_fn_ptr,
@@ -242,7 +200,7 @@ pub(super) mod custom_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, TransferFunction},
         cost_domain::ExtendedCostAnalysisDomain,
-        cost_language::{Cost, CostParameter},
+        cost_language::Cost,
     };
 
     pub(super) fn try_custom_dispatch<'tcx>(
@@ -257,9 +215,7 @@ pub(super) mod custom_specs {
             "<impl pallet::Pallet<T>>::ensure_sorted_and_insert" => {
                 let vec = callee_info.args_type_info[0].clone();
 
-                let steps_of_ensure_sorted_and_insert = Cost::BigO(Box::new(Cost::Parameter(
-                    CostParameter::LengthOf(format!("{:?}", vec.get_ty())),
-                )));
+                let steps_of_ensure_sorted_and_insert = Cost::BigO(Box::new(vec.length_of.unwrap()));
 
                 transfer_function
                     .state
@@ -314,7 +270,7 @@ pub(super) mod frame_support_specs {
     mod frame_support_bounded_vec_specs {
         use crate::analysis::{
             cost_analysis::{CalleeInfo, TransferFunction},
-            cost_domain::{ExtendedCostAnalysisDomain, TypeInfo},
+            cost_domain::{ExtendedCostAnalysisDomain, LocalInfo},
             cost_language::{Cost, CostParameter},
         };
         use rustc_middle::ty::TyKind;
@@ -399,9 +355,11 @@ pub(super) mod frame_support_specs {
                     // Retrieve the effect of applying the closure once
                     let closure_call_simulation = CalleeInfo {
                         location: None,
-                        args_type_info: vec![TypeInfo::new(
+                        args_type_info: vec![LocalInfo::new(
                             vector_element_type,
                             transfer_function.tcx,
+                            None,
+                            transfer_function.fresh_var_id.clone(),
                         )],
                         destination: None,
                         callee_def_id: closure_fn_ptr,
@@ -1871,7 +1829,7 @@ pub(super) mod std_specs {
 
                     // Keep underlying type info instead of IntoIter
                     let underlying = callee_info.args_type_info[0].clone();
-                    transfer_function.state.locals_info[callee_info.destination.unwrap().local].set_type_info(underlying);
+                    transfer_function.state.locals_info[callee_info.destination.unwrap().local].set_local_info(underlying);
 
                     // Iterator is managing a pointer to the vec/array/whatever
                     transfer_function.state.add_step();
@@ -1907,7 +1865,7 @@ pub(super) mod std_specs {
                     // Keep type with more information when derefencing
                     let underlying = callee_info.args_type_info[0].clone();
                     transfer_function.state.locals_info[callee_info.destination.unwrap().local]
-                        .set_type_info(underlying);
+                        .set_local_info(underlying);
 
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
@@ -2006,8 +1964,8 @@ pub(super) mod std_specs {
 
                     // Keep type with more information when converting to vec
                     let source_ty = callee_info.args_type_info[0].clone();
-                    transfer_function.state.locals_info[callee_info.destination.unwrap().local]
-                        .type_info = source_ty;
+                    transfer_function.state.locals_info[callee_info.destination.unwrap().local] =
+                        source_ty;
 
                     transfer_function.state.add_steps(cost_to_big_o(
                         Type::from_mir_ty(transfer_function.tcx, underlying)
@@ -2025,7 +1983,7 @@ pub(super) mod std_specs {
         use crate::analysis::{
             cost_analysis::{CalleeInfo, TransferFunction},
             cost_domain::ExtendedCostAnalysisDomain,
-            cost_language::{Cost, CostParameter},
+            cost_language::Cost,
         };
 
         pub(super) fn try_std_vec_dispatch<'tcx>(
@@ -2041,13 +1999,11 @@ pub(super) mod std_specs {
                 "std::vec::Vec::<T, A>::insert" => {
                     let vec = callee_info.args_type_info[0].clone();
 
-                    let steps_of_ensure_sorted_and_insert = Cost::BigO(Box::new(Cost::Parameter(
-                        CostParameter::LengthOf(format!("{:?}", vec.get_ty())),
-                    )));
+                    let steps_of_insert = Cost::BigO(Box::new(vec.length_of.unwrap()));
 
                     transfer_function
                         .state
-                        .add_steps(steps_of_ensure_sorted_and_insert);
+                        .add_steps(steps_of_insert);
 
                     Some((*transfer_function.state).clone())
                 }

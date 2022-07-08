@@ -1,12 +1,15 @@
 use crate::analysis::cost_language::Cost;
 use core::fmt;
+use std::cell::RefCell;
+use std::rc::Rc;
 use rustc_index::vec::IndexVec;
 use rustc_middle::mir::{Body, Local, Place, ProjectionElem};
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use rustc_mir_dataflow::{fmt::DebugWithContext, lattice::JoinSemiLattice};
 use std::ops::{Deref, DerefMut};
+use rustc_span::Span;
 
-use super::cost_language::cost_to_big_o;
+use super::cost_language::{cost_to_big_o, Variable};
 
 #[derive(Eq, PartialEq, Clone, Debug, Default)]
 pub(crate) struct LocalsInfo<'tcx>(IndexVec<Local, LocalInfo<'tcx>>);
@@ -30,15 +33,15 @@ impl<'tcx> LocalsInfo<'tcx> {
         // nothing to join for now we only carry type info
     }
 
-    pub fn get_type_info_for_place(&self, place: &Place) -> Option<TypeInfo<'tcx>> {
+    pub fn get_type_info_for_place(&self, place: &Place) -> Option<LocalInfo<'tcx>> {
         let Place { local, projection } = place;
 
         if projection.is_empty() {
             // No projection, return the outermost LocalInfo
-            Some(self[*local].type_info.clone())
+            Some(self[*local].clone())
         } else {
             // Go down the projections
-            let mut current_local_info = self[*local].type_info.clone();
+            let mut current_local_info = self[*local].clone();
 
             for (_, proj) in place.iter_projections() {
                 match proj {
@@ -73,22 +76,28 @@ impl<'tcx> LocalsInfo<'tcx> {
     }
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, Eq)]
 pub(crate) struct LocalInfo<'tcx> {
-    // TODO:
-    // keep additional set of abstract values, one per local
-    // in each of them we keep symbolic values and attributes
-    pub type_info: TypeInfo<'tcx>,
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub(crate) struct TypeInfo<'tcx> {
+    pub length_of: Option<Cost>,
     ty: Vec<Ty<'tcx>>,
-    members: Vec<TypeInfo<'tcx>>,
+    members: Vec<LocalInfo<'tcx>>,
 }
 
-impl<'tcx> TypeInfo<'tcx> {
-    pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
+impl<'tcx> PartialEq for LocalInfo<'tcx> {
+    fn eq(&self, other: &Self) -> bool {
+        self.ty == other.ty && self.members == other.members
+    }
+}
+
+impl<'tcx> LocalInfo<'tcx> {
+    pub fn with_length_of(self, length_of: Cost) -> Self {
+        LocalInfo {
+            length_of: Some(length_of),
+            ..self
+        }
+    }
+
+    pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>, span: Option<Span>, fresh_variable_provider: Rc<RefCell<u32>>) -> Self {
         match ty.kind() {
             TyKind::Adt(adt_def, substs) => {
                 if adt_def.is_enum() {
@@ -100,28 +109,43 @@ impl<'tcx> TypeInfo<'tcx> {
                             let variant_fields = variant_def
                                 .fields
                                 .iter()
-                                .map(|field| TypeInfo::new(field.ty(tcx, substs), tcx))
+                                .map(|field| LocalInfo::new(field.ty(tcx, substs), tcx, None, fresh_variable_provider.clone()))
                                 .collect::<Vec<_>>();
-                            TypeInfo {
+                            LocalInfo {
+                                length_of: None,
                                 ty: vec![variant_ty],
                                 members: variant_fields,
                             }
                         })
                         .collect::<Vec<_>>();
 
-                    TypeInfo {
+                    LocalInfo {
+                        length_of: None,
                         ty: vec![ty],
                         members: variants,
                     }
                 } else {
                     let fields = adt_def
                         .all_fields()
-                        .map(|field| TypeInfo::new(field.ty(tcx, substs), tcx))
+                        .map(|field| LocalInfo::new(field.ty(tcx, substs), tcx, None, fresh_variable_provider.clone()))
                         .collect::<Vec<_>>();
-                    TypeInfo {
+                    let mut local_info = LocalInfo {
+                        length_of: None,
                         ty: vec![ty],
                         members: fields,
+                    };
+
+                    // TODO: fill length_of for vec like stuff
+                    /*if tcx.def_path_str(adt_def.did()).contains("Vec") {
+                        println!("{}", tcx.def_path_str(adt_def.did()));
+                    }*/
+
+                    let path = tcx.def_path_str(adt_def.did());
+                    if path == "std::vec::Vec" || path == "frame_support::BoundedVec" {
+                        local_info = local_info.with_length_of(Variable::new(fresh_variable_provider.clone(), span));
                     }
+
+                    local_info
                 }
             }
             // For closures, taken from https://doc.rust-lang.org/nightly/nightly-rustc/rustc_borrowck/type_check/struct.TypeVerifier.html#method.field_ty
@@ -131,10 +155,11 @@ impl<'tcx> TypeInfo<'tcx> {
                     .tupled_upvars_ty()
                     .tuple_fields()
                     .iter()
-                    .map(|ty| TypeInfo::new(ty, tcx))
+                    .map(|ty| LocalInfo::new(ty, tcx, None, fresh_variable_provider.clone()))
                     .collect::<Vec<_>>();
 
-                TypeInfo {
+                LocalInfo {
+                    length_of: None,
                     ty: vec![ty],
                     members: upvars,
                 }
@@ -142,23 +167,26 @@ impl<'tcx> TypeInfo<'tcx> {
             TyKind::Tuple(list_ty) => {
                 let members = list_ty
                     .iter()
-                    .map(|ty| TypeInfo::new(ty, tcx))
+                    .map(|ty| LocalInfo::new(ty, tcx, None, fresh_variable_provider.clone()))
                     .collect::<Vec<_>>();
 
-                TypeInfo {
+                LocalInfo {
+                    length_of: None,
                     ty: vec![ty],
                     members,
                 }
             }
-            TyKind::Ref(_, ty, _) => Self::new(*ty, tcx),
+            TyKind::Ref(_, ty, _) => Self::new(*ty, tcx, span, fresh_variable_provider),
             TyKind::Projection(projection_ty) => {
-                let members = TypeInfo::new(projection_ty.self_ty(), tcx).members;
-                TypeInfo {
+                let projected = LocalInfo::new(projection_ty.self_ty(), tcx, None, fresh_variable_provider);
+                LocalInfo {
+                    length_of: projected.length_of,
                     ty: vec![ty],
-                    members,
+                    members: projected.members,
                 }
             }
-            _ => TypeInfo {
+            _ => LocalInfo {
+                length_of: None,
                 ty: vec![ty],
                 members: Vec::new(),
             },
@@ -173,67 +201,32 @@ impl<'tcx> TypeInfo<'tcx> {
         *self.ty.last().unwrap()
     }
 
-    pub fn set_ty(&mut self, ty: Ty<'tcx>) {
-        if !self.ty.contains(&ty) {
-            self.ty.push(ty);
+    pub fn set_ty(&mut self, other: &Self) {
+        if !self.ty.contains(&other.get_ty()) {
+            self.ty.push(other.get_ty());
+            self.length_of = other.length_of.clone();
         }
     }
 
-    pub fn get_member(&self, index: usize) -> Option<&TypeInfo<'tcx>> {
+    pub fn set_local_info(&mut self, info: LocalInfo<'tcx>) {
+        self.set_ty(&info);
+
+        if self.members.is_empty() {
+            self.members = info.members.clone();
+        }
+    }
+
+    pub fn get_member(&self, index: usize) -> Option<&LocalInfo<'tcx>> {
         self.members.get(index)
     }
 
-    pub fn get_members(&self) -> Vec<TypeInfo<'tcx>> {
+    pub fn get_members(&self) -> Vec<LocalInfo<'tcx>> {
         self.members.clone()
     }
 
-    pub fn set_member(&mut self, index: usize, type_info: TypeInfo<'tcx>) {
+    pub fn set_member(&mut self, index: usize, type_info: LocalInfo<'tcx>) {
         self.members.remove(index);
         self.members.insert(index, type_info);
-    }
-}
-
-impl<'tcx> LocalInfo<'tcx> {
-    pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
-        LocalInfo {
-            type_info: TypeInfo::new(ty, tcx),
-        }
-    }
-
-    pub fn from_type_info(type_info: TypeInfo<'tcx>) -> Self {
-        LocalInfo { type_info }
-    }
-
-    pub fn has_fields(&self) -> bool {
-        self.type_info.has_members()
-    }
-
-    pub fn get_ty(&self) -> Ty<'tcx> {
-        self.type_info.get_ty()
-    }
-
-    pub fn set_ty(&mut self, ty: Ty<'tcx>) {
-        self.type_info.set_ty(ty);
-    }
-
-    pub fn set_type_info(&mut self, info: TypeInfo<'tcx>) {
-        self.set_ty(info.get_ty());
-
-        if self.type_info.members.is_empty() {
-            self.type_info.members = info.members.clone();
-        }
-    }
-
-    pub fn get_member(&self, index: usize) -> Option<&TypeInfo<'tcx>> {
-        self.type_info.get_member(index)
-    }
-
-    pub fn get_members(&self) -> Vec<TypeInfo<'tcx>> {
-        self.type_info.get_members()
-    }
-
-    pub fn set_member(&mut self, index: usize, type_info: TypeInfo<'tcx>) {
-        self.type_info.set_member(index, type_info)
     }
 }
 
@@ -252,20 +245,20 @@ pub(crate) struct ExtendedCostAnalysisDomain<'tcx> {
 }
 
 impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>, body: &Body<'tcx>, fresh_variable_provider: Rc<RefCell<u32>>) -> Self {
         ExtendedCostAnalysisDomain {
             costs: CostDomain::new(),
-            locals_info: Self::get_local_infos(tcx, body),
+            locals_info: Self::get_local_infos(tcx, body, fresh_variable_provider),
         }
     }
 
-    fn get_local_infos(tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> LocalsInfo<'tcx> {
+    fn get_local_infos(tcx: TyCtxt<'tcx>, body: &Body<'tcx>, fresh_variable_provider: Rc<RefCell<u32>>) -> LocalsInfo<'tcx> {
         // Fill the map with current body type
 
         let locals_info: IndexVec<Local, LocalInfo<'tcx>> = body
             .local_decls
             .iter_enumerated()
-            .map(|(_, local_decl)| LocalInfo::new(local_decl.ty, tcx))
+            .map(|(_, local_decl)| LocalInfo::new(local_decl.ty, tcx, Some(local_decl.source_info.span), fresh_variable_provider.clone()))
             .collect();
 
         LocalsInfo(locals_info)
@@ -295,18 +288,18 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
         self.costs.cost_big_o_mul(mul_factor);
     }
 
-    pub fn get_type_info_for_place(&self, place: &Place) -> Option<TypeInfo<'tcx>> {
+    pub fn get_type_info_for_place(&self, place: &Place) -> Option<LocalInfo<'tcx>> {
         self.locals_info.get_type_info_for_place(place)
     }
 
     pub fn override_with_caller_type_context(
         &mut self,
-        caller_context_args_type_info: &Vec<TypeInfo<'tcx>>,
+        caller_context_args_type_info: &Vec<LocalInfo<'tcx>>,
     ) {
         let mut idx = Local::from_usize(1);
 
         for caller_context_arg_type_info in caller_context_args_type_info.iter() {
-            self.locals_info[idx].type_info = (*caller_context_arg_type_info).clone();
+            self.locals_info[idx] = (*caller_context_arg_type_info).clone();
             idx = idx + 1;
         }
     }
@@ -430,12 +423,6 @@ impl<'tcx> JoinSemiLattice for LocalsInfo<'tcx> {
 
 impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
-        self.type_info.join(&other.type_info)
-    }
-}
-
-impl<'tcx> JoinSemiLattice for TypeInfo<'tcx> {
-    fn join(&mut self, other: &Self) -> bool {
         if self == other {
             // no change
             return false;
@@ -459,11 +446,14 @@ impl<'tcx> JoinSemiLattice for TypeInfo<'tcx> {
                     //Other is less precise
                     members_changed |= false;
                 } else {
-                    panic!("Should be the same type:\nSELF:\n{:#?}\nOTHER\n{:#?}", self, other);
+                    panic!(
+                        "Should be the same type:\nSELF:\n{:#?}\nOTHER\n{:#?}",
+                        self, other
+                    );
                 }
             } else {
                 // Trait specialization
-                self.set_ty(other.get_ty());
+                self.set_ty(other);
                 self.members = other.members.clone();
                 return true;
             }
@@ -479,6 +469,7 @@ impl<'tcx> JoinSemiLattice for TypeInfo<'tcx> {
         } else if self.ty.len() < other.ty.len() {
             // other is more informative
             self.ty = other.ty.clone();
+            self.length_of = other.length_of.clone();
             true
         } else {
             //COND: self.ty.len() == other.ty.len()

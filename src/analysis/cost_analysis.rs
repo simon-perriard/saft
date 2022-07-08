@@ -1,4 +1,4 @@
-use super::cost_domain::{ExtendedCostAnalysisDomain, TypeInfo};
+use super::cost_domain::{ExtendedCostAnalysisDomain, LocalInfo};
 use super::pallet::Pallet;
 use super::specifications_v2::try_dispatch_to_specifications;
 use crate::analysis::events_variants_domain::EventVariantsDomain;
@@ -34,7 +34,7 @@ impl AnalysisState {
 #[derive(Clone, Debug)]
 pub(crate) struct CalleeInfo<'tcx> {
     pub location: Option<Location>,
-    pub args_type_info: Vec<TypeInfo<'tcx>>,
+    pub args_type_info: Vec<LocalInfo<'tcx>>,
     pub destination: Option<Place<'tcx>>,
     pub callee_def_id: DefId,
     pub substs_ref: SubstsRef<'tcx>,
@@ -45,9 +45,13 @@ pub(crate) struct CostAnalysis<'tcx, 'inter> {
     pallet: &'inter Pallet,
     events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
     def_id: DefId,
-    caller_context_args_type_info: Vec<TypeInfo<'tcx>>,
+    caller_context_args_type_info: Vec<LocalInfo<'tcx>>,
     pub analysis_success_state: Rc<RefCell<AnalysisState>>,
+    fresh_var_id: Rc<RefCell<u32>>,
 }
+
+// TODO: for every type that has an operation that updates the concrete size,
+// we need to have a function to update the length of the LocalInfo
 
 impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
     pub(crate) fn new(
@@ -63,6 +67,7 @@ impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
             def_id,
             Vec::new(),
             Rc::new(RefCell::new(AnalysisState::Success)),
+            Rc::new(RefCell::new(0)),
         )
     }
 
@@ -71,10 +76,10 @@ impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
         pallet: &'inter Pallet,
         events_variants: &'inter HashMap<DefId, EventVariantsDomain>,
         def_id: DefId,
-        caller_context_args_type_info: Vec<TypeInfo<'tcx>>,
+        caller_context_args_type_info: Vec<LocalInfo<'tcx>>,
         state: Rc<RefCell<AnalysisState>>,
+        fresh_var_id: Rc<RefCell<u32>>,
     ) -> Self {
-        //println!("{}", tcx.def_path_str(def_id));
         CostAnalysis {
             tcx,
             pallet,
@@ -82,6 +87,7 @@ impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
             def_id,
             caller_context_args_type_info,
             analysis_success_state: state,
+            fresh_var_id,
         }
     }
 
@@ -96,6 +102,7 @@ impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
             self.def_id,
             state,
             self.analysis_success_state.clone(),
+            self.fresh_var_id.clone(),
         )
     }
 }
@@ -107,6 +114,7 @@ pub(crate) struct TransferFunction<'tcx, 'inter, 'transformer> {
     pub def_id: DefId,
     pub state: &'transformer mut ExtendedCostAnalysisDomain<'tcx>,
     pub analysis_success_state: Rc<RefCell<AnalysisState>>,
+    pub fresh_var_id: Rc<RefCell<u32>>,
 }
 
 impl<'tcx, 'inter, 'transformer> TransferFunction<'tcx, 'inter, 'transformer> {
@@ -118,6 +126,7 @@ impl<'tcx, 'inter, 'transformer> TransferFunction<'tcx, 'inter, 'transformer> {
         def_id: DefId,
         state: &'transformer mut ExtendedCostAnalysisDomain<'tcx>,
         analysis_success_state: Rc<RefCell<AnalysisState>>,
+        fresh_var_id: Rc<RefCell<u32>>,
     ) -> Self {
         TransferFunction {
             tcx,
@@ -126,6 +135,7 @@ impl<'tcx, 'inter, 'transformer> TransferFunction<'tcx, 'inter, 'transformer> {
             def_id,
             state,
             analysis_success_state,
+            fresh_var_id,
         }
     }
 }
@@ -137,7 +147,7 @@ impl<'tcx, 'inter> AnalysisDomain<'tcx> for CostAnalysis<'tcx, 'inter> {
     type Direction = Forward;
 
     fn bottom_value(&self, body: &Body<'tcx>) -> Self::Domain {
-        let mut state = ExtendedCostAnalysisDomain::new(self.tcx, body);
+        let mut state = ExtendedCostAnalysisDomain::new(self.tcx, body, self.fresh_var_id.clone());
         state.override_with_caller_type_context(&self.caller_context_args_type_info);
 
         state
@@ -254,6 +264,7 @@ where
             callee_info.callee_def_id,
             callee_info.args_type_info.clone(),
             self.analysis_success_state.clone(),
+            self.fresh_var_id.clone(),
         )
         .into_engine(self.tcx, target_mir)
         .pass_name("cost_analysis")
@@ -280,6 +291,15 @@ where
         if !run_in_isolation && let Some(end_state) = end_state.clone() {
             // Update caller function state
             self.state.inter_join(&end_state);
+
+            // Pass the return LocalInfo to the caller
+            if let Some(dest_place) = callee_info.destination {
+                assert!(dest_place.projection.is_empty());
+
+                let callee_return_place = Place::return_place();
+                let returned_local_info = end_state.get_type_info_for_place(&callee_return_place).unwrap();
+                self.state.locals_info[dest_place.local].set_local_info(returned_local_info);
+            }
         }
 
         end_state.unwrap()
@@ -352,7 +372,7 @@ where
                 ..
             } if let Operand::Constant(c) = func && let TyKind::FnDef(callee_def_id, substs_ref) = *c.ty().kind()
              => {
-                let mut args_type_info: Vec<TypeInfo> = Vec::new();
+                let mut args_type_info: Vec<LocalInfo> = Vec::new();
 
                 for arg in args.iter() {
                     match arg {
@@ -364,12 +384,14 @@ where
                             if let Some((def_id, substs_ref)) = arg.const_fn_def() {
                                 // Constant function,
                                 // cf. https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/enum.Operand.html#method.const_fn_def
-                                args_type_info.push(TypeInfo::new(
+                                args_type_info.push(LocalInfo::new(
                                     self.tcx.mk_fn_def(def_id, substs_ref),
                                     self.tcx,
+                                    None,
+                                    self.fresh_var_id.clone()
                                 ));
                             } else {
-                                args_type_info.push(TypeInfo::new(constant.ty(), self.tcx));
+                                args_type_info.push(LocalInfo::new(constant.ty(), self.tcx, None, self.fresh_var_id.clone()));
                             }
                         }
                     }
@@ -396,16 +418,16 @@ where
         if let Some(place_from_type_info) = place_from_type_info {
             if place_to.projection.is_empty() {
                 // Reflect the whole type
-                self.state.locals_info[place_to.local].set_type_info(place_from_type_info);
+                self.state.locals_info[place_to.local].set_local_info(place_from_type_info);
             } else {
                 // Reflect the type of the given field of "place_from" to the given field of "place_to"
                 if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
-                && self.state.locals_info[place_to.local].type_info.has_members()
+                && self.state.locals_info[place_to.local].has_members()
                 {
                     self.state.locals_info[place_to.local].set_member(field.index(), place_from_type_info);
                 } else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
                     // Reflect the whole reference
-                    self.state.locals_info[place_to.local].set_type_info(place_from_type_info);
+                    self.state.locals_info[place_to.local].set_local_info(place_from_type_info);
                 }
             }
         }
@@ -443,10 +465,10 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                     Operand::Constant(_) => {
                         if let Some((def_id, substs_ref)) = operand.const_fn_def() {
                             // In case of constant function, update with the function type
-                            self.state.locals_info[place_to.local].set_ty(self.tcx.mk_fn_def(def_id, substs_ref));
+                            self.state.locals_info[place_to.local].set_ty(&LocalInfo::new(self.tcx.mk_fn_def(def_id, substs_ref), self.tcx, None, self.fresh_var_id.clone()));
                         } else if let Some(constant) = operand.constant() {
                             // In case of standard constant, update with its type
-                            self.state.locals_info[place_to.local].set_ty(constant.ty());
+                            self.state.locals_info[place_to.local].set_ty(&LocalInfo::new(constant.ty(), self.tcx, None, self.fresh_var_id.clone()));
                         }
                     }
                 }
