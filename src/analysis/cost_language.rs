@@ -89,6 +89,11 @@ impl Default for Cost {
 }
 
 impl Cost {
+
+    pub(crate) fn add_one(&self) -> Self {
+        (*self).clone() + Self::Scalar(1)
+    }
+
     pub(crate) fn is_zero(&self) -> bool {
         match self {
             Self::Infinity => false,

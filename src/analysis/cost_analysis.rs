@@ -3,7 +3,7 @@ use super::pallet::Pallet;
 use super::specifications_v2::try_dispatch_to_specifications;
 use crate::analysis::events_variants_domain::EventVariantsDomain;
 use rustc_middle::mir::{
-    traversal::*, visit::*, BasicBlock, Body, Location, Operand, Place, ProjectionElem, Rvalue,
+    traversal::*, visit::*, BasicBlock, Body, Location, Operand, Place, Rvalue,
     Statement, StatementKind, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
@@ -35,6 +35,7 @@ impl AnalysisState {
 pub(crate) struct CalleeInfo<'tcx> {
     pub location: Option<Location>,
     pub args_type_info: Vec<LocalInfo<'tcx>>,
+    pub caller_args_operands: Option<Vec<Operand<'tcx>>>,
     pub destination: Option<Place<'tcx>>,
     pub callee_def_id: DefId,
     pub substs_ref: SubstsRef<'tcx>,
@@ -297,7 +298,7 @@ where
                 assert!(dest_place.projection.is_empty());
 
                 let callee_return_place = Place::return_place();
-                let returned_local_info = end_state.get_type_info_for_place(&callee_return_place).unwrap();
+                let returned_local_info = end_state.get_local_info_for_place(&callee_return_place).unwrap();
                 self.state.locals_info[dest_place.local].set_local_info(returned_local_info);
             }
         }
@@ -353,6 +354,7 @@ where
         let closure_callee_info = CalleeInfo {
             location: closure_call_location,
             args_type_info: closure_args_type_info,
+            caller_args_operands: None,
             destination: closure_call_destination,
             callee_def_id: closure_fn_ptr,
             substs_ref: closure_substs_ref,
@@ -373,12 +375,14 @@ where
             } if let Operand::Constant(c) = func && let TyKind::FnDef(callee_def_id, substs_ref) = *c.ty().kind()
              => {
                 let mut args_type_info: Vec<LocalInfo> = Vec::new();
+                let mut caller_args_operands: Vec<Operand> = Vec::new();
 
                 for arg in args.iter() {
+                    caller_args_operands.push((*arg).clone());
                     match arg {
                         Operand::Copy(place) | Operand::Move(place) => {
                             args_type_info
-                                .push(self.state.get_type_info_for_place(place).unwrap());
+                                .push(self.state.get_local_info_for_place(place).unwrap());
                         }
                         Operand::Constant(constant) => {
                             if let Some((def_id, substs_ref)) = arg.const_fn_def() {
@@ -399,6 +403,7 @@ where
                 CalleeInfo {
                  location: Some(location),
                  args_type_info,
+                 caller_args_operands: Some(caller_args_operands),
                  destination: Some(*destination),
                  callee_def_id,
                  substs_ref
@@ -409,27 +414,14 @@ where
     }
 
     fn overwrite_place_to(&mut self, place_from: &Place, place_to: &Place) {
-        let place_from_type_info = self.state.get_type_info_for_place(place_from);
+        let place_from_type_info = self.state.get_local_info_for_place(place_from);
 
-        if place_from_type_info == self.state.get_type_info_for_place(place_to) {
+        if place_from_type_info == self.state.get_local_info_for_place(place_to) {
             return;
         }
 
         if let Some(place_from_type_info) = place_from_type_info {
-            if place_to.projection.is_empty() {
-                // Reflect the whole type
-                self.state.locals_info[place_to.local].set_local_info(place_from_type_info);
-            } else {
-                // Reflect the type of the given field of "place_from" to the given field of "place_to"
-                if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
-                && self.state.locals_info[place_to.local].has_members()
-                {
-                    self.state.locals_info[place_to.local].set_member(field.index(), place_from_type_info);
-                } else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
-                    // Reflect the whole reference
-                    self.state.locals_info[place_to.local].set_local_info(place_from_type_info);
-                }
-            }
+            self.state.set_local_info_for_place(place_to, place_from_type_info);
         }
     }
 }
@@ -462,13 +454,15 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                     | Operand::Move(place_from) => {
                         self.overwrite_place_to(place_from, place_to);
                     }
-                    Operand::Constant(_) => {
+                    Operand::Constant(box const_operand) => {
                         if let Some((def_id, substs_ref)) = operand.const_fn_def() {
                             // In case of constant function, update with the function type
-                            self.state.locals_info[place_to.local].set_ty(&LocalInfo::new(self.tcx.mk_fn_def(def_id, substs_ref), self.tcx, None, self.fresh_var_id.clone()));
+                            self.state.set_local_info_for_place(place_to, LocalInfo::new(self.tcx.mk_fn_def(def_id, substs_ref), self.tcx, Some(const_operand.span), self.fresh_var_id.clone()));
                         } else if let Some(constant) = operand.constant() {
                             // In case of standard constant, update with its type
-                            self.state.locals_info[place_to.local].set_ty(&LocalInfo::new(constant.ty(), self.tcx, None, self.fresh_var_id.clone()));
+                            self.state.set_local_info_for_place(place_to, LocalInfo::new(constant.ty(), self.tcx, Some(const_operand.span), self.fresh_var_id.clone()));
+                        } else {
+                            panic!();
                         }
                     }
                 }

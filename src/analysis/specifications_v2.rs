@@ -114,6 +114,7 @@ pub(super) mod core_specs {
                             None,
                             transfer_function.fresh_var_id.clone(),
                         )],
+                        caller_args_operands: None,
                         destination: callee_info.destination,
                         callee_def_id: closure_fn_ptr,
                         substs_ref: closure_substs_ref,
@@ -167,6 +168,7 @@ pub(super) mod core_specs {
                             None,
                             transfer_function.fresh_var_id.clone(),
                         )],
+                        caller_args_operands: None,
                         destination: callee_info.destination,
                         callee_def_id: closure_fn_ptr,
                         substs_ref: closure_substs_ref,
@@ -361,6 +363,7 @@ pub(super) mod frame_support_specs {
                             None,
                             transfer_function.fresh_var_id.clone(),
                         )],
+                        caller_args_operands: None,
                         destination: None,
                         callee_def_id: closure_fn_ptr,
                         substs_ref: closure_substs_ref,
@@ -801,6 +804,7 @@ pub(super) mod frame_support_specs {
                             let closure_call_simulation = CalleeInfo {
                                 location: None,
                                 args_type_info: Vec::new(),
+                                caller_args_operands: None,
                                 destination: None,
                                 callee_def_id: closure_fn_ptr,
                                 substs_ref: closure_substs_ref,
@@ -880,6 +884,7 @@ pub(super) mod frame_support_specs {
                             let closure_call_simulation = CalleeInfo {
                                 location: None,
                                 args_type_info: Vec::new(),
+                                caller_args_operands: None,
                                 destination: None,
                                 callee_def_id: closure_fn_ptr,
                                 substs_ref: closure_substs_ref,
@@ -982,6 +987,7 @@ pub(super) mod frame_support_specs {
                             let closure_call_simulation = CalleeInfo {
                                 location: None,
                                 args_type_info: Vec::new(),
+                                caller_args_operands: None,
                                 destination: None,
                                 callee_def_id: closure_fn_ptr,
                                 substs_ref: closure_substs_ref,
@@ -1062,6 +1068,7 @@ pub(super) mod frame_support_specs {
                             let closure_call_simulation = CalleeInfo {
                                 location: None,
                                 args_type_info: Vec::new(),
+                                caller_args_operands: None,
                                 destination: None,
                                 callee_def_id: closure_fn_ptr,
                                 substs_ref: closure_substs_ref,
@@ -1384,6 +1391,7 @@ pub(super) mod parity_scale_codec_specs {
                 let closure_call_simulation = CalleeInfo {
                     location: None,
                     args_type_info: vec![callee_info.args_type_info[0].clone()],
+                    caller_args_operands: None,
                     destination: callee_info.destination,
                     callee_def_id: closure_fn_ptr,
                     substs_ref: closure_substs_ref,
@@ -1501,7 +1509,7 @@ pub(super) mod sp_runtime_specs {
                     // return type is Result<read_type, error_type>
                     let res = transfer_function
                         .state
-                        .get_type_info_for_place(&callee_info.destination.unwrap())
+                        .get_local_info_for_place(&callee_info.destination.unwrap())
                         .unwrap()
                         .get_ty()
                         .kind();
@@ -2005,10 +2013,21 @@ pub(super) mod std_specs {
                         .state
                         .add_steps(steps_of_insert);
 
+                    let vec_place = callee_info.caller_args_operands.clone().unwrap()[0].place().unwrap();
+                    assert!(vec_place.projection.is_empty());
+                    transfer_function.state.locals_info[vec_place.local].length_of_add_one();
+
                     Some((*transfer_function.state).clone())
                 }
                 "std::vec::Vec::<T, A>::insert::assert_failed" => {
                     transfer_function.state.add_step();
+                    Some((*transfer_function.state).clone())
+                }
+                "std::vec::Vec::<T, A>::push" => {
+
+                    let vec_place = callee_info.caller_args_operands.clone().unwrap()[0].place().unwrap();
+                    assert!(vec_place.projection.is_empty());
+                    transfer_function.state.locals_info[vec_place.local].length_of_add_one();
                     Some((*transfer_function.state).clone())
                 }
                 _ => None,
