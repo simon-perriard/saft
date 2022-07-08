@@ -33,7 +33,27 @@ impl<'tcx> LocalsInfo<'tcx> {
         // nothing to join for now we only carry type info
     }
 
-    pub fn get_type_info_for_place(&self, place: &Place) -> Option<LocalInfo<'tcx>> {
+    pub fn set_local_info_for_place(&mut self, place_to: &Place, local_info_from: LocalInfo<'tcx>) {
+
+        if place_to.projection.is_empty() {
+            // Reflect the whole type
+            self[place_to.local].set_local_info(local_info_from);
+        } else {
+            // Reflect the type of the given field of "place_from" to the given field of "place_to"
+            if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
+            && self[place_to.local].has_members()
+            {
+                self[place_to.local].set_member(field.index(), local_info_from);
+            } else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
+                // Reflect the whole reference
+                self[place_to.local].set_local_info(local_info_from);
+            } else {
+                panic!();
+            }
+        }
+    }
+
+    pub fn get_local_info_for_place(&self, place: &Place) -> Option<LocalInfo<'tcx>> {
         let Place { local, projection } = place;
 
         if projection.is_empty() {
@@ -90,6 +110,15 @@ impl<'tcx> PartialEq for LocalInfo<'tcx> {
 }
 
 impl<'tcx> LocalInfo<'tcx> {
+
+    pub fn length_of_add_one(&mut self) {
+        if let Some(c) = &self.length_of {
+            self.length_of = Some(c.add_one());
+        } else {
+            panic!("{:#?}", self.get_ty().kind());
+        }
+    }
+
     pub fn with_length_of(self, length_of: Cost) -> Self {
         LocalInfo {
             length_of: Some(length_of),
@@ -109,7 +138,7 @@ impl<'tcx> LocalInfo<'tcx> {
                             let variant_fields = variant_def
                                 .fields
                                 .iter()
-                                .map(|field| LocalInfo::new(field.ty(tcx, substs), tcx, None, fresh_variable_provider.clone()))
+                                .map(|field| LocalInfo::new(field.ty(tcx, substs), tcx, span, fresh_variable_provider.clone()))
                                 .collect::<Vec<_>>();
                             LocalInfo {
                                 length_of: None,
@@ -127,7 +156,7 @@ impl<'tcx> LocalInfo<'tcx> {
                 } else {
                     let fields = adt_def
                         .all_fields()
-                        .map(|field| LocalInfo::new(field.ty(tcx, substs), tcx, None, fresh_variable_provider.clone()))
+                        .map(|field| LocalInfo::new(field.ty(tcx, substs), tcx, span, fresh_variable_provider.clone()))
                         .collect::<Vec<_>>();
                     let mut local_info = LocalInfo {
                         length_of: None,
@@ -135,13 +164,8 @@ impl<'tcx> LocalInfo<'tcx> {
                         members: fields,
                     };
 
-                    // TODO: fill length_of for vec like stuff
-                    /*if tcx.def_path_str(adt_def.did()).contains("Vec") {
-                        println!("{}", tcx.def_path_str(adt_def.did()));
-                    }*/
-
                     let path = tcx.def_path_str(adt_def.did());
-                    if path == "std::vec::Vec" || path == "frame_support::BoundedVec" {
+                    if path == "std::vec::Vec" || path == "frame_support::BoundedVec" || path == "alloc::raw_vec::RawVec" {
                         local_info = local_info.with_length_of(Variable::new(fresh_variable_provider.clone(), span));
                     }
 
@@ -155,7 +179,7 @@ impl<'tcx> LocalInfo<'tcx> {
                     .tupled_upvars_ty()
                     .tuple_fields()
                     .iter()
-                    .map(|ty| LocalInfo::new(ty, tcx, None, fresh_variable_provider.clone()))
+                    .map(|ty| LocalInfo::new(ty, tcx, span, fresh_variable_provider.clone()))
                     .collect::<Vec<_>>();
 
                 LocalInfo {
@@ -167,7 +191,7 @@ impl<'tcx> LocalInfo<'tcx> {
             TyKind::Tuple(list_ty) => {
                 let members = list_ty
                     .iter()
-                    .map(|ty| LocalInfo::new(ty, tcx, None, fresh_variable_provider.clone()))
+                    .map(|ty| LocalInfo::new(ty, tcx, span, fresh_variable_provider.clone()))
                     .collect::<Vec<_>>();
 
                 LocalInfo {
@@ -178,7 +202,7 @@ impl<'tcx> LocalInfo<'tcx> {
             }
             TyKind::Ref(_, ty, _) => Self::new(*ty, tcx, span, fresh_variable_provider),
             TyKind::Projection(projection_ty) => {
-                let projected = LocalInfo::new(projection_ty.self_ty(), tcx, None, fresh_variable_provider);
+                let projected = LocalInfo::new(projection_ty.self_ty(), tcx, span, fresh_variable_provider);
                 LocalInfo {
                     length_of: projected.length_of,
                     ty: vec![ty],
@@ -288,8 +312,13 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
         self.costs.cost_big_o_mul(mul_factor);
     }
 
-    pub fn get_type_info_for_place(&self, place: &Place) -> Option<LocalInfo<'tcx>> {
-        self.locals_info.get_type_info_for_place(place)
+    pub fn get_local_info_for_place(&self, place: &Place) -> Option<LocalInfo<'tcx>> {
+        self.locals_info.get_local_info_for_place(place)
+    }
+
+    pub fn set_local_info_for_place(&mut self, place_to: &Place, local_info_from: LocalInfo<'tcx>) {
+
+        self.locals_info.set_local_info_for_place(place_to, local_info_from);
     }
 
     pub fn override_with_caller_type_context(
@@ -423,6 +452,9 @@ impl<'tcx> JoinSemiLattice for LocalsInfo<'tcx> {
 
 impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
+
+        assert!(self.ty.len() <= 2 && other.ty.len() <= 2);
+
         if self == other {
             // no change
             return false;
