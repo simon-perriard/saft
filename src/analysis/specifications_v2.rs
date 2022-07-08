@@ -217,7 +217,7 @@ pub(super) mod custom_specs {
             "<impl pallet::Pallet<T>>::ensure_sorted_and_insert" => {
                 let vec = callee_info.args_type_info[0].clone();
 
-                let steps_of_ensure_sorted_and_insert = Cost::BigO(Box::new(vec.length_of.unwrap()));
+                let steps_of_ensure_sorted_and_insert = Cost::BigO(Box::new((vec.length_of.borrow().clone().unwrap()).clone()));
 
                 transfer_function
                     .state
@@ -1650,6 +1650,7 @@ pub(super) mod std_specs {
                 "std::clone::Clone::clone" => {
                     // Soundness inconsistency here, we would need Instance to
                     // resolve to the concrete implementation
+                    //panic!("{:#?}", callee_info);
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
@@ -1831,6 +1832,7 @@ pub(super) mod std_specs {
 
             *transfer_function.analysis_success_state.borrow_mut() = AnalysisState::Failure;
             println!("Iterators not supported yet");
+            //panic!("{:#?}", _callee_info);
             Some((*transfer_function.state).clone())
             /*match path {
                 "std::iter::IntoIterator::into_iter" => {
@@ -1988,6 +1990,8 @@ pub(super) mod std_specs {
     }
 
     mod std_vec_specs {
+        use std::{rc::Rc, cell::RefCell};
+
         use crate::analysis::{
             cost_analysis::{CalleeInfo, TransferFunction},
             cost_domain::ExtendedCostAnalysisDomain,
@@ -2007,7 +2011,7 @@ pub(super) mod std_specs {
                 "std::vec::Vec::<T, A>::insert" => {
                     let vec = callee_info.args_type_info[0].clone();
 
-                    let steps_of_insert = Cost::BigO(Box::new(vec.length_of.unwrap()));
+                    let steps_of_insert = Cost::BigO(Box::new((vec.length_of.borrow().clone().unwrap()).clone()));
 
                     transfer_function
                         .state
@@ -2023,11 +2027,18 @@ pub(super) mod std_specs {
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
+                "std::vec::Vec::<T>::new" => {
+                    assert!(callee_info.destination.unwrap().projection.is_empty());
+                    transfer_function.state.locals_info[callee_info.destination.unwrap().local].length_of = Rc::new(RefCell::new(Some(Cost::default())));
+
+                    Some((*transfer_function.state).clone())
+                }
                 "std::vec::Vec::<T, A>::push" => {
 
                     let vec_place = callee_info.caller_args_operands.clone().unwrap()[0].place().unwrap();
                     assert!(vec_place.projection.is_empty());
                     transfer_function.state.locals_info[vec_place.local].length_of_add_one();
+
                     Some((*transfer_function.state).clone())
                 }
                 _ => None,

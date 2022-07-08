@@ -114,7 +114,7 @@ impl Cost {
             Self::Parameter(_) => false,
             Self::Add(a, b) => a.is_infinity() || b.is_infinity(),
             Self::ParameterMul(_, b) => b.is_infinity(),
-            Self::ScalarMul(a, b) => b.is_infinity(),
+            Self::ScalarMul(_, b) => b.is_infinity(),
             Self::Max(a, b) => a.is_infinity() || b.is_infinity(),
             Self::BigO(c) => c.is_infinity(),
         }

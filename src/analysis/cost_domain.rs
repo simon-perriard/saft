@@ -53,6 +53,25 @@ impl<'tcx> LocalsInfo<'tcx> {
         }
     }
 
+    pub fn forward_symbolic_attributes(&mut self, place_to: &Place, local_info_from: LocalInfo<'tcx>) {
+        if place_to.projection.is_empty() {
+            // Reflect symbolic attributes for the whole type
+            self[place_to.local].set_length_of(local_info_from);
+        } else {
+            // Reflect the symbolic attributes of the given field of "place_from" to the given field of "place_to"
+            if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
+            && self[place_to.local].has_members()
+            {
+                self[place_to.local].members[field.index()].set_length_of(local_info_from);
+            } else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
+                // Reflect symbolic attributes for the whole reference
+                self[place_to.local].set_length_of(local_info_from);
+            } else {
+                panic!();
+            }
+        }
+    }
+
     pub fn get_local_info_for_place(&self, place: &Place) -> Option<LocalInfo<'tcx>> {
         let Place { local, projection } = place;
 
@@ -96,9 +115,9 @@ impl<'tcx> LocalsInfo<'tcx> {
     }
 }
 
-#[derive(Clone, Debug, Hash, Eq)]
+#[derive(Clone, Debug, Eq)]
 pub(crate) struct LocalInfo<'tcx> {
-    pub length_of: Option<Cost>,
+    pub length_of: Rc<RefCell<Option<Cost>>>,
     ty: Vec<Ty<'tcx>>,
     members: Vec<LocalInfo<'tcx>>,
 }
@@ -112,8 +131,11 @@ impl<'tcx> PartialEq for LocalInfo<'tcx> {
 impl<'tcx> LocalInfo<'tcx> {
 
     pub fn length_of_add_one(&mut self) {
-        if let Some(c) = &self.length_of {
-            self.length_of = Some(c.add_one());
+
+        let length_of = (*self.length_of.borrow()).clone();
+
+        if let Some(c) = length_of {
+            *self.length_of.borrow_mut() = Some(c.add_one());
         } else {
             panic!("{:#?}", self.get_ty().kind());
         }
@@ -121,7 +143,7 @@ impl<'tcx> LocalInfo<'tcx> {
 
     pub fn with_length_of(self, length_of: Cost) -> Self {
         LocalInfo {
-            length_of: Some(length_of),
+            length_of: Rc::new(RefCell::new(Some(length_of))),
             ..self
         }
     }
@@ -141,7 +163,7 @@ impl<'tcx> LocalInfo<'tcx> {
                                 .map(|field| LocalInfo::new(field.ty(tcx, substs), tcx, span, fresh_variable_provider.clone()))
                                 .collect::<Vec<_>>();
                             LocalInfo {
-                                length_of: None,
+                                length_of: Rc::new(RefCell::new(None)),
                                 ty: vec![variant_ty],
                                 members: variant_fields,
                             }
@@ -149,7 +171,7 @@ impl<'tcx> LocalInfo<'tcx> {
                         .collect::<Vec<_>>();
 
                     LocalInfo {
-                        length_of: None,
+                        length_of: Rc::new(RefCell::new(None)),
                         ty: vec![ty],
                         members: variants,
                     }
@@ -159,7 +181,7 @@ impl<'tcx> LocalInfo<'tcx> {
                         .map(|field| LocalInfo::new(field.ty(tcx, substs), tcx, span, fresh_variable_provider.clone()))
                         .collect::<Vec<_>>();
                     let mut local_info = LocalInfo {
-                        length_of: None,
+                        length_of: Rc::new(RefCell::new(None)),
                         ty: vec![ty],
                         members: fields,
                     };
@@ -183,7 +205,7 @@ impl<'tcx> LocalInfo<'tcx> {
                     .collect::<Vec<_>>();
 
                 LocalInfo {
-                    length_of: None,
+                    length_of: Rc::new(RefCell::new(None)),
                     ty: vec![ty],
                     members: upvars,
                 }
@@ -195,7 +217,7 @@ impl<'tcx> LocalInfo<'tcx> {
                     .collect::<Vec<_>>();
 
                 LocalInfo {
-                    length_of: None,
+                    length_of: Rc::new(RefCell::new(None)),
                     ty: vec![ty],
                     members,
                 }
@@ -210,7 +232,7 @@ impl<'tcx> LocalInfo<'tcx> {
                 }
             }
             _ => LocalInfo {
-                length_of: None,
+                length_of: Rc::new(RefCell::new(None)),
                 ty: vec![ty],
                 members: Vec::new(),
             },
@@ -234,10 +256,14 @@ impl<'tcx> LocalInfo<'tcx> {
 
     pub fn set_local_info(&mut self, info: LocalInfo<'tcx>) {
         self.set_ty(&info);
-
+        self.set_length_of(info.clone());
         if self.members.is_empty() {
             self.members = info.members.clone();
         }
+    }
+
+    pub fn set_length_of(&mut self, info: LocalInfo<'tcx>) {
+        self.length_of = info.length_of.clone();
     }
 
     pub fn get_member(&self, index: usize) -> Option<&LocalInfo<'tcx>> {
@@ -319,6 +345,10 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
     pub fn set_local_info_for_place(&mut self, place_to: &Place, local_info_from: LocalInfo<'tcx>) {
 
         self.locals_info.set_local_info_for_place(place_to, local_info_from);
+    }
+
+    pub fn forward_symbolic_attributes(&mut self, place_to: &Place, local_info_from: LocalInfo<'tcx>) {
+        self.locals_info.forward_symbolic_attributes(place_to, local_info_from);
     }
 
     pub fn override_with_caller_type_context(
@@ -457,6 +487,7 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
 
         if self == other {
             // no change
+            self.set_length_of((*other).clone());
             return false;
         }
 
