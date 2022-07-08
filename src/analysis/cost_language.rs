@@ -1,7 +1,7 @@
 use core::fmt;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, cell::RefCell, rc::Rc};
 
 #[derive(Eq, PartialEq, Clone, Debug, Hash)]
 pub(crate) enum Cost {
@@ -17,10 +17,28 @@ pub(crate) enum Cost {
     BigO(Box<Cost>),
 }
 
-//TODO: Struct Variable
+
+#[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Debug, Hash)]
 pub(crate) struct Variable {
     id: u32,
-    span: Option<Span>,
+    pub span: Option<Span>,
+}
+
+impl Variable {
+    pub fn new(fresh_var_id_provider: Rc<RefCell<u32>>, span: Option<Span>) -> Cost {
+        let current_fresh_var_id = *fresh_var_id_provider.borrow();
+
+        let new_var = Variable {
+            id: current_fresh_var_id,
+            span,
+        };
+
+        let new_var = Cost::Parameter(CostParameter::LengthOf(new_var));
+
+        *fresh_var_id_provider.borrow_mut() = current_fresh_var_id + 1;
+
+        new_var
+    }
 }
 
 #[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Debug, Hash)]
@@ -32,7 +50,7 @@ pub(crate) enum CostParameter {
     WritesOf(String),
     SizeDepositedOf(String),
     StepsOf(String),
-    LengthOf(String),
+    LengthOf(Variable),
     //TODO: move Log to Cost
     Log(String),
 }
@@ -58,7 +76,7 @@ impl fmt::Display for CostParameter {
             CostParameter::WritesOf(s) => write!(f, "WRITESOF({})", s),
             CostParameter::SizeDepositedOf(s) => write!(f, "SIZEDEPOSITEDOF({})", s),
             CostParameter::StepsOf(s) => write!(f, "STEPSOF({})", s),
-            CostParameter::LengthOf(s) => write!(f, "LENGTHOF({})", s),
+            CostParameter::LengthOf(s) => write!(f, "LENGTHOF({:?})", s),
             CostParameter::Log(s) => write!(f, "LOG({})", s),
         }
     }
@@ -336,8 +354,7 @@ impl Cost {
                 flat.push(big_os);
 
                 // drain instead of iter because we need the object, not the reference
-                flat
-                    .drain_filter(|item| !item.is_zero())
+                flat.drain_filter(|item| !item.is_zero())
                     .reduce(|accum, item| Cost::Add(Box::new(accum), Box::new(item)))
                     .unwrap_or_default()
             }
