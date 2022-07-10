@@ -150,7 +150,7 @@ impl<'tcx, 'inter> AnalysisDomain<'tcx> for CostAnalysis<'tcx, 'inter> {
     fn bottom_value(&self, body: &Body<'tcx>) -> Self::Domain {
         let mut state = ExtendedCostAnalysisDomain::new(self.tcx, body, self.fresh_var_id.clone());
         state.override_with_caller_type_context(&self.caller_context_args_type_info);
-
+        
         state
     }
 
@@ -320,7 +320,6 @@ where
             } else if let TyKind::FnDef(def_id, substs_ref) = closure_adt.get_ty().kind() {
                 (*def_id, substs_ref)
             } else {
-                //rustc_middle::mir::pretty::write_mir_fn(tcx, &body_instance, &mut |_, _| Ok(()), &mut std::io::stdout());
                 unreachable!(
                     "Caller: {} --- {:#?}",
                     self.tcx.def_path_str(self.def_id),

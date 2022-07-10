@@ -34,7 +34,7 @@ pub(crate) fn cost_analysis(
         println!("{}", tcx.def_path_str(*dispatchable_def_id));
         if !tcx
             .def_path_str(*dispatchable_def_id)
-            .contains("add_registrar")
+            .contains("approve_as_multi")
         {
             //continue;
         }

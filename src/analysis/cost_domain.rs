@@ -9,7 +9,8 @@ use rustc_mir_dataflow::{fmt::DebugWithContext, lattice::JoinSemiLattice};
 use std::ops::{Deref, DerefMut};
 use rustc_span::Span;
 
-use super::cost_language::{cost_to_big_o, Variable};
+use super::cost_language::{cost_to_big_o, HasSize, Variable};
+use super::types::Type;
 
 #[derive(Eq, PartialEq, Clone, Debug, Default)]
 pub(crate) struct LocalsInfo<'tcx>(IndexVec<Local, LocalInfo<'tcx>>);
@@ -34,7 +35,7 @@ impl<'tcx> LocalsInfo<'tcx> {
     }
 
     pub fn set_local_info_for_place(&mut self, place_to: &Place, local_info_from: LocalInfo<'tcx>) {
-
+        
         if place_to.projection.is_empty() {
             // Reflect the whole type
             self[place_to.local].set_local_info(local_info_from);
@@ -194,6 +195,18 @@ impl<'tcx> LocalInfo<'tcx> {
                     local_info
                 }
             }
+            TyKind::Array(ty, size) => {
+                let length = if let Some(length) = size.val().try_to_machine_usize(tcx) {
+                    Cost::Scalar(length)
+                } else {
+                    Variable::new(fresh_variable_provider.clone(), span)
+                };
+                LocalInfo {
+                    length_of: Rc::new(RefCell::new(Some(length))),
+                    ty: vec![*ty],
+                    members: Vec::new(),
+                }
+            } 
             // For closures, taken from https://doc.rust-lang.org/nightly/nightly-rustc/rustc_borrowck/type_check/struct.TypeVerifier.html#method.field_ty
             TyKind::Closure(_, substs) => {
                 let upvars = substs
@@ -259,6 +272,10 @@ impl<'tcx> LocalInfo<'tcx> {
         self.set_length_of(info.clone());
         if self.members.is_empty() {
             self.members = info.members.clone();
+        } else if self.members.len() == info.get_members().len() {
+            for (i, m) in info.get_members().iter().enumerate() {
+                self.set_member(i, (*m).clone());
+            }
         }
     }
 
@@ -277,6 +294,22 @@ impl<'tcx> LocalInfo<'tcx> {
     pub fn set_member(&mut self, index: usize, type_info: LocalInfo<'tcx>) {
         self.members.remove(index);
         self.members.insert(index, type_info);
+    }
+
+    pub fn get_size(&self, tcx: TyCtxt<'tcx>) -> Cost {
+
+        let maybe_length_of = (*self.length_of.borrow()).clone();
+
+        if let Some(length_of) = maybe_length_of {
+            length_of
+        } else if self.has_members() {
+            self.get_members().iter().map(|m| m.get_size(tcx)).reduce(|accum, c| accum + c).unwrap()
+        } else {
+            Type::from_mir_ty(
+                tcx,
+                self.get_ty(),
+            ).get_size(tcx)
+        }
     }
 }
 
@@ -534,8 +567,14 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
             self.ty = other.ty.clone();
             self.length_of = other.length_of.clone();
             true
+        } else if self.ty.len() == 1 && other.ty.len() == 1 && self.members == other.members {
+            // This will be an uninteresting update like 
+            // T --> T as ...
+            self.ty = other.ty.clone();
+            self.length_of = other.length_of.clone();
+            true || members_changed
         } else {
-            //COND: self.ty.len() == other.ty.len()
+            //COND: self.ty.len() == other.ty.len() == 2
             // but final type is not the same
             // Example:
             /*
@@ -560,8 +599,8 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
 
             panic!(
                 "SOUNDNESS BREAKS: {:#?} --- {:#?}",
-                self.get_ty().kind(),
-                other.get_ty().kind()
+                self,
+                other
             );
         }
     }

@@ -123,11 +123,7 @@ pub(super) mod core_specs {
                     let mut closure_analysis_result =
                         transfer_function.fn_call_analysis(closure_call_simulation, true);
 
-                    let vec_ty = Type::from_mir_ty(
-                        transfer_function.tcx,
-                        callee_info.args_type_info[0].get_ty(),
-                    );
-                    let vec_big_o_size = cost_to_big_o(vec_ty.get_size(transfer_function.tcx));
+                    let vec_big_o_size = cost_to_big_o(callee_info.args_type_info[0].get_size(transfer_function.tcx));
 
                     let binary_search_complexity =
                         Cost::Parameter(CostParameter::Log(format!("{}", vec_big_o_size)));
@@ -177,11 +173,7 @@ pub(super) mod core_specs {
                     let mut closure_analysis_result =
                         transfer_function.fn_call_analysis(closure_call_simulation, true);
 
-                    let vec_ty = Type::from_mir_ty(
-                        transfer_function.tcx,
-                        callee_info.args_type_info[0].get_ty(),
-                    );
-                    let vec_big_o_size = cost_to_big_o(vec_ty.get_size(transfer_function.tcx));
+                    let vec_big_o_size = cost_to_big_o(callee_info.args_type_info[0].get_size(transfer_function.tcx));
 
                     let binary_search_complexity =
                         Cost::Parameter(CostParameter::Log(format!("{}", vec_big_o_size)));
@@ -300,6 +292,12 @@ pub(super) mod frame_support_specs {
                         .add_steps(Cost::BigO(Box::new(Cost::Parameter(
                             CostParameter::ValueOf(format!("{}::get()", ty_name)),
                         ))));
+
+                    // Update length
+                    let bounded_vec_place = callee_info.caller_args_operands.clone().unwrap()[0].place().unwrap();
+                    assert!(bounded_vec_place.projection.is_empty());
+                    transfer_function.state.locals_info[bounded_vec_place.local].length_of_add_one();
+
                     Some((*transfer_function.state).clone())
                 }
                 "frame_support::BoundedVec::<T, S>::get_mut" => {
@@ -390,6 +388,12 @@ pub(super) mod frame_support_specs {
                         .add_steps(Cost::BigO(Box::new(Cost::Parameter(
                             CostParameter::ValueOf(format!("{}::get()", ty_name)),
                         ))));
+
+                    // Update length
+                    let bounded_vec_place = callee_info.caller_args_operands.clone().unwrap()[0].place().unwrap();
+                    assert!(bounded_vec_place.projection.is_empty());
+                    transfer_function.state.locals_info[bounded_vec_place.local].length_of_add_one();
+
                     Some((*transfer_function.state).clone())
                 }
                 _ => None,
@@ -1352,7 +1356,7 @@ pub(super) mod parity_scale_codec_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, TransferFunction},
         cost_domain::ExtendedCostAnalysisDomain,
-        cost_language::{cost_to_big_o, HasSize},
+        cost_language::{cost_to_big_o, HasSize, Cost},
         types::Type,
     };
 
@@ -1368,11 +1372,6 @@ pub(super) mod parity_scale_codec_specs {
         let path = path.as_str();
         match path {
             "parity_scale_codec::Encode::using_encoded" => {
-                // arg is a hasher, complexity accounted for here
-                transfer_function.state.add_steps(cost_to_big_o(
-                    Type::from_mir_ty(transfer_function.tcx, callee_info.substs_ref.type_at(0))
-                        .get_size(transfer_function.tcx),
-                ));
 
                 // Account for closure call
                 let closure_adt = callee_info.args_type_info[1].clone();
@@ -1384,7 +1383,7 @@ pub(super) mod parity_scale_codec_specs {
                     } else {
                         unreachable!();
                     };
-
+                
                 // Closure accepts only one argument which is of type Value
                 // Rust was able to infer the type in the closure's substs ref
                 // so no need to specialize more the args_type_info
@@ -1403,10 +1402,7 @@ pub(super) mod parity_scale_codec_specs {
             "parity_scale_codec::Decode::decode" => {
                 // Ideally should be parametrized on the length of the vector to decode,
                 // but we can assume that is proportional to the type to be decoded to
-                transfer_function.state.add_steps(cost_to_big_o(
-                    Type::from_mir_ty(transfer_function.tcx, callee_info.substs_ref.type_at(0))
-                        .get_size(transfer_function.tcx),
-                ));
+                transfer_function.state.add_steps(cost_to_big_o(callee_info.args_type_info[0].get_size(transfer_function.tcx)));
                 Some((*transfer_function.state).clone())
             }
             _ => unimplemented!("{}", path),
@@ -1418,8 +1414,7 @@ pub(super) mod sp_io_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, TransferFunction},
         cost_domain::ExtendedCostAnalysisDomain,
-        cost_language::{cost_to_big_o, HasSize},
-        types::Type,
+        cost_language::cost_to_big_o,
     };
 
     pub(super) fn try_sp_io_dispatch<'tcx>(
@@ -1432,13 +1427,16 @@ pub(super) mod sp_io_specs {
         let path = path.as_str();
         match path {
             "sp_io::hashing::blake2_256" => {
-                transfer_function.state.add_steps(cost_to_big_o(
-                    Type::from_mir_ty(
-                        transfer_function.tcx,
-                        callee_info.args_type_info[0].get_ty(),
-                    )
-                    .get_size(transfer_function.tcx),
-                ));
+                //rustc_middle::mir::pretty::write_mir_fn(transfer_function.tcx, &transfer_function.tcx.optimized_mir(transfer_function.def_id), &mut |_, _| Ok(()), &mut std::io::stdout());
+                
+                /*if transfer_function.tcx.def_path_str(transfer_function.def_id).contains("operate") {
+                    for (l1, l2) in transfer_function.state.locals_info.iter_enumerated() {
+                        println!("{:?} --- {:?}", l1, l2);
+                        println!();
+                    }
+                }*/
+                
+                transfer_function.state.add_steps(cost_to_big_o(callee_info.args_type_info[0].get_size(transfer_function.tcx)));
 
                 Some((*transfer_function.state).clone())
             }
@@ -1490,14 +1488,6 @@ pub(super) mod sp_runtime_specs {
             let path = path.as_str();
 
             match path {
-                "sp_runtime::traits::Zero::zero" => {
-                    transfer_function.state.add_step();
-                    Some((*transfer_function.state).clone())
-                }
-                "sp_runtime::traits::Zero::is_zero" => {
-                    transfer_function.state.add_step();
-                    Some((*transfer_function.state).clone())
-                }
                 "sp_runtime::traits::One::one" => {
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
@@ -1535,6 +1525,19 @@ pub(super) mod sp_runtime_specs {
                 }
                 "sp_runtime::traits::TrailingZeroInput::<'a>::new" => {
                     // https://paritytech.github.io/substrate/master/sp_runtime/traits/struct.TrailingZeroInput.html#method.new
+
+                    let underlying = callee_info.args_type_info[0].clone();
+                    transfer_function.state.locals_info[callee_info.destination.unwrap().local]
+                        .set_local_info(underlying);
+
+                    transfer_function.state.add_step();
+                    Some((*transfer_function.state).clone())
+                }
+                "sp_runtime::traits::Zero::zero" => {
+                    transfer_function.state.add_step();
+                    Some((*transfer_function.state).clone())
+                }
+                "sp_runtime::traits::Zero::is_zero" => {
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
@@ -1632,9 +1635,12 @@ pub(super) mod std_specs {
     }
 
     mod std_clone_specs {
+        use std::{rc::Rc, cell::RefCell};
+
         use crate::analysis::{
             cost_analysis::{CalleeInfo, TransferFunction},
             cost_domain::ExtendedCostAnalysisDomain,
+            cost_language::Cost,
         };
 
         pub(super) fn try_std_clone_dispatch<'tcx>(
@@ -1648,9 +1654,16 @@ pub(super) mod std_specs {
 
             match path {
                 "std::clone::Clone::clone" => {
+                    // Clone the inner value of the lentgh if there is one
+                    let cloned = callee_info.args_type_info[0].clone();
+                    let length_of_cloned: Option<Cost> = cloned.length_of.borrow().clone();
+
+                    if let Some(_) = length_of_cloned {
+                        transfer_function.state.locals_info[callee_info.destination.unwrap().local].length_of = Rc::new(RefCell::new(length_of_cloned));
+                    }
+
                     // Soundness inconsistency here, we would need Instance to
                     // resolve to the concrete implementation
-                    //panic!("{:#?}", callee_info);
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
@@ -1717,6 +1730,11 @@ pub(super) mod std_specs {
                     Some((*transfer_function.state).clone())
                 }
                 "std::convert::AsRef::as_ref" => {
+
+                    let underlying = callee_info.args_type_info[0].clone();
+                    transfer_function.state.locals_info[callee_info.destination.unwrap().local]
+                        .set_local_info(underlying);
+
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
@@ -1964,23 +1982,13 @@ pub(super) mod std_specs {
                     Some((*transfer_function.state).clone())
                 }
                 "std::slice::<impl [T]>::to_vec" => {
-                    let underlying = if let TyKind::Ref(_, ty, _) =
-                        callee_info.args_type_info[0].get_ty().kind()
-                    {
-                        *ty
-                    } else {
-                        callee_info.args_type_info[0].get_ty()
-                    };
 
                     // Keep type with more information when converting to vec
                     let source_ty = callee_info.args_type_info[0].clone();
                     transfer_function.state.locals_info[callee_info.destination.unwrap().local] =
                         source_ty;
 
-                    transfer_function.state.add_steps(cost_to_big_o(
-                        Type::from_mir_ty(transfer_function.tcx, underlying)
-                            .get_size(transfer_function.tcx),
-                    ));
+                    transfer_function.state.add_steps(cost_to_big_o(callee_info.args_type_info[0].get_size(transfer_function.tcx)));
 
                     Some((*transfer_function.state).clone())
                 }
@@ -2011,12 +2019,13 @@ pub(super) mod std_specs {
                 "std::vec::Vec::<T, A>::insert" => {
                     let vec = callee_info.args_type_info[0].clone();
 
+                    // Maybe grows allocated memory region
                     let steps_of_insert = Cost::BigO(Box::new((vec.length_of.borrow().clone().unwrap()).clone()));
-
                     transfer_function
                         .state
                         .add_steps(steps_of_insert);
 
+                    // Update length
                     let vec_place = callee_info.caller_args_operands.clone().unwrap()[0].place().unwrap();
                     assert!(vec_place.projection.is_empty());
                     transfer_function.state.locals_info[vec_place.local].length_of_add_one();
@@ -2031,11 +2040,20 @@ pub(super) mod std_specs {
                     assert!(callee_info.destination.unwrap().projection.is_empty());
                     transfer_function.state.locals_info[callee_info.destination.unwrap().local].length_of = Rc::new(RefCell::new(Some(Cost::default())));
 
+                    transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
                 "std::vec::Vec::<T, A>::push" => {
 
                     let vec_place = callee_info.caller_args_operands.clone().unwrap()[0].place().unwrap();
+
+                    // Maybe grows allocated memory region
+                    let steps_of_push = Cost::BigO(Box::new((transfer_function.state.locals_info[vec_place.local].length_of.borrow().clone().unwrap()).clone()));
+                    transfer_function
+                        .state
+                        .add_steps(steps_of_push);
+
+                    // Update length
                     assert!(vec_place.projection.is_empty());
                     transfer_function.state.locals_info[vec_place.local].length_of_add_one();
 
