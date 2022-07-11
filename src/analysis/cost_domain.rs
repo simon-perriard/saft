@@ -529,50 +529,73 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
 
         assert!(self.ty.len() <= 2 && other.ty.len() <= 2);
 
+        let mut length_of_changed = false;
+
+        if self.length_of != other.length_of {
+            let self_length_of = self.length_of.borrow().clone();
+            let other_length_of = other.length_of.borrow().clone();
+            
+            if self_length_of.is_none() {
+                // other is more precise
+                self.set_length_of(other.clone());
+                length_of_changed |= true;
+            } else if let Some(self_length_of) = self_length_of.clone() && let Some(other_length_of) = other_length_of.clone() {
+                match (self_length_of.clone(), other_length_of.clone()) {
+                    (Cost::Parameter(CostParameter::LengthOf(v1)), Cost::Parameter(CostParameter::LengthOf(v2))) => {
+                        
+                        if v1.span < v2.span {
+                            // v1 was declared before
+                            length_of_changed |= false;
+                        } else if v1.span > v2.span {
+                            // v2 was declared before
+                            self.set_length_of(other.clone());
+                            length_of_changed |= true;
+                        } else {
+                            // declarated at the same spot, typically a Vec, which has a RawVec inside,
+                            // we keep track of the more general one, which is declared second (has higher id)
+                            if v1.id < v2.id {
+                                self.set_length_of(other.clone());
+                                length_of_changed |= true;
+                            } else if v1.id > v2.id {
+                                length_of_changed |= false;
+                            } else {
+                                panic!()
+                            }
+                            
+                        }
+                    }
+                    (Cost::Parameter(CostParameter::LengthOf(_)), _) => {
+                        // other is more precise
+                        self.set_length_of(other.clone());
+                        length_of_changed |= true;
+                    }
+                    (_, Cost::Parameter(CostParameter::LengthOf(_))) => {
+                        // self is more precise
+                        length_of_changed |= false;
+                    }
+                    _ => panic!("{:#?}", (self_length_of, other_length_of))
+                }
+            } else if self_length_of.is_some() && other_length_of.is_none() {
+                // self is more precise
+                length_of_changed |= false;
+            } else if self_length_of.is_none() && other_length_of.is_some() {
+                // other is more precise
+                self.set_length_of(other.clone());
+                length_of_changed |= true;
+            } else {
+                panic!();
+            }
+        }
+
         if self == other {
             // Same Type and members
             // but not necessarily same attributes
-
-            if self.length_of != other.length_of {
-                let self_length_of = self.length_of.borrow().clone();
-                let other_length_of = other.length_of.borrow().clone();
-                
-                if self_length_of.is_none() {
-                    // other is more precise
-                    self.set_length_of(other.clone());
-                    return true;
-                } else if let Some(self_length_of) = self_length_of && let Some(other_length_of) = other_length_of {
-                    match (self_length_of.clone(), other_length_of.clone()) {
-                        (Cost::Parameter(CostParameter::LengthOf(v1)), Cost::Parameter(CostParameter::LengthOf(v2))) => {
-                            if v1.id < v2.id {
-                                // v1 was declared before, thus it is more precise
-                                return false;
-                            } else {
-                                self.set_length_of(other.clone());
-                                return true;
-                            }
-                        }
-                        (Cost::Parameter(CostParameter::LengthOf(_)), _) => {
-                            // other is more precise
-                            self.set_length_of(other.clone());
-                            return true;
-                        }
-                        (_, Cost::Parameter(CostParameter::LengthOf(_))) => {
-                            // self is more precise
-                            return false;
-                        }
-                        _ => panic!("{:#?}", (self_length_of, other_length_of))
-                    }
-                } else {
-                    panic!()
-                }
-            }
-            return false;
+            return false | length_of_changed;
         }
 
-        // Either Type of members differ
+        // Either Type or members differ
 
-        let mut members_changed = false;
+        let mut members_changed = false | length_of_changed;
 
         if self.members.len() == other.members.len() {
             for (self_field, other_field) in self.members.iter_mut().zip(other.members.clone()) {
@@ -606,7 +629,6 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
         if self.get_ty() == other.get_ty() {
             // we have the same higher type info
             // join will depend on the fields
-            assert!(self.length_of == other.length_of);
             false || members_changed
         } else if self.ty.len() > other.ty.len() {
             // we already have a more precise information
@@ -614,13 +636,11 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
         } else if self.ty.len() < other.ty.len() {
             // other is more informative
             self.ty = other.ty.clone();
-            self.length_of = other.length_of.clone();
             true
         } else if self.ty.len() == 1 && other.ty.len() == 1 && self.members == other.members {
             // This will be an uninteresting update like 
             // T --> T as ...
             self.ty = other.ty.clone();
-            self.length_of = other.length_of.clone();
             true || members_changed
         } else {
             //COND: self.ty.len() == other.ty.len() == 2
