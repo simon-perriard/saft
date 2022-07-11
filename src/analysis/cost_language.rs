@@ -3,6 +3,8 @@ use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
 use std::{collections::{HashMap, HashSet}, cell::RefCell, rc::Rc};
 
+use super::cost_domain::FreshIdProvider;
+
 #[derive(Eq, PartialEq, Clone, Debug, Hash)]
 pub(crate) enum Cost {
     Infinity,
@@ -25,7 +27,7 @@ pub(crate) struct Variable {
 }
 
 impl Variable {
-    pub fn new(fresh_var_id_provider: Rc<RefCell<u32>>, span: Option<Span>) -> Cost {
+    pub fn new(fresh_var_id_provider: FreshIdProvider, span: Option<Span>) -> Cost {
         let current_fresh_var_id = *fresh_var_id_provider.borrow();
 
         let new_var = Variable {

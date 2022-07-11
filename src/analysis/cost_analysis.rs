@@ -1,4 +1,4 @@
-use super::cost_domain::{ExtendedCostAnalysisDomain, LocalInfo};
+use super::cost_domain::{ExtendedCostAnalysisDomain, LocalInfo, FreshIdProvider};
 use super::pallet::Pallet;
 use super::specifications_v2::try_dispatch_to_specifications;
 use crate::analysis::events_variants_domain::EventVariantsDomain;
@@ -48,7 +48,7 @@ pub(crate) struct CostAnalysis<'tcx, 'inter> {
     def_id: DefId,
     caller_context_args_type_info: Vec<LocalInfo<'tcx>>,
     pub analysis_success_state: Rc<RefCell<AnalysisState>>,
-    fresh_var_id: Rc<RefCell<u32>>,
+    fresh_var_id: FreshIdProvider,
 }
 
 // TODO: for every type that has an operation that updates the concrete size,
@@ -79,7 +79,7 @@ impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
         def_id: DefId,
         caller_context_args_type_info: Vec<LocalInfo<'tcx>>,
         state: Rc<RefCell<AnalysisState>>,
-        fresh_var_id: Rc<RefCell<u32>>,
+        fresh_var_id: FreshIdProvider,
     ) -> Self {
         CostAnalysis {
             tcx,
@@ -115,7 +115,7 @@ pub(crate) struct TransferFunction<'tcx, 'inter, 'transformer> {
     pub def_id: DefId,
     pub state: &'transformer mut ExtendedCostAnalysisDomain<'tcx>,
     pub analysis_success_state: Rc<RefCell<AnalysisState>>,
-    pub fresh_var_id: Rc<RefCell<u32>>,
+    pub fresh_var_id: FreshIdProvider,
 }
 
 impl<'tcx, 'inter, 'transformer> TransferFunction<'tcx, 'inter, 'transformer> {
@@ -127,7 +127,7 @@ impl<'tcx, 'inter, 'transformer> TransferFunction<'tcx, 'inter, 'transformer> {
         def_id: DefId,
         state: &'transformer mut ExtendedCostAnalysisDomain<'tcx>,
         analysis_success_state: Rc<RefCell<AnalysisState>>,
-        fresh_var_id: Rc<RefCell<u32>>,
+        fresh_var_id: FreshIdProvider,
     ) -> Self {
         TransferFunction {
             tcx,

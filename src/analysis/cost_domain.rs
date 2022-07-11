@@ -12,6 +12,8 @@ use rustc_span::Span;
 use super::cost_language::{cost_to_big_o, HasSize, Variable};
 use super::types::Type;
 
+pub(crate) type FreshIdProvider = Rc<RefCell<u32>>;
+
 #[derive(Eq, PartialEq, Clone, Debug, Default)]
 pub(crate) struct LocalsInfo<'tcx>(IndexVec<Local, LocalInfo<'tcx>>);
 
@@ -116,9 +118,18 @@ impl<'tcx> LocalsInfo<'tcx> {
     }
 }
 
+// TODO: have an enum with 2 variants
+// LocalInfo and pointer to something that has LocalInfo
+
+/*pub enum LocalInfo {
+    Value{stuff in LocalInfo},
+    Pointer{Local} -> lookup in map
+}*/
+
 #[derive(Clone, Debug, Eq)]
 pub(crate) struct LocalInfo<'tcx> {
     pub length_of: Rc<RefCell<Option<Cost>>>,
+    // TODO: simplify this with only Ty, join on longest common prefix
     ty: Vec<Ty<'tcx>>,
     members: Vec<LocalInfo<'tcx>>,
 }
@@ -149,7 +160,7 @@ impl<'tcx> LocalInfo<'tcx> {
         }
     }
 
-    pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>, span: Option<Span>, fresh_variable_provider: Rc<RefCell<u32>>) -> Self {
+    pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>, span: Option<Span>, fresh_variable_provider: FreshIdProvider) -> Self {
         match ty.kind() {
             TyKind::Adt(adt_def, substs) => {
                 if adt_def.is_enum() {
