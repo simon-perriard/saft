@@ -121,6 +121,13 @@ impl Cost {
     }
 
     pub(crate) fn mul(self, rhs: Self) -> Self {
+
+        if self.is_infinity() || rhs.is_infinity() {
+            return Cost::Infinity;
+        } else if self.is_zero() || rhs.is_zero() {
+            return Cost::default();
+        }
+
         match self.clone() {
             Cost::Parameter(sym) => sym.symbolic_mul(rhs),
             Cost::Scalar(_) | Cost::ScalarMul(_, _) => self.concrete_mul(rhs),
@@ -129,7 +136,12 @@ impl Cost {
                 Cost::Parameter(sym) => sym.symbolic_mul(self),
                 _ => unimplemented!("BIGO({:?})", self),
             },
-            _ => unimplemented!("{:?}", self),
+            _ => {
+                match rhs.clone() {
+                    Cost::Scalar(_) | Cost::ScalarMul(_, _) => rhs.concrete_mul(self),
+                    _ => unimplemented!("{:?} --- {:?}", self, rhs),
+                }
+            }
         }
     }
 

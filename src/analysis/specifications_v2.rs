@@ -70,8 +70,7 @@ pub(super) mod core_specs {
         use crate::analysis::{
             cost_analysis::{CalleeInfo, TransferFunction},
             cost_domain::{ExtendedCostAnalysisDomain, LocalInfo},
-            cost_language::{cost_to_big_o, Cost, CostParameter, HasSize},
-            types::Type,
+            cost_language::{cost_to_big_o, Cost, CostParameter},
         };
         use rustc_middle::ty::TyKind;
 
@@ -1124,8 +1123,16 @@ pub(super) mod frame_support_specs {
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
-                "frame_support::traits::WrapperKeepOpaque::<T>::encoded"
-                | "frame_support::traits::WrapperKeepOpaque::<T>::encoded_len" => {
+                "frame_support::traits::WrapperKeepOpaque::<T>::encoded" => {
+
+                    let underlying = callee_info.args_type_info[0].clone();
+                    transfer_function.state.locals_info[callee_info.destination.unwrap().local]
+                        .set_local_info(underlying);
+
+                    transfer_function.state.add_step();
+                    Some((*transfer_function.state).clone())
+                }
+                "frame_support::traits::WrapperKeepOpaque::<T>::encoded_len" => {
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
@@ -1147,7 +1154,9 @@ pub(super) mod frame_support_specs {
                 | "frame_support::traits::ReservableCurrency::unreserve"
                 | "frame_support::traits::ReservableCurrency::repatriate_reserved"
                 | "frame_support::traits::Currency::transfer"
-                | "frame_support::traits::fungible::Inspect::reducible_balance" => {
+                | "frame_support::traits::fungible::Inspect::reducible_balance"
+                | "frame_support::traits::LockableCurrency::remove_lock"
+                | "frame_support::traits::LockableCurrency::set_lock" => {
                     let fn_name = path.split("::").last().unwrap();
                     transfer_function
                         .state
@@ -1356,8 +1365,7 @@ pub(super) mod parity_scale_codec_specs {
     use crate::analysis::{
         cost_analysis::{CalleeInfo, TransferFunction},
         cost_domain::ExtendedCostAnalysisDomain,
-        cost_language::{cost_to_big_o, HasSize, Cost},
-        types::Type,
+        cost_language::cost_to_big_o,
     };
 
     use rustc_middle::ty::TyKind;
@@ -1426,16 +1434,7 @@ pub(super) mod sp_io_specs {
             .def_path_str(callee_info.callee_def_id);
         let path = path.as_str();
         match path {
-            "sp_io::hashing::blake2_256" => {
-                //rustc_middle::mir::pretty::write_mir_fn(transfer_function.tcx, &transfer_function.tcx.optimized_mir(transfer_function.def_id), &mut |_, _| Ok(()), &mut std::io::stdout());
-                
-                /*if transfer_function.tcx.def_path_str(transfer_function.def_id).contains("operate") {
-                    for (l1, l2) in transfer_function.state.locals_info.iter_enumerated() {
-                        println!("{:?} --- {:?}", l1, l2);
-                        println!();
-                    }
-                }*/
-                
+            "sp_io::hashing::blake2_256" => {                
                 transfer_function.state.add_steps(cost_to_big_o(callee_info.args_type_info[0].get_size(transfer_function.tcx)));
 
                 Some((*transfer_function.state).clone())
@@ -1488,6 +1487,14 @@ pub(super) mod sp_runtime_specs {
             let path = path.as_str();
 
             match path {
+                "sp_runtime::traits::CheckedMul::checked_mul" => {
+                    transfer_function.state.add_step();
+                    Some((*transfer_function.state).clone())
+                }
+                "sp_runtime::traits::Convert::convert" => {
+                    transfer_function.state.add_step();
+                    Some((*transfer_function.state).clone())
+                }
                 "sp_runtime::traits::One::one" => {
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
@@ -1519,7 +1526,8 @@ pub(super) mod sp_runtime_specs {
                     Some((*transfer_function.state).clone())
                 }
                 "sp_runtime::traits::Saturating::saturating_add"
-                | "sp_runtime::traits::Saturating::saturating_mul" => {
+                | "sp_runtime::traits::Saturating::saturating_mul"
+                | "sp_runtime::traits::Saturating::saturating_sub" => {
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
@@ -1721,7 +1729,12 @@ pub(super) mod std_specs {
             let path = path.as_str();
 
             match path {
-                "std::convert::Into::into" => {
+                "std::convert::AsRef::as_ref" => {
+
+                    let underlying = callee_info.args_type_info[0].clone();
+                    transfer_function.state.locals_info[callee_info.destination.unwrap().local]
+                        .set_local_info(underlying);
+
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
@@ -1729,12 +1742,11 @@ pub(super) mod std_specs {
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
-                "std::convert::AsRef::as_ref" => {
-
-                    let underlying = callee_info.args_type_info[0].clone();
-                    transfer_function.state.locals_info[callee_info.destination.unwrap().local]
-                        .set_local_info(underlying);
-
+                "std::convert::Into::into" => {
+                    transfer_function.state.add_step();
+                    Some((*transfer_function.state).clone())
+                }
+                "std::convert::TryInto::try_into" => {
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
@@ -1836,35 +1848,104 @@ pub(super) mod std_specs {
     mod std_iter_specs {
         use crate::analysis::{
             cost_analysis::{AnalysisState, CalleeInfo, TransferFunction},
-            cost_domain::ExtendedCostAnalysisDomain,
+            cost_domain::{ExtendedCostAnalysisDomain, LocalInfo}, cost_language::{cost_to_big_o, CostParameter, Cost},
         };
+
+        use rustc_middle::ty::TyKind;
 
         pub(super) fn try_std_iter_dispatch<'tcx>(
             transfer_function: &mut TransferFunction<'tcx, '_, '_>,
-            _callee_info: &CalleeInfo<'tcx>,
+            callee_info: &CalleeInfo<'tcx>,
         ) -> Option<ExtendedCostAnalysisDomain<'tcx>> {
-            /*let path = transfer_function
+            let path = transfer_function
                 .tcx
                 .def_path_str(callee_info.callee_def_id);
-            let path = path.as_str();*/
+            let path = path.as_str();
 
-            *transfer_function.analysis_success_state.borrow_mut() = AnalysisState::Failure;
-            println!("Iterators not supported yet");
-            //panic!("{:#?}", _callee_info);
-            Some((*transfer_function.state).clone())
-            /*match path {
+            match path {
                 "std::iter::IntoIterator::into_iter" => {
 
                     // Keep underlying type info instead of IntoIter
                     let underlying = callee_info.args_type_info[0].clone();
-                    transfer_function.state.locals_info[callee_info.destination.unwrap().local].set_local_info(underlying);
+                    transfer_function.state.locals_info[callee_info.destination.unwrap().local].set_local_info(underlying.clone());
+
+                    transfer_function.state.forward_symbolic_attributes(&callee_info.destination.unwrap(), underlying);
 
                     // Iterator is managing a pointer to the vec/array/whatever
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
-                _ => None,
-            }*/
+                "std::iter::Iterator::collect" => {
+                    // Account for iterator complexity (O(n))
+                    transfer_function.state.forward_symbolic_attributes(&callee_info.destination.unwrap(), callee_info.args_type_info[0].clone());
+                    transfer_function.state.add_steps(cost_to_big_o(callee_info.args_type_info[0].get_size(transfer_function.tcx)));
+                    Some((*transfer_function.state).clone())
+                }
+                "std::iter::Iterator::enumerate" => {
+                    // Account for iterator complexity (O(n))
+                    transfer_function.state.forward_symbolic_attributes(&callee_info.destination.unwrap(), callee_info.args_type_info[0].clone());
+                    transfer_function.state.add_steps(cost_to_big_o(callee_info.args_type_info[0].get_size(transfer_function.tcx)));
+                    Some((*transfer_function.state).clone())
+                }
+                "std::iter::Iterator::filter" | "std::iter::Iterator::filter_map" => {
+                    // Account for closure
+                    let vector_element_type = if let TyKind::Adt(_, substs_ref) =
+                        callee_info.args_type_info[0].get_ty().kind()
+                    {
+                        substs_ref.type_at(0)
+                    } else if let TyKind::Opaque(def_id, _) = callee_info.args_type_info[0].get_ty().kind() && let TyKind::Adt(_, substs_ref) = transfer_function.tcx.type_of(def_id).kind() && let TyKind::Closure(_, substs_ref) = substs_ref.type_at(1).kind() {
+                        substs_ref.as_closure().sig().input(0).skip_binder()
+                    } else {
+                        unreachable!("{:?}", callee_info.args_type_info[0].get_ty().kind())
+                    };
+
+                    let closure_adt = callee_info.args_type_info[1].clone();
+                    let (closure_fn_ptr, closure_substs_ref) =
+                        if let TyKind::Closure(def_id, substs_ref) = closure_adt.get_ty().kind() {
+                            (*def_id, substs_ref)
+                        } else if let TyKind::FnDef(def_id, substs_ref) =
+                            closure_adt.get_ty().kind()
+                        {
+                            (*def_id, substs_ref)
+                        } else {
+                            unreachable!();
+                        };
+
+                    // Account for closure call
+                    let closure_call_simulation = CalleeInfo {
+                        location: None,
+                        args_type_info: vec![LocalInfo::new(
+                            vector_element_type,
+                            transfer_function.tcx,
+                            None,
+                            transfer_function.fresh_var_id.clone(),
+                        )],
+                        caller_args_operands: None,
+                        destination: callee_info.destination,
+                        callee_def_id: closure_fn_ptr,
+                        substs_ref: closure_substs_ref,
+                    };
+
+                    let mut closure_analysis_result =
+                        transfer_function.fn_call_analysis(closure_call_simulation, true);
+
+                    // Get the size of the iteratable
+                    let vec_big_o_size = cost_to_big_o(callee_info.args_type_info[0].get_size(transfer_function.tcx));
+
+                    // Then multiply it by complexity
+                    closure_analysis_result.cost_big_o_mul(vec_big_o_size);
+
+                    transfer_function.state.forward_symbolic_attributes(&callee_info.destination.unwrap(), callee_info.args_type_info[0].clone());
+
+                    transfer_function.state.inter_join(&closure_analysis_result);
+                    Some((*transfer_function.state).clone())
+                }
+                _ => {
+                    *transfer_function.analysis_success_state.borrow_mut() = AnalysisState::Failure;
+                    println!("Iterators not supported yet");
+                    Some((*transfer_function.state).clone())
+                },
+            }
         }
     }
     mod std_ops_specs {
@@ -1889,12 +1970,22 @@ pub(super) mod std_specs {
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
+                "std::ops::BitOr::bitor" => {
+                    transfer_function.state.add_step();
+                    Some((*transfer_function.state).clone())
+                }
                 "std::ops::Deref::deref" => {
                     // Keep type with more information when derefencing
                     let underlying = callee_info.args_type_info[0].clone();
                     transfer_function.state.locals_info[callee_info.destination.unwrap().local]
                         .set_local_info(underlying);
 
+                    transfer_function.state.add_step();
+                    Some((*transfer_function.state).clone())
+                }
+                "std::ops::Div::div" => {
+                    // Soundness inconsistency here, we would need Instance to
+                    // resolve to the concrete implementation
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
@@ -1915,6 +2006,10 @@ pub(super) mod std_specs {
                 "std::ops::Mul::mul" => {
                     // Soundness inconsistency here, we would need Instance to
                     // resolve to the concrete implementation
+                    transfer_function.state.add_step();
+                    Some((*transfer_function.state).clone())
+                }
+                "std::ops::Rem::rem" => {
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
@@ -1962,10 +2057,8 @@ pub(super) mod std_specs {
         use crate::analysis::{
             cost_analysis::{CalleeInfo, TransferFunction},
             cost_domain::ExtendedCostAnalysisDomain,
-            cost_language::{cost_to_big_o, HasSize},
-            types::Type,
+            cost_language::cost_to_big_o,
         };
-        use rustc_middle::ty::TyKind;
 
         pub(super) fn try_std_slice_dispatch<'tcx>(
             transfer_function: &mut TransferFunction<'tcx, '_, '_>,

@@ -188,7 +188,7 @@ impl<'tcx> LocalInfo<'tcx> {
                     };
 
                     let path = tcx.def_path_str(adt_def.did());
-                    if path == "std::vec::Vec" || path == "frame_support::BoundedVec" || path == "alloc::raw_vec::RawVec" {
+                    if path == "std::vec::Vec" || path == "frame_support::BoundedVec" || path == "alloc::raw_vec::RawVec" || path == "frame_support::traits::WrapperKeepOpaque" {
                         local_info = local_info.with_length_of(Variable::new(fresh_variable_provider.clone(), span));
                     }
 
