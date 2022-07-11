@@ -34,9 +34,9 @@ pub(crate) fn cost_analysis(
         println!("{}", tcx.def_path_str(*dispatchable_def_id));
         if !tcx
             .def_path_str(*dispatchable_def_id)
-            .contains("approve_as_multi")
+            .contains("cancel_as_multi")
         {
-            //continue;
+            continue;
         }
 
         let cost_analysis =
