@@ -1848,7 +1848,7 @@ pub(super) mod std_specs {
     mod std_iter_specs {
         use crate::analysis::{
             cost_analysis::{AnalysisState, CalleeInfo, TransferFunction},
-            cost_domain::{ExtendedCostAnalysisDomain, LocalInfo}, cost_language::{cost_to_big_o, CostParameter, Cost},
+            cost_domain::{ExtendedCostAnalysisDomain, LocalInfo}, cost_language::cost_to_big_o,
         };
 
         use rustc_middle::ty::TyKind;
