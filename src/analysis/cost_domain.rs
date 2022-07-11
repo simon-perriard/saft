@@ -1,4 +1,4 @@
-use crate::analysis::cost_language::Cost;
+use crate::analysis::cost_language::{Cost, CostParameter};
 use core::fmt;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -530,10 +530,47 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
         assert!(self.ty.len() <= 2 && other.ty.len() <= 2);
 
         if self == other {
-            // no change
-            self.set_length_of((*other).clone());
+            // Same Type and members
+            // but not necessarily same attributes
+
+            if self.length_of != other.length_of {
+                let self_length_of = self.length_of.borrow().clone();
+                let other_length_of = other.length_of.borrow().clone();
+                
+                if self_length_of.is_none() {
+                    // other is more precise
+                    self.set_length_of(other.clone());
+                    return true;
+                } else if let Some(self_length_of) = self_length_of && let Some(other_length_of) = other_length_of {
+                    match (self_length_of.clone(), other_length_of.clone()) {
+                        (Cost::Parameter(CostParameter::LengthOf(v1)), Cost::Parameter(CostParameter::LengthOf(v2))) => {
+                            if v1.id < v2.id {
+                                // v1 was declared before, thus it is more precise
+                                return false;
+                            } else {
+                                self.set_length_of(other.clone());
+                                return true;
+                            }
+                        }
+                        (Cost::Parameter(CostParameter::LengthOf(_)), _) => {
+                            // other is more precise
+                            self.set_length_of(other.clone());
+                            return true;
+                        }
+                        (_, Cost::Parameter(CostParameter::LengthOf(_))) => {
+                            // self is more precise
+                            return false;
+                        }
+                        _ => panic!("{:#?}", (self_length_of, other_length_of))
+                    }
+                } else {
+                    panic!()
+                }
+            }
             return false;
         }
+
+        // Either Type of members differ
 
         let mut members_changed = false;
 
@@ -569,6 +606,7 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
         if self.get_ty() == other.get_ty() {
             // we have the same higher type info
             // join will depend on the fields
+            assert!(self.length_of == other.length_of);
             false || members_changed
         } else if self.ty.len() > other.ty.len() {
             // we already have a more precise information

@@ -22,7 +22,7 @@ pub(crate) enum Cost {
 
 #[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Debug, Hash)]
 pub(crate) struct Variable {
-    id: u32,
+    pub id: u32,
     pub span: Option<Span>,
 }
 
