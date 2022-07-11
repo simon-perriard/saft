@@ -36,7 +36,7 @@ pub(crate) fn cost_analysis(
             .def_path_str(*dispatchable_def_id)
             .contains("cancel_as_multi")
         {
-            continue;
+            //continue;
         }
 
         let cost_analysis =
