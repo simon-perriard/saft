@@ -16,7 +16,9 @@ pub(crate) enum Type {
     Adt(Adt),
     Array(Box<Type>, u64),
     Ref(Box<Type>, Mutability),
+    RawPtr(Box<Type>, Mutability),
     Slice(Box<Type>),
+    Opaque(Box<Type>),
     Tuple(Vec<Type>),
     Projection(DefId),
     Unsupported,
@@ -59,7 +61,6 @@ impl Type {
                     _ => Type::Adt(Adt::Unknown(adt_def.did())),
                 }
             }
-            //TyKind::Str => Type::Str,
             TyKind::Array(t, size) => Type::Array(
                 Box::new(Self::from_mir_ty(tcx, t)),
                 size.val().try_to_machine_usize(tcx).unwrap(),
@@ -68,27 +69,18 @@ impl Type {
             TyKind::Ref(_, t, mutability) => {
                 Type::Ref(Box::new(Self::from_mir_ty(tcx, t)), mutability)
             }
-            /*TyKind::FnPtr(poly_fn_sig) => {
-                let fn_sig = poly_fn_sig
-                    .no_bound_vars()
-                    .expect("Polymorphic functions not supported.");
-                Type::FnPtr(
-                    fn_sig
-                        .inputs()
-                        .iter()
-                        .map(|&ty| Self::from_mir_ty(tcx, ty))
-                        .collect(),
-                    Box::new(Self::from_mir_ty(tcx, fn_sig.output())),
-                )
-            }*/
+            TyKind::RawPtr(type_and_mut) => {
+                Type::RawPtr(Box::new(Self::from_mir_ty(tcx, type_and_mut.ty)), type_and_mut.mutbl)
+            }
             TyKind::Tuple(_) => Type::Tuple(
                 ty.tuple_fields()
                     .iter()
                     .map(|ty| Self::from_mir_ty(tcx, ty))
                     .collect(),
             ),
+            TyKind::Opaque(t,_) => Type::Opaque(Box::new(Self::from_mir_ty(tcx, tcx.type_of(t)))),
             TyKind::Projection(p) => Type::Projection(p.item_def_id),
-            _ => Type::Unsupported,
+            _ => {println!("{:?}", ty.kind());Type::Unsupported},
         }
     }
 }
@@ -152,6 +144,7 @@ impl HasSize for Type {
             },
             Type::Array(ty, size) => Cost::Scalar(*size).concrete_mul(ty.get_size(tcx)),
             Type::Ref(ty, _) => ty.get_size(tcx),
+            Type::RawPtr(ty, _) => ty.get_size(tcx),
             Type::Slice(_) => Cost::Infinity,
             Type::Tuple(tys) => tys
                 .iter()
@@ -164,6 +157,7 @@ impl HasSize for Type {
                 let path = path.split("::").last().unwrap().to_string();
                 Cost::Parameter(CostParameter::SizeOf(path))
             }
+            Type::Opaque(ty) => ty.get_size(tcx),
             Type::Unsupported => panic!(),
         }
     }
