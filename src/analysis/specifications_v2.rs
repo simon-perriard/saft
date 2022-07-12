@@ -1730,7 +1730,6 @@ pub(super) mod std_specs {
 
             match path {
                 "std::convert::AsRef::as_ref" => {
-
                     let underlying = callee_info.args_type_info[0].clone();
                     transfer_function.state.locals_info[callee_info.destination.unwrap().local]
                         .set_local_info(underlying);
@@ -1975,10 +1974,11 @@ pub(super) mod std_specs {
                     Some((*transfer_function.state).clone())
                 }
                 "std::ops::Deref::deref" => {
+
                     // Keep type with more information when derefencing
                     let underlying = callee_info.args_type_info[0].clone();
                     transfer_function.state.locals_info[callee_info.destination.unwrap().local]
-                        .set_local_info(underlying);
+                        .set_local_info(underlying.get_member(0).unwrap().clone());
 
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
@@ -2122,6 +2122,8 @@ pub(super) mod std_specs {
                     let vec_place = callee_info.caller_args_operands.clone().unwrap()[0].place().unwrap();
                     assert!(vec_place.projection.is_empty());
                     transfer_function.state.locals_info[vec_place.local].length_of_add_one();
+                    transfer_function.state.locals_info[vec_place.local].fill_with_inner_size(transfer_function.tcx);
+
 
                     Some((*transfer_function.state).clone())
                 }
@@ -2132,6 +2134,7 @@ pub(super) mod std_specs {
                 "std::vec::Vec::<T>::new" => {
                     assert!(callee_info.destination.unwrap().projection.is_empty());
                     transfer_function.state.locals_info[callee_info.destination.unwrap().local].length_of = Rc::new(RefCell::new(Some(Cost::default())));
+                    transfer_function.state.locals_info[callee_info.destination.unwrap().local].fill_with_inner_size(transfer_function.tcx);
 
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
@@ -2149,6 +2152,8 @@ pub(super) mod std_specs {
                     // Update length
                     assert!(vec_place.projection.is_empty());
                     transfer_function.state.locals_info[vec_place.local].length_of_add_one();
+                    transfer_function.state.locals_info[vec_place.local].fill_with_inner_size(transfer_function.tcx);
+                    
 
                     Some((*transfer_function.state).clone())
                 }

@@ -160,6 +160,19 @@ impl<'tcx> LocalInfo<'tcx> {
         }
     }
 
+    pub fn fill_with_inner_size(&mut self, tcx: TyCtxt<'tcx>) {
+
+        let path = tcx.def_path_str(self.get_ty().ty_adt_def().unwrap().did());
+        let path = path.as_str();
+        match path {
+            "std::vec::Vec" | "frame_support::BoundedVec" | "frame_support::traits::WrapperKeepOpaque" => {
+                self.members[0].length_of = self.length_of.clone();
+                self.members[0].fill_with_inner_size(tcx);
+            }
+            _ => ()
+        }
+    }
+
     pub fn new(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>, span: Option<Span>, fresh_variable_provider: FreshIdProvider) -> Self {
         match ty.kind() {
             TyKind::Adt(adt_def, substs) => {
@@ -201,6 +214,8 @@ impl<'tcx> LocalInfo<'tcx> {
                     let path = tcx.def_path_str(adt_def.did());
                     if path == "std::vec::Vec" || path == "frame_support::BoundedVec" || path == "alloc::raw_vec::RawVec" || path == "frame_support::traits::WrapperKeepOpaque" {
                         local_info = local_info.with_length_of(Variable::new(fresh_variable_provider.clone(), span));
+
+                        local_info.fill_with_inner_size(tcx);
                     }
 
                     local_info
@@ -506,7 +521,7 @@ impl fmt::Display for CostDomain {
             self.bytes_read,
             self.bytes_written,
             self.bytes_deposited,
-            self.steps_executed.reduce_add_chain()
+            self.steps_executed.reduce_expr()
         )
     }
 }
@@ -537,12 +552,14 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
             
             if self_length_of.is_none() {
                 // other is more precise
+                //panic!("{:#?}", (self_length_of, other_length_of));
+                //TODO: Check that
                 self.set_length_of(other.clone());
                 length_of_changed |= true;
             } else if let Some(self_length_of) = self_length_of.clone() && let Some(other_length_of) = other_length_of.clone() {
                 match (self_length_of.clone(), other_length_of.clone()) {
                     (Cost::Parameter(CostParameter::LengthOf(v1)), Cost::Parameter(CostParameter::LengthOf(v2))) => {
-                        
+                        //TODO: take MAX
                         if v1.span < v2.span {
                             // v1 was declared before
                             length_of_changed |= false;
@@ -551,7 +568,7 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
                             self.set_length_of(other.clone());
                             length_of_changed |= true;
                         } else {
-                            // declarated at the same spot, typically a Vec, which has a RawVec inside,
+                            // declared at the same span, typically a Vec, which has a RawVec inside,
                             // we keep track of the more general one, which is declared second (has higher id)
                             if v1.id < v2.id {
                                 self.set_length_of(other.clone());
@@ -565,11 +582,13 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
                         }
                     }
                     (Cost::Parameter(CostParameter::LengthOf(_)), _) => {
+                        //TODO: take max
                         // other is more precise
                         self.set_length_of(other.clone());
                         length_of_changed |= true;
                     }
                     (_, Cost::Parameter(CostParameter::LengthOf(_))) => {
+                        //TODO: take max
                         // self is more precise
                         length_of_changed |= false;
                     }
