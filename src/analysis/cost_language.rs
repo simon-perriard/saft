@@ -506,6 +506,6 @@ mod tests {
         let b = Cost::Parameter(CostParameter::SizeOf("sym".to_string()));
         let c = Cost::Scalar(1);
 
-        assert_eq!(a + b.clone() + c, Cost::Add(vec![Cost::Scalar(2), b]));
+        assert_eq!(a + b.clone() + c, Cost::Add(vec![b, Cost::Scalar(2)]));
     }
 }
