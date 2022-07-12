@@ -1,7 +1,7 @@
 use core::fmt;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
-use std::{collections::{HashMap, HashSet}, cell::RefCell, rc::Rc};
+use std::{collections::{HashMap, HashSet}};
 
 use super::cost_domain::FreshIdProvider;
 
@@ -15,7 +15,8 @@ pub(crate) enum Cost {
     ScalarMul(u64, Box<Cost>),
     ParameterMul(CostParameter, Box<Cost>),
     // TODO: change to Vec of Cost
-    Max(Box<Cost>, Box<Cost>),
+    //Max(Box<Cost>, Box<Cost>),
+    Max(Vec<Cost>),
     BigO(Box<Cost>),
 }
 
@@ -92,6 +93,10 @@ impl Default for Cost {
 
 impl Cost {
 
+    pub(crate) fn reduce_expr(&self) -> Self {
+        (*self).clone()
+    }
+
     pub(crate) fn add_one(&self) -> Self {
         (*self).clone() + Self::Scalar(1)
     }
@@ -104,7 +109,7 @@ impl Cost {
             Self::Add(a, b) => a.is_zero() && b.is_zero(),
             Self::ParameterMul(_, b) => b.is_zero(),
             Self::ScalarMul(a, b) => *a == 0 || b.is_zero(),
-            Self::Max(a, b) => a.is_zero() && b.is_zero(),
+            Self::Max(chain) => chain.iter().map(|x| x.is_zero()).fold(false, |accum, x| accum & x),
             Self::BigO(c) => c.is_zero(),
         }
     }
@@ -117,7 +122,7 @@ impl Cost {
             Self::Add(a, b) => a.is_infinity() || b.is_infinity(),
             Self::ParameterMul(_, b) => b.is_infinity(),
             Self::ScalarMul(_, b) => b.is_infinity(),
-            Self::Max(a, b) => a.is_infinity() || b.is_infinity(),
+            Self::Max(chain) => chain.iter().map(|x| x.is_zero()).fold(false, |accum, x| accum | x),
             Self::BigO(c) => c.is_infinity(),
         }
     }
@@ -164,20 +169,69 @@ impl Cost {
             return Self::Scalar(x*y);
         } else if let Self::Scalar(x) = self && let Self::ScalarMul(y, a) = rhs {
             // Compact notation: (x)*((y)*a) with x and y concrete -> (x*y)*a
-            return Self::ScalarMul(x*y, Box::new(a.reduce_add_chain()));
+            return Self::ScalarMul(x*y, a);
         } else if let Self::Scalar(x) = rhs && let Self::ScalarMul(y, a) = self {
             // Compact notation: ((y)*a)*(x) with x and y concrete -> (x*y)*a
-            return Self::ScalarMul(x*y, Box::new(a.reduce_add_chain()));
+            return Self::ScalarMul(x*y, a);
         } else if let Self::Scalar(x) = self {
-            return Self::ScalarMul(x, Box::new(rhs.reduce_add_chain()));
+            return Self::ScalarMul(x, Box::new(rhs));
         } else if let Self::Scalar(x) = rhs {
-            return Self::ScalarMul(x, Box::new(self.reduce_add_chain()));
+            return Self::ScalarMul(x, Box::new(self));
         }
         unreachable!();
     }
 
     pub(crate) fn max(&self, rhs: Self) -> Self {
         if self.is_infinity() || rhs.is_infinity() {
+            return Self::Infinity;
+        } else if self.is_zero() {
+            return rhs.clone();
+        } else if rhs.is_zero() {
+            return *self;
+        } if let Self::Max(x) = *self && let Self::Max(y) = rhs {
+            let mut unique_elements = HashSet::new();
+
+            for e in x.iter() {
+                if e.is_zero() {
+                    continue;
+                } else if e.is_infinity() {
+                    return Self::Infinity;
+                }
+                unique_elements.insert(*e);
+            }
+
+            for e in y.iter() {
+                if e.is_zero() {
+                    continue;
+                } else if e.is_infinity() {
+                    return Self::Infinity;
+                }
+                unique_elements.insert(*e);
+            }
+
+            return Self::Max(unique_elements.drain().collect::<Vec<_>>());
+
+        } else if let Self::Max(x) = *self {
+            if x.contains(&rhs) {
+                return *self;
+            } else {
+                let max = x;
+                max.push(rhs);
+                return Self::Max(max);
+            }
+        } else if let Self::Max(y) = rhs {
+            if y.contains(&rhs) {
+                return (*self).clone();
+            } else {
+                let max = y;
+                max.push(*self);
+                return Self::Max(max);
+            }
+        } else {
+            return Self::Max(vec![(*self).clone(), rhs]);
+        }
+
+        /*if self.is_infinity() || rhs.is_infinity() {
             return Self::Infinity;
         }else if self.is_zero() {
             return rhs.reduce_add_chain();
@@ -209,10 +263,10 @@ impl Cost {
             Box::new(self.reduce_add_chain()),
             Box::new(rhs.reduce_add_chain()),
         )
-        .extract_max_add_common()
+        .extract_max_add_common()*/
     }
 
-    pub(crate) fn max_reduced(&self, rhs: Self) -> Self {
+    /*pub(crate) fn max_reduced(&self, rhs: Self) -> Self {
         if self.is_zero() {
             return rhs;
         } else if rhs.is_zero() || *self == rhs {
@@ -260,10 +314,10 @@ impl Cost {
         }
 
         flat
-    }
+    }*/
 
     // Compare an Add or Self with another Add
-    fn cmp_add_chain(&self, other: &Self) -> Option<Self> {
+    /*fn cmp_add_chain(&self, other: &Self) -> Option<Self> {
         let mut chain_1 = self.flatten_add_chain();
         let mut chain_2 = other.flatten_add_chain();
 
@@ -314,13 +368,13 @@ impl Cost {
         } else {
             None
         }
-    }
+    }*/
 
     fn pretty_print_need_parenthesis(&self) -> bool {
         matches!(self, Self::Add(_, _))
     }
 
-    pub fn reduce_add_chain(&self) -> Self {
+    /*pub fn reduce_add_chain(&self) -> Self {
         match self {
             Cost::Add(_, _) => {
                 let mut flat = self.flatten_add_chain();
@@ -429,7 +483,7 @@ impl Cost {
             }
             _ => unreachable!("This must only be applied on Cost::Max"),
         }
-    }
+    }*/
 }
 
 impl std::ops::Add for Cost {
@@ -473,7 +527,7 @@ impl fmt::Display for Cost {
                 }
             }
             Self::ScalarMul(a, b) => write!(f, "{} * ({})", a, b),
-            Self::Max(a, b) => write!(f, "MAX(\n\t{}\n , \n\t{}\n)", a, b),
+            Self::Max(chain) => chain.map(),write!(f, "MAX(\n\t{}\n , \n\t{}\n)", a, b),
             Self::BigO(s) => write!(f, "O({})", s),
         }
     }
@@ -493,7 +547,7 @@ pub(crate) fn cost_to_big_o(size: Cost) -> Cost {
         // Storage sizes are constructed such that lhs of mul is the number of elements, rhs is their size
         Cost::ScalarMul(a, _) => Cost::Scalar(a),
         Cost::ParameterMul(a, _) => cost_to_big_o(Cost::Parameter(a)),
-        Cost::Max(a, b) => cost_to_big_o(*a).max(cost_to_big_o(*b)),
+        Cost::Max(chain) => chain.iter().map(|x| cost_to_big_o(*x)).fold(Cost::default(), |accum, x| accum.max(x)),
         Cost::BigO(_) => size,
     }
 }
@@ -508,7 +562,7 @@ mod tests {
 
     use super::Cost;
 
-    #[test]
+    /*#[test]
     fn concrete_add_chain_reduction() {
         let a = Cost::Scalar(1);
         let b = Cost::Scalar(1);
@@ -585,5 +639,5 @@ mod tests {
         let max = s1.clone().max(c_mul.clone());
 
         assert_eq!(max, c_mul)
-    }
+    }*/
 }
