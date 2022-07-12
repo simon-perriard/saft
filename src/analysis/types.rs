@@ -69,18 +69,22 @@ impl Type {
             TyKind::Ref(_, t, mutability) => {
                 Type::Ref(Box::new(Self::from_mir_ty(tcx, t)), mutability)
             }
-            TyKind::RawPtr(type_and_mut) => {
-                Type::RawPtr(Box::new(Self::from_mir_ty(tcx, type_and_mut.ty)), type_and_mut.mutbl)
-            }
+            TyKind::RawPtr(type_and_mut) => Type::RawPtr(
+                Box::new(Self::from_mir_ty(tcx, type_and_mut.ty)),
+                type_and_mut.mutbl,
+            ),
             TyKind::Tuple(_) => Type::Tuple(
                 ty.tuple_fields()
                     .iter()
                     .map(|ty| Self::from_mir_ty(tcx, ty))
                     .collect(),
             ),
-            TyKind::Opaque(t,_) => Type::Opaque(Box::new(Self::from_mir_ty(tcx, tcx.type_of(t)))),
+            TyKind::Opaque(t, _) => Type::Opaque(Box::new(Self::from_mir_ty(tcx, tcx.type_of(t)))),
             TyKind::Projection(p) => Type::Projection(p.item_def_id),
-            _ => {println!("{:?}", ty.kind());Type::Unsupported},
+            _ => {
+                println!("{:?}", ty.kind());
+                Type::Unsupported
+            }
         }
     }
 }
