@@ -17,7 +17,7 @@ pub(crate) fn cost_analysis(
     for dispatchable_def_id in pallet.dispatchables.keys() {
         let mir = tcx.optimized_mir(dispatchable_def_id);
         //rustc_middle::mir::pretty::write_mir_fn(tcx, &mir, &mut |_, _| Ok(()), &mut std::io::stdout());
-        
+
         // Detect loops in analyzed function
         if mir.is_cfg_cyclic() {
             println!(

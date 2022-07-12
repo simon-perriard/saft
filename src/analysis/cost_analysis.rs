@@ -1,10 +1,10 @@
-use super::cost_domain::{ExtendedCostAnalysisDomain, LocalInfo, FreshIdProvider};
+use super::cost_domain::{ExtendedCostAnalysisDomain, FreshIdProvider, LocalInfo};
 use super::pallet::Pallet;
 use super::specifications_v2::try_dispatch_to_specifications;
 use crate::analysis::events_variants_domain::EventVariantsDomain;
 use rustc_middle::mir::{
-    traversal::*, visit::*, BasicBlock, Body, Location, Operand, Place, Rvalue,
-    Statement, StatementKind, Terminator, TerminatorKind,
+    traversal::*, visit::*, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
+    StatementKind, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
@@ -424,13 +424,15 @@ where
 
         if place_from_type_info == self.state.get_local_info_for_place(place_to) {
             if let Some(place_from_type_info) = place_from_type_info {
-                self.state.forward_symbolic_attributes(place_to, place_from_type_info);
+                self.state
+                    .forward_symbolic_attributes(place_to, place_from_type_info);
             }
             return;
         }
 
         if let Some(place_from_type_info) = place_from_type_info {
-            self.state.set_local_info_for_place(place_to, place_from_type_info);
+            self.state
+                .set_local_info_for_place(place_to, place_from_type_info);
         }
     }
 }
