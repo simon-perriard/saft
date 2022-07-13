@@ -42,7 +42,6 @@ impl Variable {
 
 #[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Debug, Hash)]
 pub(crate) enum CostParameter {
-    //TODO: instead of String, have some Variable
     ValueOf(String),
     SizeOf(String),
     ReadsOf(String),
@@ -50,7 +49,6 @@ pub(crate) enum CostParameter {
     SizeDepositedOf(String),
     StepsOf(String),
     LengthOf(Variable),
-    //TODO: move Log to Cost
     Log(String),
 }
 
@@ -188,11 +186,11 @@ impl Cost {
 
     pub(crate) fn max(&self, rhs: Self) -> Self {
         if self.is_infinity() || rhs.is_infinity() {
-            return Self::Infinity;
+            Self::Infinity
         } else if self.is_zero() {
-            return rhs.clone();
+            rhs.clone()
         } else if rhs.is_zero() {
-            return self.clone();
+            self.clone()
         } else if let Self::Max(x) = self.clone() && let Self::Max(y) = rhs {
             let mut unique_elements = HashSet::new();
 
@@ -214,23 +212,23 @@ impl Cost {
                 unique_elements.insert(e.clone());
             }
 
-            return Self::Max(unique_elements.drain().collect::<Vec<_>>());
+            Self::Max(unique_elements.drain().collect::<Vec<_>>())
 
         } else if let Self::Max(x) = self.clone() {
             if x.contains(&rhs) {
-                return self.clone();
+                self.clone()
             } else {
                 let mut max = x;
                 max.push(rhs);
-                return Self::Max(max);
+                Self::Max(max)
             }
         } else if let Self::Max(y) = rhs.clone() {
             if y.contains(&rhs) {
-                return (*self).clone();
+                (*self).clone()
             } else {
                 let mut max = y;
                 max.push(self.clone());
-                return Self::Max(max);
+                Self::Max(max)
             }
         } else {
 
@@ -241,15 +239,15 @@ impl Cost {
             if let Some(greatest) = add_self.cmp_add_chain(&add_rhs) {
                 if let Cost::Add(chain) = greatest.clone() {
                     if chain.len() == 1 {
-                        return chain[0].clone();
+                        chain[0].clone()
                     } else {
-                        return greatest;
+                        greatest
                     }
                 } else {
                     unreachable!();
                 }
             } else {
-                return Self::Max(vec![(*self).clone(), rhs]);
+                Self::Max(vec![(*self).clone(), rhs])
             }
         }
     }
@@ -340,24 +338,24 @@ impl std::ops::Add for Cost {
 
     fn add(self, rhs: Self) -> Self::Output {
         if self.is_infinity() || rhs.is_infinity() {
-            return Self::Infinity;
+            Self::Infinity
         } else if self.is_zero() {
-            return rhs;
+            rhs
         } else if rhs.is_zero() {
-            return self;
+            self
         } else if let Self::Scalar(x) = self && let Self::Scalar(y) = rhs {
-            return Self::Scalar(x+y);
+            Self::Scalar(x+y)
         } else if let Self::ScalarMul(x, a) = self.clone() && *a == rhs {
-            return Self::ScalarMul(x+1, a);
+            Self::ScalarMul(x+1, a)
         } else if let Self::ScalarMul(x, a) = rhs.clone() && *a == self {
-            return Self::ScalarMul(x+1, a);
+            Self::ScalarMul(x+1, a)
         } else if let Self::ScalarMul(x, a) = self.clone() && let Self::ScalarMul(y, b) = rhs.clone() && *a == *b{
-            return Self::ScalarMul(x+y, a);
+            Self::ScalarMul(x+y, a)
         } else if self == rhs {
-            return Self::ScalarMul(2, Box::new(self));
+            Self::ScalarMul(2, Box::new(self))
         } else if let Self::Add(x) = self.clone() && let Self::Scalar(s) = rhs {
-            let mut vec = x.clone();
-            let scalar = vec.drain_filter(|c| matches!(c, Self::Scalar(_))).map(|x| if let Self::Scalar(x) = x {x} else {unreachable!()}).fold(0, |accum, x| accum+x);
+            let mut vec = x;
+            let scalar = vec.drain_filter(|c| matches!(c, Self::Scalar(_))).map(|x| if let Self::Scalar(x) = x {x} else {unreachable!()}).sum::<u64>();
 
             vec.push(Cost::Scalar(scalar+s));
             if vec.len() == 1 {
@@ -366,8 +364,8 @@ impl std::ops::Add for Cost {
                 Cost::Add(vec)
             }
         } else if let Self::Scalar(s) = self.clone() && let Self::Add(x) = rhs {
-            let mut vec = x.clone();
-            let scalar = vec.drain_filter(|c| matches!(c, Self::Scalar(_))).map(|x| if let Self::Scalar(x) = x {x} else {unreachable!()}).fold(0, |accum, x| accum+x);
+            let mut vec = x;
+            let scalar = vec.drain_filter(|c| matches!(c, Self::Scalar(_))).map(|x| if let Self::Scalar(x) = x {x} else {unreachable!()}).sum::<u64>();
 
             vec.push(Cost::Scalar(scalar+s));
             if vec.len() == 1 {

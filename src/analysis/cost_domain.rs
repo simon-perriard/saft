@@ -244,7 +244,7 @@ impl<'tcx> LocalInfo<'tcx> {
                 let length = if let Some(length) = size.val().try_to_machine_usize(tcx) {
                     Cost::Scalar(length)
                 } else {
-                    Variable::new(fresh_variable_provider.clone(), span)
+                    Variable::new(fresh_variable_provider, span)
                 };
                 LocalInfo {
                     length_of: Rc::new(RefCell::new(Some(length))),
@@ -326,7 +326,7 @@ impl<'tcx> LocalInfo<'tcx> {
     }
 
     pub fn set_length_of(&mut self, info: LocalInfo<'tcx>) {
-        self.length_of = info.length_of.clone();
+        self.length_of = info.length_of;
     }
 
     pub fn get_member(&self, index: usize) -> Option<&LocalInfo<'tcx>> {
@@ -344,7 +344,7 @@ impl<'tcx> LocalInfo<'tcx> {
 
     // Indices go from deeper to higher
     pub fn set_sub_member(&mut self, mut indices: Vec<usize>, type_info: LocalInfo<'tcx>) {
-        assert!(indices.len() >= 1);
+        assert!(!indices.is_empty());
         if indices.len() == 1 {
             self.set_member(indices[0], type_info);
         } else {
@@ -466,7 +466,7 @@ impl<'tcx> ExtendedCostAnalysisDomain<'tcx> {
 
     pub fn override_with_caller_type_context(
         &mut self,
-        caller_context_args_type_info: &Vec<LocalInfo<'tcx>>,
+        caller_context_args_type_info: &[LocalInfo<'tcx>],
     ) {
         let mut idx = Local::from_usize(1);
 
@@ -600,7 +600,6 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
         let mut length_of_changed = false;
 
         if self.length_of != other.length_of {
-            
             let self_length_of = self.length_of.borrow().clone();
             let other_length_of = other.length_of.borrow().clone();
 
@@ -625,15 +624,13 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
                             } else {
                                 panic!()
                             }
+                        } else if v1.id < v2.id {
+                            // v1 was declared before
+                            length_of_changed |= false;
                         } else {
-                            if v1.id < v2.id {
-                                // v1 was declared before
-                                length_of_changed |= false;
-                            } else {
-                                // v2 was declared before
-                                self.set_length_of(other.clone());
-                                length_of_changed |= true;
-                            }
+                            // v2 was declared before
+                            self.set_length_of(other.clone());
+                            length_of_changed |= true;
                         }
                     }
                     (Cost::Parameter(CostParameter::LengthOf(_)), _) => {
@@ -697,16 +694,16 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
         if self == other {
             // Same Type and members
             // but not necessarily same attributes
-            return false | length_of_changed | members_changed;
+            return length_of_changed | members_changed;
         }
 
         if self.get_ty() == other.get_ty() {
             // we have the same higher type info
             // join will depend on the fields
-            false || members_changed
+            members_changed
         } else if self.ty.len() > other.ty.len() {
             // we already have a more precise information
-            false || members_changed
+            members_changed
         } else if self.ty.len() < other.ty.len() {
             // other is more informative
             self.ty = other.ty.clone();
@@ -715,7 +712,7 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
             // This will be an uninteresting update like
             // T --> T as ...
             self.ty = other.ty.clone();
-            true || members_changed
+            true
         } else {
             //COND: self.ty.len() == other.ty.len() == 2
             // but final type is not the same

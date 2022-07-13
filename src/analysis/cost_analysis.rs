@@ -253,7 +253,6 @@ where
         target_mir: &Body<'tcx>,
         run_in_isolation: bool,
     ) -> ExtendedCostAnalysisDomain<'tcx> {
-
         // Analyze the target function
         let mut results = CostAnalysis::new_with_init(
             self.tcx,

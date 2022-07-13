@@ -212,22 +212,39 @@ pub(super) mod custom_specs {
             "<impl pallet::Pallet<T>>::ensure_sorted_and_insert" => {
                 let vec = callee_info.args_type_info[0].clone();
 
-                let steps_of_ensure_sorted_and_insert =
-                    Cost::BigO(Box::new((vec.length_of.borrow().clone().unwrap()).clone()));
+                let steps_of_ensure_sorted =
+                    Cost::BigO(Box::new(vec.length_of.borrow().clone().unwrap()));
+
+                let steps_of_insert = Cost::BigO(Box::new(vec.length_of.borrow().clone().unwrap()));
+
+                // Account for the loop + insert
+                let steps_of_ensure_sorted_and_insert = steps_of_ensure_sorted + steps_of_insert;
 
                 // Get vec and update length
-                let vec_place = callee_info.caller_args_operands.clone().unwrap()[0].place().unwrap();
+                let vec_place = callee_info.caller_args_operands.clone().unwrap()[0]
+                    .place()
+                    .unwrap();
                 assert!(vec_place.projection.is_empty());
                 transfer_function.state.locals_info[vec_place.local].length_of_add_one();
-                transfer_function.state.locals_info[vec_place.local].fill_with_inner_size(transfer_function.tcx);
+                transfer_function.state.locals_info[vec_place.local]
+                    .fill_with_inner_size(transfer_function.tcx);
 
                 // Propagate vec to the destination place
                 let dest_place = callee_info.destination.unwrap();
                 // dest place is a Result and we insert in the first member
-                assert!(transfer_function.state.locals_info[dest_place.local].get_members().len() == 2);
-                let vec_local_info = transfer_function.state.get_local_info_for_place(&vec_place).unwrap();
+                assert!(
+                    transfer_function.state.locals_info[dest_place.local]
+                        .get_members()
+                        .len()
+                        == 2
+                );
+                let vec_local_info = transfer_function
+                    .state
+                    .get_local_info_for_place(&vec_place)
+                    .unwrap();
                 transfer_function.state.locals_info[dest_place.local].set_member(0, vec_local_info);
-                transfer_function.state.locals_info[dest_place.local].fill_member_with_inner_size(0, transfer_function.tcx);
+                transfer_function.state.locals_info[dest_place.local]
+                    .fill_member_with_inner_size(0, transfer_function.tcx);
 
                 transfer_function
                     .state
@@ -677,11 +694,11 @@ pub(super) mod frame_support_specs {
                     let path = path.as_str();
 
                     match path {
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::append" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::contains_key" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::decode_len" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::drain" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::drain_prefix" => {todo!()}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::append" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::contains_key" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::decode_len" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::drain" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::drain_prefix" => {None}
                         "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::get" => {
                             // call "get" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#240
                             transfer_function
@@ -702,19 +719,19 @@ pub(super) mod frame_support_specs {
                                 .add_writes(storage_field.get_size(transfer_function.tcx));
                             Some((*transfer_function.state).clone())
                         }
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_from" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_key_prefix" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_key_prefix_from" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_keys" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_keys_from" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_prefix" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_prefix_from" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_prefix_values" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_values" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::migrate_keys" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::mutate" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::mutate_exists" => {todo!()}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_from" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_key_prefix" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_key_prefix_from" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_keys" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_keys_from" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_prefix" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_prefix_from" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_prefix_values" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::iter_values" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::migrate_keys" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::mutate" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::mutate_exists" => {None}
                         "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::remove" => {
                             // call "remove" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#248
                             transfer_function.state.add_step();
@@ -723,13 +740,13 @@ pub(super) mod frame_support_specs {
 
                             Some((*transfer_function.state).clone())
                         }
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::remove_all" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::remove_prefix" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::swap" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::take" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::translate" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::translate_values" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::try_append" => {todo!()}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::remove_all" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::remove_prefix" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::swap" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::take" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::translate" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::translate_values" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::try_append" => {None}
                         "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::try_get" => {
                             // call "try_get" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#244
                             transfer_function
@@ -741,8 +758,8 @@ pub(super) mod frame_support_specs {
 
                             Some((*transfer_function.state).clone())
                         }
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::try_mutate" => {todo!()}
-                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::try_mutate_exists" => {todo!()}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::try_mutate" => {None}
+                        "frame_support::pallet_prelude::StorageDoubleMap::<Prefix, Hasher1, Key1, Hasher2, Key2, Value, QueryKind, OnEmpty, MaxValues>::try_mutate_exists" => {None}
                         _ => None,
                     }
                 }
@@ -769,7 +786,7 @@ pub(super) mod frame_support_specs {
                     let path = path.as_str();
 
                     match path {
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::append" => {todo!()}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::append" => {None}
                         "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::contains_key" => {
                             // call "contains_key" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#236
                             transfer_function.state.add_step();
@@ -778,8 +795,8 @@ pub(super) mod frame_support_specs {
                                 .add_reads(storage_field.get_size(transfer_function.tcx));
                             Some((*transfer_function.state).clone())
                         }
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::decode_len" => {todo!()}
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::drain" => {todo!()}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::decode_len" => {None}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::drain" => {None}
                         "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::get" => {
                             // call "get" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#240
                             transfer_function
@@ -800,12 +817,12 @@ pub(super) mod frame_support_specs {
                                 .add_writes(storage_field.get_size(transfer_function.tcx));
                             Some((*transfer_function.state).clone())
                         }
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::iter" => {todo!()}
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::iter_from" => {todo!()}
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::iter_keys" => {todo!()}
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::iter_key_from" => {todo!()}
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::iter_values" => {todo!()}
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::migrate_key" => {todo!()}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::iter" => {None}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::iter_from" => {None}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::iter_keys" => {None}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::iter_key_from" => {None}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::iter_values" => {None}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::migrate_key" => {None}
                         "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::mutate" => {
                             // call "mutate" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#256
                             transfer_function
@@ -846,7 +863,7 @@ pub(super) mod frame_support_specs {
 
                             Some((*transfer_function.state).clone())
                         }
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::mutate_exists" => {todo!()}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::mutate_exists" => {None}
                         "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::remove" => {
                             // call "remove" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#248
                             transfer_function.state.add_step();
@@ -855,8 +872,8 @@ pub(super) mod frame_support_specs {
 
                             Some((*transfer_function.state).clone())
                         }
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::remove_all" => {todo!()}
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::swap" => {todo!()}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::remove_all" => {None}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::swap" => {None}
                         "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::take" => {
                             // call "take" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#303
                             transfer_function
@@ -872,9 +889,9 @@ pub(super) mod frame_support_specs {
 
                             Some((*transfer_function.state).clone())
                         }
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::translate" => {todo!()}
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::translate_values" => {todo!()}
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::try_append" => {todo!()}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::translate" => {None}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::translate_values" => {None}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::try_append" => {None}
                         "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::try_get" => {
                             // call "try_get" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#244
                             transfer_function
@@ -925,7 +942,7 @@ pub(super) mod frame_support_specs {
                                 .add_writes(storage_field.get_size(transfer_function.tcx));
                             Some((*transfer_function.state).clone())
                         }
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::exists" => {todo!()}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::exists" => {None}
                         _ => None,
                     }
                 }
@@ -952,8 +969,8 @@ pub(super) mod frame_support_specs {
                     let path = path.as_str();
 
                     match path {
-                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::append" => {todo!()}
-                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::decode_len" => {todo!()}
+                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::append" => {None}
+                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::decode_len" => {None}
                         "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::exists" => {
                             // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html#method.exists
                             transfer_function.state.add_step();
@@ -1053,9 +1070,9 @@ pub(super) mod frame_support_specs {
 
                             Some((*transfer_function.state).clone())
                         }
-                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::take" => {todo!()}
-                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::translate" => {todo!()}
-                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::try_append" => {todo!()}
+                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::take" => {None}
+                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::translate" => {None}
+                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::try_append" => {None}
                         "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::try_get" => {
                             // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html#method.try_get
                             transfer_function
@@ -1152,7 +1169,8 @@ pub(super) mod frame_support_specs {
                     let underlying = callee_info.args_type_info[0].clone();
                     transfer_function.state.locals_info[callee_info.destination.unwrap().local]
                         .set_local_info(underlying);
-                        transfer_function.state.locals_info[callee_info.destination.unwrap().local].fill_with_inner_size(transfer_function.tcx);
+                    transfer_function.state.locals_info[callee_info.destination.unwrap().local]
+                        .fill_with_inner_size(transfer_function.tcx);
 
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
@@ -1565,7 +1583,8 @@ pub(super) mod sp_runtime_specs {
                     let underlying = callee_info.args_type_info[0].clone();
                     transfer_function.state.locals_info[callee_info.destination.unwrap().local]
                         .set_local_info(underlying);
-                        transfer_function.state.locals_info[callee_info.destination.unwrap().local].fill_with_inner_size(transfer_function.tcx);
+                    transfer_function.state.locals_info[callee_info.destination.unwrap().local]
+                        .fill_with_inner_size(transfer_function.tcx);
 
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
@@ -1695,7 +1714,7 @@ pub(super) mod std_specs {
                     let cloned = callee_info.args_type_info[0].clone();
                     let length_of_cloned: Option<Cost> = cloned.length_of.borrow().clone();
 
-                    if let Some(_) = length_of_cloned {
+                    if length_of_cloned.is_some() {
                         transfer_function.state.locals_info
                             [callee_info.destination.unwrap().local]
                             .length_of = Rc::new(RefCell::new(length_of_cloned));
@@ -1764,7 +1783,8 @@ pub(super) mod std_specs {
                     let underlying = callee_info.args_type_info[0].clone();
                     transfer_function.state.locals_info[callee_info.destination.unwrap().local]
                         .set_local_info(underlying);
-                        transfer_function.state.locals_info[callee_info.destination.unwrap().local].fill_with_inner_size(transfer_function.tcx);
+                    transfer_function.state.locals_info[callee_info.destination.unwrap().local]
+                        .fill_with_inner_size(transfer_function.tcx);
 
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
@@ -1904,7 +1924,8 @@ pub(super) mod std_specs {
                     transfer_function
                         .state
                         .forward_symbolic_attributes(&callee_info.destination.unwrap(), underlying);
-                        transfer_function.state.locals_info[callee_info.destination.unwrap().local].fill_with_inner_size(transfer_function.tcx);
+                    transfer_function.state.locals_info[callee_info.destination.unwrap().local]
+                        .fill_with_inner_size(transfer_function.tcx);
 
                     // Iterator is managing a pointer to the vec/array/whatever
                     transfer_function.state.add_step();
@@ -2029,8 +2050,9 @@ pub(super) mod std_specs {
                     let underlying = callee_info.args_type_info[0].clone();
                     transfer_function.state.locals_info[callee_info.destination.unwrap().local]
                         .set_local_info(underlying.get_member(0).unwrap().clone());
-                    
-                    transfer_function.state.locals_info[callee_info.destination.unwrap().local].fill_with_inner_size(transfer_function.tcx);
+
+                    transfer_function.state.locals_info[callee_info.destination.unwrap().local]
+                        .fill_with_inner_size(transfer_function.tcx);
 
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
@@ -2072,7 +2094,6 @@ pub(super) mod std_specs {
                     Some((*transfer_function.state).clone())
                 }
                 "std::ops::Try::branch" => {
-
                     let branched_ty = callee_info.args_type_info[0].get_ty();
 
                     if branched_ty.is_adt() && let Some(adt_def) = branched_ty.ty_adt_def() &&  transfer_function.tcx.def_path_str(adt_def.did()) == "std::result::Result" {
@@ -2177,7 +2198,7 @@ pub(super) mod std_specs {
 
                     // Maybe grows allocated memory region
                     let steps_of_insert =
-                        Cost::BigO(Box::new((vec.length_of.borrow().clone().unwrap()).clone()));
+                        Cost::BigO(Box::new(vec.length_of.borrow().clone().unwrap()));
                     transfer_function.state.add_steps(steps_of_insert);
 
                     // Update length
@@ -2212,12 +2233,11 @@ pub(super) mod std_specs {
 
                     // Maybe grows allocated memory region
                     let steps_of_push = Cost::BigO(Box::new(
-                        (transfer_function.state.locals_info[vec_place.local]
+                        transfer_function.state.locals_info[vec_place.local]
                             .length_of
                             .borrow()
                             .clone()
-                            .unwrap())
-                        .clone(),
+                            .unwrap(),
                     ));
                     transfer_function.state.add_steps(steps_of_push);
 
