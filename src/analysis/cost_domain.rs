@@ -121,14 +121,6 @@ impl<'tcx> LocalsInfo<'tcx> {
     }
 }
 
-// TODO: have an enum with 2 variants
-// LocalInfo and pointer to something that has LocalInfo
-
-/*pub enum LocalInfo {
-    Value{stuff in LocalInfo},
-    Pointer{Local} -> lookup in map
-}*/
-
 #[derive(Clone, Debug, Eq)]
 pub(crate) struct LocalInfo<'tcx> {
     pub length_of: Rc<RefCell<Option<Cost>>>,
@@ -162,16 +154,18 @@ impl<'tcx> LocalInfo<'tcx> {
     }
 
     pub fn fill_with_inner_size(&mut self, tcx: TyCtxt<'tcx>) {
-        let path = tcx.def_path_str(self.get_ty().ty_adt_def().unwrap().did());
-        let path = path.as_str();
-        match path {
-            "std::vec::Vec"
-            | "frame_support::BoundedVec"
-            | "frame_support::traits::WrapperKeepOpaque" => {
-                self.members[0].length_of = self.length_of.clone();
-                self.members[0].fill_with_inner_size(tcx);
+        if self.get_ty().is_adt() {
+            let path = tcx.def_path_str(self.get_ty().ty_adt_def().unwrap().did());
+            let path = path.as_str();
+            match path {
+                "std::vec::Vec"
+                | "frame_support::BoundedVec"
+                | "frame_support::traits::WrapperKeepOpaque" => {
+                    self.members[0].length_of = self.length_of.clone();
+                    self.members[0].fill_with_inner_size(tcx);
+                }
+                _ => (),
             }
-            _ => (),
         }
     }
 
@@ -235,7 +229,6 @@ impl<'tcx> LocalInfo<'tcx> {
                     let path = tcx.def_path_str(adt_def.did());
                     if path == "std::vec::Vec"
                         || path == "frame_support::BoundedVec"
-                        || path == "alloc::raw_vec::RawVec"
                         || path == "frame_support::traits::WrapperKeepOpaque"
                     {
                         local_info = local_info
@@ -347,6 +340,20 @@ impl<'tcx> LocalInfo<'tcx> {
     pub fn set_member(&mut self, index: usize, type_info: LocalInfo<'tcx>) {
         self.members.remove(index);
         self.members.insert(index, type_info);
+    }
+
+    // Indices go from deeper to higher
+    pub fn set_sub_member(&mut self, mut indices: Vec<usize>, type_info: LocalInfo<'tcx>) {
+        assert!(indices.len() >= 1);
+        if indices.len() == 1 {
+            self.set_member(indices[0], type_info);
+        } else {
+            self.members[indices.pop().unwrap()].set_sub_member(indices, type_info);
+        }
+    }
+
+    pub fn fill_member_with_inner_size(&mut self, index: usize, tcx: TyCtxt<'tcx>) {
+        self.members[index].fill_with_inner_size(tcx);
     }
 
     pub fn get_size(&self, tcx: TyCtxt<'tcx>) -> Cost {
@@ -593,6 +600,7 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
         let mut length_of_changed = false;
 
         if self.length_of != other.length_of {
+            
             let self_length_of = self.length_of.borrow().clone();
             let other_length_of = other.length_of.borrow().clone();
 
@@ -606,14 +614,7 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
                 match (self_length_of.clone(), other_length_of.clone()) {
                     (Cost::Parameter(CostParameter::LengthOf(v1)), Cost::Parameter(CostParameter::LengthOf(v2))) => {
                         //TODO: take MAX
-                        if v1.span < v2.span {
-                            // v1 was declared before
-                            length_of_changed |= false;
-                        } else if v1.span > v2.span {
-                            // v2 was declared before
-                            self.set_length_of(other.clone());
-                            length_of_changed |= true;
-                        } else {
+                        if v1.span == v2.span {
                             // declared at the same span, typically a Vec, which has a RawVec inside,
                             // we keep track of the more general one, which is declared second (has higher id)
                             if v1.id < v2.id {
@@ -623,6 +624,15 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
                                 length_of_changed |= false;
                             } else {
                                 panic!()
+                            }
+                        } else {
+                            if v1.id < v2.id {
+                                // v1 was declared before
+                                length_of_changed |= false;
+                            } else {
+                                // v2 was declared before
+                                self.set_length_of(other.clone());
+                                length_of_changed |= true;
                             }
                         }
                     }
@@ -651,15 +661,9 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
             }
         }
 
-        if self == other {
-            // Same Type and members
-            // but not necessarily same attributes
-            return false | length_of_changed;
-        }
-
         // Either Type or members differ
 
-        let mut members_changed = false | length_of_changed;
+        let mut members_changed = false;
 
         if self.members.len() == other.members.len() {
             for (self_field, other_field) in self.members.iter_mut().zip(other.members.clone()) {
@@ -688,6 +692,12 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
                 self.members = other.members.clone();
                 return true;
             }
+        }
+
+        if self == other {
+            // Same Type and members
+            // but not necessarily same attributes
+            return false | length_of_changed | members_changed;
         }
 
         if self.get_ty() == other.get_ty() {

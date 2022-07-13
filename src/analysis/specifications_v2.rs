@@ -215,6 +215,20 @@ pub(super) mod custom_specs {
                 let steps_of_ensure_sorted_and_insert =
                     Cost::BigO(Box::new((vec.length_of.borrow().clone().unwrap()).clone()));
 
+                // Get vec and update length
+                let vec_place = callee_info.caller_args_operands.clone().unwrap()[0].place().unwrap();
+                assert!(vec_place.projection.is_empty());
+                transfer_function.state.locals_info[vec_place.local].length_of_add_one();
+                transfer_function.state.locals_info[vec_place.local].fill_with_inner_size(transfer_function.tcx);
+
+                // Propagate vec to the destination place
+                let dest_place = callee_info.destination.unwrap();
+                // dest place is a Result and we insert in the first member
+                assert!(transfer_function.state.locals_info[dest_place.local].get_members().len() == 2);
+                let vec_local_info = transfer_function.state.get_local_info_for_place(&vec_place).unwrap();
+                transfer_function.state.locals_info[dest_place.local].set_member(0, vec_local_info);
+                transfer_function.state.locals_info[dest_place.local].fill_member_with_inner_size(0, transfer_function.tcx);
+
                 transfer_function
                     .state
                     .add_steps(steps_of_ensure_sorted_and_insert);
@@ -1138,6 +1152,7 @@ pub(super) mod frame_support_specs {
                     let underlying = callee_info.args_type_info[0].clone();
                     transfer_function.state.locals_info[callee_info.destination.unwrap().local]
                         .set_local_info(underlying);
+                        transfer_function.state.locals_info[callee_info.destination.unwrap().local].fill_with_inner_size(transfer_function.tcx);
 
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
@@ -1550,6 +1565,7 @@ pub(super) mod sp_runtime_specs {
                     let underlying = callee_info.args_type_info[0].clone();
                     transfer_function.state.locals_info[callee_info.destination.unwrap().local]
                         .set_local_info(underlying);
+                        transfer_function.state.locals_info[callee_info.destination.unwrap().local].fill_with_inner_size(transfer_function.tcx);
 
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
@@ -1748,6 +1764,7 @@ pub(super) mod std_specs {
                     let underlying = callee_info.args_type_info[0].clone();
                     transfer_function.state.locals_info[callee_info.destination.unwrap().local]
                         .set_local_info(underlying);
+                        transfer_function.state.locals_info[callee_info.destination.unwrap().local].fill_with_inner_size(transfer_function.tcx);
 
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
@@ -1887,6 +1904,7 @@ pub(super) mod std_specs {
                     transfer_function
                         .state
                         .forward_symbolic_attributes(&callee_info.destination.unwrap(), underlying);
+                        transfer_function.state.locals_info[callee_info.destination.unwrap().local].fill_with_inner_size(transfer_function.tcx);
 
                     // Iterator is managing a pointer to the vec/array/whatever
                     transfer_function.state.add_step();
@@ -2011,6 +2029,8 @@ pub(super) mod std_specs {
                     let underlying = callee_info.args_type_info[0].clone();
                     transfer_function.state.locals_info[callee_info.destination.unwrap().local]
                         .set_local_info(underlying.get_member(0).unwrap().clone());
+                    
+                    transfer_function.state.locals_info[callee_info.destination.unwrap().local].fill_with_inner_size(transfer_function.tcx);
 
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
@@ -2052,7 +2072,17 @@ pub(super) mod std_specs {
                     Some((*transfer_function.state).clone())
                 }
                 "std::ops::Try::branch" => {
+
+                    let branched_ty = callee_info.args_type_info[0].get_ty();
+
+                    if branched_ty.is_adt() && let Some(adt_def) = branched_ty.ty_adt_def() &&  transfer_function.tcx.def_path_str(adt_def.did()) == "std::result::Result" {
+                        // Replace the local info of ControlFlow::Continue branch with the one of Result::Ok
+                        assert!(callee_info.destination.unwrap().projection.is_empty());
+                        transfer_function.state.locals_info[callee_info.destination.unwrap().local].set_sub_member(vec![0,0], callee_info.args_type_info[0].get_member(0).unwrap().clone());
+                    }
+
                     transfer_function.state.add_step();
+
                     Some((*transfer_function.state).clone())
                 }
                 _ => None,
@@ -2196,7 +2226,6 @@ pub(super) mod std_specs {
                     transfer_function.state.locals_info[vec_place.local].length_of_add_one();
                     transfer_function.state.locals_info[vec_place.local]
                         .fill_with_inner_size(transfer_function.tcx);
-
                     Some((*transfer_function.state).clone())
                 }
                 _ => None,

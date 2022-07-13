@@ -51,9 +51,6 @@ pub(crate) struct CostAnalysis<'tcx, 'inter> {
     fresh_var_id: FreshIdProvider,
 }
 
-// TODO: for every type that has an operation that updates the concrete size,
-// we need to have a function to update the length of the LocalInfo
-
 impl<'tcx, 'inter, 'transformer> CostAnalysis<'tcx, 'inter> {
     pub(crate) fn new(
         tcx: TyCtxt<'tcx>,
@@ -256,6 +253,7 @@ where
         target_mir: &Body<'tcx>,
         run_in_isolation: bool,
     ) -> ExtendedCostAnalysisDomain<'tcx> {
+
         // Analyze the target function
         let mut results = CostAnalysis::new_with_init(
             self.tcx,
@@ -299,6 +297,7 @@ where
                 let callee_return_place = Place::return_place();
                 let returned_local_info = end_state.get_local_info_for_place(&callee_return_place).unwrap();
                 self.state.locals_info[dest_place.local].set_length_of(returned_local_info);
+                self.state.locals_info[dest_place.local].fill_with_inner_size(self.tcx);
             }
         }
 
@@ -426,6 +425,10 @@ where
             if let Some(place_from_type_info) = place_from_type_info {
                 self.state
                     .forward_symbolic_attributes(place_to, place_from_type_info);
+
+                if place_to.projection.is_empty() {
+                    self.state.locals_info[place_to.local].fill_with_inner_size(self.tcx);
+                }
             }
             return;
         }
