@@ -32,10 +32,7 @@ pub(crate) fn cost_analysis(
             continue;
         }
         println!("{}", tcx.def_path_str(*dispatchable_def_id));
-        if !tcx
-            .def_path_str(*dispatchable_def_id)
-            .contains("::as_multi")
-        {
+        if tcx.def_path_str(*dispatchable_def_id) != "pallet::Pallet::<T>::vest" {
             //continue;
         }
 

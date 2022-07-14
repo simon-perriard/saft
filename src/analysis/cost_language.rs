@@ -46,7 +46,7 @@ impl PartialEq for Cost {
                 });
 
                 l0_mut.is_empty() && r0_mut.is_empty()
-            },
+            }
             (Self::ScalarMul(l0, l1), Self::ScalarMul(r0, r1)) => l0 == r0 && l1 == r1,
             (Self::ParameterMul(l0, l1), Self::ParameterMul(r0, r1)) => l0 == r0 && l1 == r1,
             (Self::Max(l0), Self::Max(r0)) => {
@@ -73,7 +73,7 @@ impl PartialEq for Cost {
                 });
 
                 l0_mut.is_empty() && r0_mut.is_empty()
-            },
+            }
             (Self::BigO(l0), Self::BigO(r0)) => l0 == r0,
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
@@ -149,6 +149,70 @@ impl Default for Cost {
 }
 
 impl Cost {
+    fn flatten_max(&self) -> Vec<Self> {
+        let mut flat = Vec::new();
+
+        match self {
+            Self::Max(chain) => {
+                for e in chain.iter() {
+                    let e_flat = e.flatten_max();
+
+                    for c in e_flat.iter() {
+                        if !flat.contains(c) {
+                            flat.push(c.clone());
+                        }
+                    }
+                }
+            }
+            _ => flat.push(self.clone()),
+        }
+
+        flat
+    }
+
+    fn recursive_search(&self, looking_for: Self) -> bool {
+        match self {
+            Cost::Infinity => *self == looking_for,
+            Cost::Scalar(_) => *self == looking_for,
+            Cost::Parameter(_) => *self == looking_for,
+            Cost::Add(chain) => {
+                if let Self::Add(_) = looking_for {
+                    *self == looking_for
+                } else {
+                    chain
+                        .iter()
+                        .map(|c| c.recursive_search(looking_for.clone()))
+                        .fold(false, |accum, r| accum | r)
+                }
+            }
+            Cost::ScalarMul(_, _) => {
+                if let Self::ScalarMul(_, _) = looking_for {
+                    *self == looking_for
+                } else {
+                    false
+                }
+            }
+            Cost::ParameterMul(_, _) => {
+                if let Self::ParameterMul(_, _) = looking_for {
+                    *self == looking_for
+                } else {
+                    false
+                }
+            }
+            Cost::Max(chain) => {
+                if let Self::Max(_) = looking_for {
+                    *self == looking_for
+                } else {
+                    chain
+                        .iter()
+                        .map(|c| c.recursive_search(looking_for.clone()))
+                        .fold(false, |accum, r| accum | r)
+                }
+            }
+            Cost::BigO(c) => c.recursive_search(looking_for),
+        }
+    }
+
     pub(crate) fn reduce_expr(&self) -> Self {
         //TODO: Extract common Max and reduce more Max
         match self {
@@ -162,10 +226,10 @@ impl Cost {
                 .unwrap(),
             Self::ScalarMul(a, b) => Self::ScalarMul(*a, Box::new(b.reduce_expr())),
             Self::ParameterMul(a, b) => Self::ParameterMul((*a).clone(), Box::new(b.reduce_expr())),
-            Self::Max(chain) => {
-                //return (*self).clone();
+            Self::Max(_) => {
                 // Extract common elements
-                let mut reduced = chain
+                let mut reduced = self
+                    .flatten_max()
                     .iter()
                     .map(|expr| expr.reduce_expr().flatten_add_chain())
                     .collect::<Vec<Vec<Cost>>>();
@@ -201,14 +265,54 @@ impl Cost {
                     .collect::<Vec<Cost>>();
 
                 if commons.is_empty() {
-                    return (*self).clone();
+                    // Check whether elements are recursively present in the Max epxression
+                    let mut vec_check_rec = reduced_tail.clone();
+                    vec_check_rec.push(reduced_head);
+
+                    let mut to_remove = Vec::new();
+
+                    for (idx_outer, looking_for) in vec_check_rec.clone().iter().enumerate() {
+                        for (idx_inner, try_find_in) in vec_check_rec.clone().iter().enumerate() {
+                            if idx_outer == idx_inner {
+                                continue;
+                            } else if try_find_in
+                                .iter()
+                                .map(|c| c.recursive_search(if looking_for.len() > 1 {Self::Add(looking_for.clone())} else {looking_for[0].clone()} ))
+                                .fold(false, |accum, x| accum | x)
+                            {
+                                to_remove.push(idx_outer);
+                            }
+                        }
+                    }
+
+                    if to_remove.is_empty() {
+                        return (*self).clone();
+                    } else {
+                        to_remove.reverse();
+
+                        for idx_to_remove in to_remove.iter() {
+                            vec_check_rec.remove(*idx_to_remove);
+                        }
+
+                        return vec_check_rec
+                            .drain(0..)
+                            .map(|mut max_monomial| {
+                                max_monomial
+                                    .drain(0..)
+                                    .fold(Cost::default(), |accum, expr| accum + expr)
+                            })
+                            .fold(Cost::default(), |accum, max_monomial| {
+                                accum.max(max_monomial)
+                            }).reduce_expr();
+                    }
                 }
 
                 // Reconstruct the reduced expression
                 // Rebuild the common add chain and add again the Maxs
                 let common_add_chain = commons
                     .drain(0..)
-                    .reduce(|accum, expr| accum + expr).unwrap();
+                    .reduce(|accum, expr| accum + expr)
+                    .unwrap();
 
                 reduced_tail.push(reduced_head);
 
@@ -329,7 +433,7 @@ impl Cost {
             rhs.clone()
         } else if rhs.is_zero() {
             self.clone()
-        } else if let Self::Max(x) = self.reduce_expr() && let Self::Max(y) = rhs.reduce_expr() {
+        } else if let Self::Max(x) = self.clone() && let Self::Max(y) = rhs.clone() {
             let mut unique_elements = HashSet::new();
 
             for e in x.iter() {
@@ -350,23 +454,101 @@ impl Cost {
                 unique_elements.insert(e.clone());
             }
 
-            Self::Max(unique_elements.drain().collect::<Vec<_>>())
+            Self::Max(unique_elements.drain().collect::<Vec<_>>()).reduce_expr()
 
-        } else if let Self::Max(x) = self.reduce_expr() {
+        } else if let Self::Max(x) = self.clone() {
             if x.contains(&rhs) {
                 self.clone()
             } else {
                 let mut max = x;
-                max.push(rhs);
-                Self::Max(max).reduce_expr()
+                // Remove elements that are subvec of rhs, and check whether rhs is a subvec of an element in the max
+                let mut is_rhs_sub_vec = false;
+
+                let wrapped_rhs = Cost::Add(vec![rhs.clone()]);
+
+                let removed = max.drain_filter(|c| {
+                    let wrapped_c = Cost::Add(vec![c.clone()]);
+
+                    let cmp = wrapped_c.cmp_add_chain(&wrapped_rhs);
+
+                    if let Some(r) = cmp.clone() && r == wrapped_c {
+                        // self is a subset of wrapped_c
+                        is_rhs_sub_vec = true;
+                        false
+                    } else if let Some(r) = cmp && r == wrapped_rhs {
+                        true
+                    } else {
+                        false
+                    }
+
+                }).collect::<Vec<_>>();
+
+                // If elements were removed, self is bigger and we push add it to the max
+                if !removed.is_empty() {
+                    if max.is_empty() {
+                        self.clone().reduce_expr()
+                    } else {
+                        max.push(rhs);
+                        Self::Max(max).reduce_expr()
+                    }
+                } else {
+                    // No element were removed so either we were not able to compare, or self is smaller than an element
+                    // In the first case we add it to the max
+                    // In the second case we do not
+                    if !is_rhs_sub_vec {
+                        max.push(rhs);
+                        Self::Max(max).reduce_expr()
+                    } else {
+                        self.clone().reduce_expr()
+                    }
+                }
             }
-        } else if let Self::Max(y) = rhs.reduce_expr() {
+        } else if let Self::Max(y) = rhs.clone() {
             if y.contains(&rhs) {
                 (*self).clone()
             } else {
                 let mut max = y;
-                max.push(self.clone());
-                Self::Max(max).reduce_expr()
+                // Remove elements that are subvec of self, and check whether self is a subvec of an element in the max
+                let mut is_self_sub_vec = false;
+
+                let wrapped_rhs = Cost::Add(vec![self.clone()]);
+
+                let removed = max.drain_filter(|c| {
+                    let wrapped_c = Cost::Add(vec![c.clone()]);
+
+                    let cmp = wrapped_c.cmp_add_chain(&wrapped_rhs);
+
+                    if let Some(r) = cmp.clone() && r == wrapped_c {
+                        // self is a subset of wrapped_c
+                        is_self_sub_vec = true;
+                        false
+                    } else if let Some(r) = cmp && r == wrapped_rhs {
+                        true
+                    } else {
+                        false
+                    }
+
+                }).collect::<Vec<_>>();
+
+                // If elements were removed, self is bigger and we push add it to the max
+                if !removed.is_empty() {
+                    if max.is_empty() {
+                        self.clone().reduce_expr()
+                    } else {
+                        max.push(self.clone());
+                        Self::Max(max).reduce_expr()
+                    }
+                } else {
+                    // No element were removed so either we were not able to compare, or self is smaller than an element
+                    // In the first case we add it to the max
+                    // In the second case we do not
+                    if !is_self_sub_vec {
+                        max.push(self.clone());
+                        Self::Max(max).reduce_expr()
+                    } else {
+                        self.clone().reduce_expr()
+                    }
+                }
             }
         } else {
 
@@ -385,7 +567,7 @@ impl Cost {
                     unreachable!();
                 }
             } else {
-                Self::Max(vec![(*self).reduce_expr(), rhs.reduce_expr()]).reduce_expr()
+                Self::Max(vec![self.clone(), rhs.clone()]).reduce_expr()
             }
         }
     }
@@ -650,6 +832,18 @@ mod tests {
         let a = Cost::Scalar(1);
         let b = Cost::Parameter(CostParameter::SizeOf("sym".to_string()));
 
-        assert_eq!(b.clone() + a.clone(), (a.clone() + b.clone()).max(b.clone()));
+        assert_eq!(
+            b.clone() + a.clone(),
+            (a.clone() + b.clone()).max(b.clone())
+        );
+    }
+
+    #[test]
+    fn recursive_search_1() {
+        let a = Cost::ParameterMul(CostParameter::ValueOf("MaxVestingSchedulesGet::get()".to_string()), Box::new(Cost::Parameter(CostParameter::SizeOf("VestingInfo".to_string()))));
+
+        let b = (a.clone().max(Cost::Scalar(1))) + (Cost::Parameter(CostParameter::WritesOf("Currency::set_lock".to_string())).max(Cost::Parameter(CostParameter::WritesOf("Currency::remove_lock".to_string()))));
+
+        assert!(b.recursive_search(a))
     }
 }
