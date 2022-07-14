@@ -34,7 +34,7 @@ pub(crate) fn cost_analysis(
         println!("{}", tcx.def_path_str(*dispatchable_def_id));
         if !tcx
             .def_path_str(*dispatchable_def_id)
-            .contains("cancel_as_multi")
+            .contains("::as_multi")
         {
             //continue;
         }
