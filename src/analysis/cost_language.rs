@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::cost_domain::FreshIdProvider;
 
-#[derive(Eq, PartialEq, Clone, Debug, Hash)]
+#[derive(Eq, Clone, Debug, Hash)]
 pub(crate) enum Cost {
     Infinity,
     Scalar(u64),
@@ -15,6 +15,69 @@ pub(crate) enum Cost {
     ParameterMul(CostParameter, Box<Cost>),
     Max(Vec<Cost>),
     BigO(Box<Cost>),
+}
+
+impl PartialEq for Cost {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Scalar(l0), Self::Scalar(r0)) => l0 == r0,
+            (Self::Parameter(l0), Self::Parameter(r0)) => l0 == r0,
+            (Self::Add(l0), Self::Add(r0)) => {
+                let mut l0_mut = l0.clone();
+                let mut r0_mut = r0.clone();
+
+                l0_mut.drain_filter(|c| {
+                    if r0_mut.contains(c) {
+                        let mut idx_to_remove = 0;
+
+                        for (idx, e) in r0_mut.iter().enumerate() {
+                            if e == c {
+                                idx_to_remove = idx;
+                                break;
+                            }
+                        }
+
+                        r0_mut.remove(idx_to_remove);
+
+                        true
+                    } else {
+                        false
+                    }
+                });
+
+                l0_mut.is_empty() && r0_mut.is_empty()
+            },
+            (Self::ScalarMul(l0, l1), Self::ScalarMul(r0, r1)) => l0 == r0 && l1 == r1,
+            (Self::ParameterMul(l0, l1), Self::ParameterMul(r0, r1)) => l0 == r0 && l1 == r1,
+            (Self::Max(l0), Self::Max(r0)) => {
+                let mut l0_mut = l0.clone();
+                let mut r0_mut = r0.clone();
+
+                l0_mut.drain_filter(|c| {
+                    if r0_mut.contains(c) {
+                        let mut idx_to_remove = 0;
+
+                        for (idx, e) in r0_mut.iter().enumerate() {
+                            if e == c {
+                                idx_to_remove = idx;
+                                break;
+                            }
+                        }
+
+                        r0_mut.remove(idx_to_remove);
+
+                        true
+                    } else {
+                        false
+                    }
+                });
+
+                l0_mut.is_empty() && r0_mut.is_empty()
+            },
+            (Self::BigO(l0), Self::BigO(r0)) => l0 == r0,
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
 }
 
 #[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Debug, Hash)]
@@ -88,7 +151,82 @@ impl Default for Cost {
 impl Cost {
     pub(crate) fn reduce_expr(&self) -> Self {
         //TODO: Extract common Max and reduce more Max
-        self.clone()
+        match self {
+            Self::Infinity => Self::Infinity,
+            Self::Scalar(_) => (*self).clone(),
+            Self::Parameter(_) => (*self).clone(),
+            Self::Add(chain) => chain
+                .iter()
+                .map(|expr| expr.reduce_expr())
+                .reduce(|accum, expr| accum + expr)
+                .unwrap(),
+            Self::ScalarMul(a, b) => Self::ScalarMul(*a, Box::new(b.reduce_expr())),
+            Self::ParameterMul(a, b) => Self::ParameterMul((*a).clone(), Box::new(b.reduce_expr())),
+            Self::Max(chain) => {
+                //return (*self).clone();
+                // Extract common elements
+                let mut reduced = chain
+                    .iter()
+                    .map(|expr| expr.reduce_expr().flatten_add_chain())
+                    .collect::<Vec<Vec<Cost>>>();
+
+                let mut reduced_head = reduced.remove(0);
+                let mut reduced_tail = reduced;
+
+                let mut commons = reduced_head
+                    .drain_filter(|expr| {
+                        let mut expr_idx = Vec::new();
+
+                        for sub_vec in reduced_tail.iter() {
+                            for (idx, try_match_expr) in sub_vec.iter().enumerate() {
+                                if expr == try_match_expr {
+                                    expr_idx.push(idx);
+                                }
+                            }
+                        }
+
+                        if expr_idx.len() == reduced_tail.len() {
+                            // We found the expr in every element
+                            // Do a round to remove it in the tail sub vectors
+
+                            for (sub_vec, idx_to_remove) in reduced_tail.iter_mut().zip(expr_idx) {
+                                sub_vec.remove(idx_to_remove);
+                            }
+
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .collect::<Vec<Cost>>();
+
+                if commons.is_empty() {
+                    return (*self).clone();
+                }
+
+                // Reconstruct the reduced expression
+                // Rebuild the common add chain and add again the Maxs
+                let common_add_chain = commons
+                    .drain(0..)
+                    .reduce(|accum, expr| accum + expr).unwrap();
+
+                reduced_tail.push(reduced_head);
+
+                let new_reduced_max = reduced_tail
+                    .drain(0..)
+                    .map(|mut max_monomial| {
+                        max_monomial
+                            .drain(0..)
+                            .fold(Cost::default(), |accum, expr| accum + expr)
+                    })
+                    .fold(Cost::default(), |accum, max_monomial| {
+                        accum.max(max_monomial)
+                    });
+
+                common_add_chain + new_reduced_max
+            }
+            Self::BigO(_) => (*self).clone(),
+        }
     }
 
     pub(crate) fn add_one(&self) -> Self {
@@ -191,7 +329,7 @@ impl Cost {
             rhs.clone()
         } else if rhs.is_zero() {
             self.clone()
-        } else if let Self::Max(x) = self.clone() && let Self::Max(y) = rhs {
+        } else if let Self::Max(x) = self.reduce_expr() && let Self::Max(y) = rhs.reduce_expr() {
             let mut unique_elements = HashSet::new();
 
             for e in x.iter() {
@@ -214,40 +352,40 @@ impl Cost {
 
             Self::Max(unique_elements.drain().collect::<Vec<_>>())
 
-        } else if let Self::Max(x) = self.clone() {
+        } else if let Self::Max(x) = self.reduce_expr() {
             if x.contains(&rhs) {
                 self.clone()
             } else {
                 let mut max = x;
                 max.push(rhs);
-                Self::Max(max)
+                Self::Max(max).reduce_expr()
             }
-        } else if let Self::Max(y) = rhs.clone() {
+        } else if let Self::Max(y) = rhs.reduce_expr() {
             if y.contains(&rhs) {
                 (*self).clone()
             } else {
                 let mut max = y;
                 max.push(self.clone());
-                Self::Max(max)
+                Self::Max(max).reduce_expr()
             }
         } else {
 
-            let add_self = Cost::Add(vec![self.clone()]);
-            let add_rhs = Cost::Add(vec![rhs.clone()]);
+            let add_self = Cost::Add(vec![self.reduce_expr()]);
+            let add_rhs = Cost::Add(vec![rhs.reduce_expr()]);
 
             // Let's try to already apply some simple optimizations to the max
             if let Some(greatest) = add_self.cmp_add_chain(&add_rhs) {
                 if let Cost::Add(chain) = greatest.clone() {
                     if chain.len() == 1 {
-                        chain[0].clone()
+                        chain[0].reduce_expr()
                     } else {
-                        greatest
+                        greatest.reduce_expr()
                     }
                 } else {
                     unreachable!();
                 }
             } else {
-                Self::Max(vec![(*self).clone(), rhs])
+                Self::Max(vec![(*self).reduce_expr(), rhs.reduce_expr()]).reduce_expr()
             }
         }
     }
@@ -505,5 +643,13 @@ mod tests {
         let c = Cost::Scalar(1);
 
         assert_eq!(a + b.clone() + c, Cost::Add(vec![b, Cost::Scalar(2)]));
+    }
+
+    #[test]
+    fn simple_max_reduction() {
+        let a = Cost::Scalar(1);
+        let b = Cost::Parameter(CostParameter::SizeOf("sym".to_string()));
+
+        assert_eq!(b.clone() + a.clone(), (a.clone() + b.clone()).max(b.clone()));
     }
 }

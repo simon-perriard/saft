@@ -1309,7 +1309,7 @@ pub(super) mod frame_system_specs {
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 } else {
-                    unimplemented!("{}", path)
+                    None
                 }
             }
         }
@@ -1457,7 +1457,7 @@ pub(super) mod parity_scale_codec_specs {
                 ));
                 Some((*transfer_function.state).clone())
             }
-            _ => unimplemented!("{}", path),
+            _ => None,
         }
     }
 }

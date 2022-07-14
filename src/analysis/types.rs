@@ -28,8 +28,6 @@ pub(crate) enum Type {
 pub(crate) enum Adt {
     Unknown(DefId),
     Option(Box<Type>),
-
-    // add something to track symbolic size
     BoundedVec(Box<Type>, Box<Type>),
 }
 
@@ -142,8 +140,8 @@ impl HasSize for Type {
                         },
                         _ => unreachable!(),
                     };
-                    //TODO: check that the size of 1 element is bounded
-                    //assert!();
+                    // We check that the size of 1 element is bounded
+                    assert!(!ty.get_size(tcx).is_infinity());
                     max_size.symbolic_mul(ty.get_size(tcx))
                 }
             },

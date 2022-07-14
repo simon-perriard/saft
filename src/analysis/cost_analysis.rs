@@ -221,7 +221,6 @@ where
             for arg in callee_info.args_type_info.iter() {
                 println!("\t\t{:#?}", arg);
             }
-
             *self.analysis_success_state.borrow_mut() = AnalysisState::Failure;
             (*self.state).clone()
         }

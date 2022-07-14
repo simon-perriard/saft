@@ -11,6 +11,7 @@ extract=("balances" "identity" "multisig" "utility" "vesting")
 
 for pallet in *
 do
+    #if [[ ! " ${no_extract[*]} " =~ "${pallet}" ]]
     if [[ " ${extract[*]} " =~ "${pallet}" ]]
     then
         cd $pallet

@@ -124,7 +124,6 @@ impl<'tcx> LocalsInfo<'tcx> {
 #[derive(Clone, Debug, Eq)]
 pub(crate) struct LocalInfo<'tcx> {
     pub length_of: Rc<RefCell<Option<Cost>>>,
-    // TODO: simplify this with only Ty, join on longest common prefix
     ty: Vec<Ty<'tcx>>,
     members: Vec<LocalInfo<'tcx>>,
 }
@@ -572,9 +571,9 @@ impl fmt::Display for CostDomain {
         write!(
             f,
             "== bytes read ==\n{}\n\n== bytes written ==\n{}\n\n== bytes deposited ==\n{}\n\n== steps executed ==\n{}\n",
-            self.bytes_read,
-            self.bytes_written,
-            self.bytes_deposited,
+            self.bytes_read.reduce_expr(),
+            self.bytes_written.reduce_expr(),
+            self.bytes_deposited.reduce_expr(),
             self.steps_executed.reduce_expr()
         )
     }
