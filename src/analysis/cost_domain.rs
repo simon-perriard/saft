@@ -609,41 +609,10 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
                 self.set_length_of(other.clone());
                 length_of_changed |= true;
             } else if let Some(self_length_of) = self_length_of.clone() && let Some(other_length_of) = other_length_of.clone() {
-                match (self_length_of.clone(), other_length_of.clone()) {
-                    (Cost::Parameter(CostParameter::LengthOf(v1)), Cost::Parameter(CostParameter::LengthOf(v2))) => {
-                        //TODO: take MAX
-                        if v1.span == v2.span {
-                            // declared at the same span, typically a Vec, which has a RawVec inside,
-                            // we keep track of the more general one, which is declared second (has higher id)
-                            if v1.id < v2.id {
-                                self.set_length_of(other.clone());
-                                length_of_changed |= true;
-                            } else if v1.id > v2.id {
-                                length_of_changed |= false;
-                            } else {
-                                panic!()
-                            }
-                        } else if v1.id < v2.id {
-                            // v1 was declared before
-                            length_of_changed |= false;
-                        } else {
-                            // v2 was declared before
-                            self.set_length_of(other.clone());
-                            length_of_changed |= true;
-                        }
-                    }
-                    (Cost::Parameter(CostParameter::LengthOf(_)), _) => {
-                        //TODO: take max
-                        // other is more precise
-                        self.set_length_of(other.clone());
-                        length_of_changed |= true;
-                    }
-                    (_, Cost::Parameter(CostParameter::LengthOf(_))) => {
-                        //TODO: take max
-                        // self is more precise
-                        length_of_changed |= false;
-                    }
-                    _ => panic!("{:#?}", (self_length_of, other_length_of))
+                // We take the max
+                if self_length_of < other_length_of {
+                    self.set_length_of(other.clone());
+                    length_of_changed |= true;
                 }
             } else if self_length_of.is_some() && other_length_of.is_none() {
                 // self is more precise
