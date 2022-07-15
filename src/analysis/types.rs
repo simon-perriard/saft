@@ -1,6 +1,6 @@
 use rustc_middle::mir::Mutability;
 use rustc_middle::ty;
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::ty::{ConstKind, TyCtxt};
 use rustc_span::def_id::DefId;
 use std::mem::size_of;
 
@@ -14,7 +14,7 @@ pub(crate) enum Type {
     Uint(ty::UintTy),
     Float(ty::FloatTy),
     Adt(Adt),
-    Array(Box<Type>, u64),
+    Array(Box<Type>, Cost),
     Ref(Box<Type>, Mutability),
     RawPtr(Box<Type>, Mutability),
     Slice(Box<Type>),
@@ -59,10 +59,20 @@ impl Type {
                     _ => Type::Adt(Adt::Unknown(adt_def.did())),
                 }
             }
-            TyKind::Array(t, size) => Type::Array(
+            TyKind::Array(t, size) => {
+                
+                let size = if let Some(size) = size.val().try_to_machine_usize(tcx) {
+                    Cost::Scalar(size)
+                } else if let ConstKind::Unevaluated(uneval) = size.val() {
+                    Cost::Parameter(CostParameter::ValueOf(format!("{}", tcx.def_path_str(uneval.def.did))))
+                } else {
+                    panic!()
+                };
+
+                Type::Array(
                 Box::new(Self::from_mir_ty(tcx, t)),
-                size.val().try_to_machine_usize(tcx).unwrap(),
-            ),
+                size,
+            )},
             TyKind::Slice(t) => Type::Slice(Box::new(Self::from_mir_ty(tcx, t))),
             TyKind::Ref(_, t, mutability) => {
                 Type::Ref(Box::new(Self::from_mir_ty(tcx, t)), mutability)
@@ -145,7 +155,7 @@ impl HasSize for Type {
                     max_size.symbolic_mul(ty.get_size(tcx))
                 }
             },
-            Type::Array(ty, size) => Cost::Scalar(*size).concrete_mul(ty.get_size(tcx)),
+            Type::Array(ty, size) => size.clone().mul(ty.get_size(tcx)),
             Type::Ref(ty, _) => ty.get_size(tcx),
             Type::RawPtr(ty, _) => ty.get_size(tcx),
             Type::Slice(_) => Cost::Infinity,
