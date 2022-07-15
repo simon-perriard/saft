@@ -4,7 +4,7 @@ git clone git@github.com:paritytech/substrate.git
 
 cd substrate/frame/
 
-no_extract=("benchmarking" "support" "examples" "election-provider-support" "executive" "staking" "try-runtime")
+no_extract=("aura authority-discovery authorship benchmarking" "support" "examples" "election-provider-support" "executive" "staking" "try-runtime")
 # no_extract contains folders that are not pallets
 
 extract=("balances" "identity" "multisig" "utility" "vesting")

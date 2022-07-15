@@ -187,6 +187,15 @@ pub(super) mod core_specs {
                     transfer_function.state.inter_join(&closure_analysis_result);
                     Some((*transfer_function.state).clone())
                 }
+                "core::slice::cmp::SliceContains::slice_contains" => {
+                    let vec = callee_info.args_type_info[1].clone();
+
+                    // Maybe grows allocated memory region
+                    let steps_of_insert =
+                        Cost::BigO(Box::new(vec.length_of.borrow().clone().unwrap()));
+                    transfer_function.state.add_steps(steps_of_insert);
+                    Some((*transfer_function.state).clone())
+                }
                 _ => None,
             }
         }
@@ -942,7 +951,45 @@ pub(super) mod frame_support_specs {
                                 .add_writes(storage_field.get_size(transfer_function.tcx));
                             Some((*transfer_function.state).clone())
                         }
-                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::exists" => {None}
+                        "frame_support::pallet_prelude::StorageMap::<Prefix, Hasher, Key, Value, QueryKind, OnEmpty, MaxValues>::try_mutate_exists" => {
+                            // call "mutate" https://paritytech.github.io/substrate/master/src/frame_support/storage/generator/map.rs.html#286
+                            transfer_function
+                            .state
+                            .add_steps(cost_to_big_o(storage_field.get_size(transfer_function.tcx)));
+                            transfer_function
+                                .state
+                                .add_reads(storage_field.get_size(transfer_function.tcx));
+
+                            // Account for closure call
+                            let closure_adt = callee_info.args_type_info[1].clone();
+                            let (closure_fn_ptr, closure_substs_ref) =
+                                if let TyKind::Closure(def_id, substs_ref) = closure_adt.get_ty().kind() {
+                                    (*def_id, substs_ref)
+                                } else if let TyKind::FnDef(def_id, substs_ref) = closure_adt.get_ty().kind() {
+                                    (*def_id, substs_ref)
+                                } else {
+                                    unreachable!();
+                                };
+
+                            // Closure accepts only one argument which is of type Value
+                            // Rust was able to infer the type in the closure's substs ref
+                            // so no need to specialize more the args_type_info
+                            let closure_call_simulation = CalleeInfo {
+                                location: None,
+                                args_type_info: Vec::new(),
+                                caller_args_operands: None,
+                                destination: None,
+                                callee_def_id: closure_fn_ptr,
+                                substs_ref: closure_substs_ref,
+                            };
+
+                            transfer_function.fn_call_analysis(closure_call_simulation, false);
+
+                            transfer_function
+                                .state
+                                .add_writes(storage_field.get_size(transfer_function.tcx));
+                            Some((*transfer_function.state).clone())
+                        }
                         _ => None,
                     }
                 }
@@ -969,8 +1016,40 @@ pub(super) mod frame_support_specs {
                     let path = path.as_str();
 
                     match path {
-                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::append" => {None}
-                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::decode_len" => {None}
+                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::append" => {
+                            // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html#method.append
+
+                            // decoding/encoding depends on the actual length of what is stored
+                            transfer_function
+                            .state
+                            .add_steps(cost_to_big_o(storage_field.get_size(transfer_function.tcx)));
+
+                            // Appending and vector size adjustment accounted for in the BigO expr above
+
+                            // storage access
+                            transfer_function
+                                .state
+                                .add_reads(storage_field.get_size(transfer_function.tcx));
+
+                            // storage access
+                            transfer_function
+                                .state
+                                .add_writes(storage_field.get_size(transfer_function.tcx));
+                            Some((*transfer_function.state).clone())
+                        }
+                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::decode_len" => {
+                            // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html#method.decode_len
+                            // decoding
+                            transfer_function
+                            .state
+                            .add_steps(cost_to_big_o(storage_field.get_size(transfer_function.tcx)));
+                            // storage access
+                            transfer_function
+                                .state
+                                .add_reads(storage_field.get_size(transfer_function.tcx));
+
+                            Some((*transfer_function.state).clone())
+                        }
                         "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::exists" => {
                             // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html#method.exists
                             transfer_function.state.add_step();
@@ -1072,7 +1151,27 @@ pub(super) mod frame_support_specs {
                         }
                         "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::take" => {None}
                         "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::translate" => {None}
-                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::try_append" => {None}
+                        "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::try_append" => {
+                            // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html#method.try_append
+
+                            // decoding/encoding depends on the actual length of what is stored
+                            transfer_function
+                            .state
+                            .add_steps(cost_to_big_o(storage_field.get_size(transfer_function.tcx)));
+
+                            // Appending and vector size adjustment accounted for in the BigO expr above
+
+                            // storage access
+                            transfer_function
+                                .state
+                                .add_reads(storage_field.get_size(transfer_function.tcx));
+
+                            // storage access
+                            transfer_function
+                                .state
+                                .add_writes(storage_field.get_size(transfer_function.tcx));
+                            Some((*transfer_function.state).clone())
+                        }
                         "frame_support::pallet_prelude::StorageValue::<Prefix, Value, QueryKind, OnEmpty>::try_get" => {
                             // https://paritytech.github.io/substrate/master/frame_support/storage/types/struct.StorageValue.html#method.try_get
                             transfer_function
@@ -1292,7 +1391,7 @@ pub(super) mod frame_system_specs {
             .def_path_str(callee_info.callee_def_id);
         let path = path.as_str();
         match path {
-            "frame_system::ensure_signed" | "frame_system::ensure_root" => {
+            "frame_system::ensure_signed" | "frame_system::ensure_root" | "frame_system::ensure_none" => {
                 transfer_function.state.add_step();
                 Some((*transfer_function.state).clone())
             }
