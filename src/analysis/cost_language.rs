@@ -214,7 +214,6 @@ impl Cost {
     }
 
     pub(crate) fn reduce_expr(&self) -> Self {
-        //TODO: Extract common Max and reduce more Max
         match self {
             Self::Infinity => Self::Infinity,
             Self::Scalar(_) => (*self).clone(),
@@ -233,18 +232,21 @@ impl Cost {
                     .iter()
                     .map(|expr| expr.reduce_expr().flatten_add_chain())
                     .collect::<Vec<Vec<Cost>>>();
-
                 let mut reduced_head = reduced.remove(0);
                 let mut reduced_tail = reduced;
 
                 let mut commons = reduced_head
                     .drain_filter(|expr| {
+                        // For the current element in HEAD
                         let mut expr_idx = Vec::new();
 
+
                         for sub_vec in reduced_tail.iter() {
+                            // Check whether we can find this element in each subvector of TAIL
                             for (idx, try_match_expr) in sub_vec.iter().enumerate() {
                                 if expr == try_match_expr {
                                     expr_idx.push(idx);
+                                    break;
                                 }
                             }
                         }
@@ -277,7 +279,13 @@ impl Cost {
                                 continue;
                             } else if try_find_in
                                 .iter()
-                                .map(|c| c.recursive_search(if looking_for.len() > 1 {Self::Add(looking_for.clone())} else {looking_for[0].clone()} ))
+                                .map(|c| {
+                                    c.recursive_search(if looking_for.len() > 1 {
+                                        Self::Add(looking_for.clone())
+                                    } else {
+                                        looking_for[0].clone()
+                                    })
+                                })
                                 .fold(false, |accum, x| accum | x)
                             {
                                 to_remove.push(idx_outer);
@@ -303,7 +311,8 @@ impl Cost {
                             })
                             .fold(Cost::default(), |accum, max_monomial| {
                                 accum.max(max_monomial)
-                            }).reduce_expr();
+                            })
+                            .reduce_expr();
                     }
                 }
 
@@ -326,7 +335,7 @@ impl Cost {
                     .fold(Cost::default(), |accum, max_monomial| {
                         accum.max(max_monomial)
                     });
-
+                
                 common_add_chain + new_reduced_max
             }
             Self::BigO(_) => (*self).clone(),
@@ -588,6 +597,11 @@ impl Cost {
                     flat.append(&mut flat_b);
                 }
             }
+            Self::Scalar(x) => {
+                for _ in 0..*x {
+                    flat.push(Cost::Scalar(1));
+                }
+            }
             _ => flat.push(self.clone()),
         }
 
@@ -840,10 +854,38 @@ mod tests {
 
     #[test]
     fn recursive_search_1() {
-        let a = Cost::ParameterMul(CostParameter::ValueOf("MaxVestingSchedulesGet::get()".to_string()), Box::new(Cost::Parameter(CostParameter::SizeOf("VestingInfo".to_string()))));
+        let a = Cost::ParameterMul(
+            CostParameter::ValueOf("MaxVestingSchedulesGet::get()".to_string()),
+            Box::new(Cost::Parameter(CostParameter::SizeOf(
+                "VestingInfo".to_string(),
+            ))),
+        );
 
-        let b = (a.clone().max(Cost::Scalar(1))) + (Cost::Parameter(CostParameter::WritesOf("Currency::set_lock".to_string())).max(Cost::Parameter(CostParameter::WritesOf("Currency::remove_lock".to_string()))));
+        let b = (a.clone().max(Cost::Scalar(1)))
+            + (Cost::Parameter(CostParameter::WritesOf("Currency::set_lock".to_string())).max(
+                Cost::Parameter(CostParameter::WritesOf("Currency::remove_lock".to_string())),
+            ));
 
-        assert!(b.recursive_search(a))
+        assert!(b.recursive_search(a));
+    }
+
+    #[test]
+    fn max_extracts_common_scalars() {
+        let a = Cost::Parameter(CostParameter::SizeOf("sym1".to_string())) + Cost::Scalar(6);
+        let b = Cost::Parameter(CostParameter::SizeOf("sym2".to_string())) + Cost::Scalar(8);
+
+        assert_eq!(
+            a.max(b),
+            Cost::Add(vec![
+                Cost::Scalar(6),
+                Cost::Max(vec![
+                    Cost::Parameter(CostParameter::SizeOf("sym1".to_string())),
+                    Cost::Add(vec![
+                        Cost::Parameter(CostParameter::SizeOf("sym2".to_string())),
+                        Cost::Scalar(2)
+                    ])
+                ])
+            ])
+        );
     }
 }
