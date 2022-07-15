@@ -261,7 +261,6 @@ impl Cost {
                         // For the current element in HEAD
                         let mut expr_idx = Vec::new();
 
-
                         for sub_vec in reduced_tail.iter() {
                             // Check whether we can find this element in each subvector of TAIL
                             for (idx, try_match_expr) in sub_vec.iter().enumerate() {
@@ -356,7 +355,7 @@ impl Cost {
                     .fold(Cost::default(), |accum, max_monomial| {
                         accum.max(max_monomial)
                     });
-                
+
                 common_add_chain + new_reduced_max
             }
             Self::BigO(_) => (*self).clone(),
@@ -460,7 +459,7 @@ impl Cost {
         if self.is_infinity() || rhs.is_infinity() {
             Self::Infinity
         } else if self.is_zero() {
-            rhs.clone()
+            rhs
         } else if rhs.is_zero() {
             self.clone()
         } else if let Self::Max(x) = self.clone() && let Self::Max(y) = rhs.clone() {
@@ -597,7 +596,7 @@ impl Cost {
                     unreachable!();
                 }
             } else {
-                Self::Max(vec![self.clone(), rhs.clone()]).reduce_expr()
+                Self::Max(vec![self.clone(), rhs]).reduce_expr()
             }
         }
     }
