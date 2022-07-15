@@ -1,6 +1,6 @@
 use super::cost_domain::{ExtendedCostAnalysisDomain, FreshIdProvider, LocalInfo};
 use super::pallet::Pallet;
-use super::specifications_v2::try_dispatch_to_specifications;
+use super::specifications::try_dispatch_to_specifications;
 use crate::analysis::events_variants_domain::EventVariantsDomain;
 use rustc_middle::mir::{
     traversal::*, visit::*, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
