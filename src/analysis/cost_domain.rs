@@ -1,4 +1,4 @@
-use crate::analysis::cost_language::{Cost, CostParameter};
+use crate::analysis::cost_language::Cost;
 use core::fmt;
 use rustc_index::vec::IndexVec;
 use rustc_middle::mir::{Body, Local, Place, ProjectionElem};
@@ -604,8 +604,6 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
 
             if self_length_of.is_none() {
                 // other is more precise
-                //panic!("{:#?}", (self_length_of, other_length_of));
-                //TODO: Check that
                 self.set_length_of(other.clone());
                 length_of_changed |= true;
             } else if let Some(self_length_of) = self_length_of.clone() && let Some(other_length_of) = other_length_of.clone() {
