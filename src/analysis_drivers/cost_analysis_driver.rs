@@ -16,7 +16,6 @@ pub(crate) fn cost_analysis(
     // Reads/Writes count anaylsis
     for dispatchable_def_id in pallet.dispatchables.keys() {
         let mir = tcx.optimized_mir(dispatchable_def_id);
-        //rustc_middle::mir::pretty::write_mir_fn(tcx, &mir, &mut |_, _| Ok(()), &mut std::io::stdout());
 
         // Detect loops in analyzed function
         if mir.is_cfg_cyclic() {
@@ -30,10 +29,6 @@ pub(crate) fn cost_analysis(
             );
             println!();
             continue;
-        }
-        println!("{}", tcx.def_path_str(*dispatchable_def_id));
-        if tcx.def_path_str(*dispatchable_def_id) != "pallet::Pallet::<T>::vest" {
-            //continue;
         }
 
         let cost_analysis =
@@ -68,9 +63,5 @@ pub(crate) fn cost_analysis(
             state.clone().unwrap()
         );
         println!();
-        /*for (l1, l2) in state.unwrap().locals_info.iter_enumerated() {
-            println!("{:?} --- {:?}", l1, l2);
-            println!();
-        }*/
     }
 }
