@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::cost_domain::FreshIdProvider;
 
-#[derive(Eq, Clone, Debug, Hash)]
+#[derive(Eq, Clone, Debug, Hash, PartialOrd)]
 pub(crate) enum Cost {
     Infinity,
     Scalar(u64),
@@ -80,7 +80,7 @@ impl PartialEq for Cost {
     }
 }
 
-#[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Debug, Hash)]
+#[derive(Eq, Ord, PartialEq, Clone, Debug, Hash)]
 pub(crate) struct Variable {
     pub id: u32,
     pub span: Option<Span>,
@@ -100,6 +100,27 @@ impl Variable {
         *fresh_var_id_provider.borrow_mut() = current_fresh_var_id + 1;
 
         new_var
+    }
+}
+
+impl PartialOrd for Variable {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match self.span.partial_cmp(&other.span) {
+            Some(core::cmp::Ordering::Equal) => {
+                // declared at the same span, typically a BoundedVec, which has a Vec inside,
+                // we keep track of the more general one (BoundedVec), which is declared last (has higher id)
+                self.id.partial_cmp(&other.id)
+            }
+            _ => {
+                match self.id.partial_cmp(&other.id) {
+                    // Lesser id was declared before, we keep the earliest declaration
+                    Some(core::cmp::Ordering::Less) => Some(core::cmp::Ordering::Greater),
+                    Some(core::cmp::Ordering::Equal) => Some(core::cmp::Ordering::Equal),
+                    Some(core::cmp::Ordering::Greater) => Some(core::cmp::Ordering::Less),
+                    None => None,
+                }
+            }
+        }
     }
 }
 
