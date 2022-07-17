@@ -146,6 +146,10 @@ impl<'tcx, 'inter> AnalysisDomain<'tcx> for CostAnalysis<'tcx, 'inter> {
 
     fn bottom_value(&self, body: &Body<'tcx>) -> Self::Domain {
         let mut state = ExtendedCostAnalysisDomain::new(self.tcx, body, self.fresh_var_id.clone());
+        if self.tcx.def_path_str(self.def_id).contains("std::prelude::v1::Some") {
+            rustc_middle::mir::pretty::write_mir_fn(self.tcx, &body, &mut |_, _| Ok(()), &mut std::io::stdout());
+            println!("{:#?}", self.caller_context_args_type_info);
+        }
         state.override_with_caller_type_context(&self.caller_context_args_type_info);
         state
     }
@@ -252,6 +256,11 @@ where
         target_mir: &Body<'tcx>,
         run_in_isolation: bool,
     ) -> ExtendedCostAnalysisDomain<'tcx> {
+
+        if self.tcx.def_path_str(callee_info.callee_def_id).contains("std::prelude::v1::Some") {
+            rustc_middle::mir::pretty::write_mir_fn(self.tcx, &self.tcx.optimized_mir(self.def_id), &mut |_, _| Ok(()), &mut std::io::stdout());
+        }
+
         // Analyze the target function
         let mut results = CostAnalysis::new_with_init(
             self.tcx,
@@ -335,10 +344,7 @@ where
         for i in 0..args_count {
             closure_args_type_info.push(closure_args_packed.get_member(i).unwrap().clone());
         }
-
-        // Put closure adt operand in front of argument list
-        closure_args_type_info.insert(0, callee_info.args_type_info[0].clone());
-
+ 
         // Used for debug, let's set the closure's call location where
         // is called {"std::ops::FnOnce", "std::ops::Fn", "std::ops::FnMut"}.call/call_once
         let closure_call_location = callee_info.location;
