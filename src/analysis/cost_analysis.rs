@@ -252,7 +252,6 @@ where
         target_mir: &Body<'tcx>,
         run_in_isolation: bool,
     ) -> ExtendedCostAnalysisDomain<'tcx> {
-
         // Analyze the target function
         let mut results = CostAnalysis::new_with_init(
             self.tcx,
@@ -336,7 +335,7 @@ where
         for i in 0..args_count {
             closure_args_type_info.push(closure_args_packed.get_member(i).unwrap().clone());
         }
- 
+
         // Used for debug, let's set the closure's call location where
         // is called {"std::ops::FnOnce", "std::ops::Fn", "std::ops::FnMut"}.call/call_once
         let closure_call_location = callee_info.location;
