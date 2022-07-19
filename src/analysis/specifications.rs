@@ -1391,7 +1391,9 @@ pub(super) mod frame_system_specs {
             .def_path_str(callee_info.callee_def_id);
         let path = path.as_str();
         match path {
-            "frame_system::ensure_signed" | "frame_system::ensure_root" | "frame_system::ensure_none" => {
+            "frame_system::ensure_signed"
+            | "frame_system::ensure_root"
+            | "frame_system::ensure_none" => {
                 transfer_function.state.add_step();
                 Some((*transfer_function.state).clone())
             }

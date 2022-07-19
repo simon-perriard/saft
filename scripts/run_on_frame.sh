@@ -4,15 +4,15 @@ git clone git@github.com:paritytech/substrate.git
 
 cd substrate/frame/
 
-no_extract=("aura authority-discovery authorship benchmarking" "support" "examples" "election-provider-support" "executive" "staking" "try-runtime")
+no_extract=("aura authority-discovery authorship benchmarking" "support" "examples" "election-provider-support" "executive" "gilt" "proxy" "randomness-collective-flip" "ranked-collective" "referenda" "society" "staking" "timestamp" "try-runtime" "uniques")
 # no_extract contains folders that are not pallets
 
 extract=("balances" "identity" "multisig" "utility" "vesting")
 
 for pallet in *
 do
-    #if [[ ! " ${no_extract[*]} " =~ "${pallet}" ]]
-    if [[ " ${extract[*]} " =~ "${pallet}" ]]
+    if [[ ! " ${no_extract[*]} " =~ "${pallet}" ]]
+    #if [[ " ${extract[*]} " =~ "${pallet}" ]]
     then
         cd $pallet
         echo "Extracting juice from $pallet"
