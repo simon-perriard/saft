@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::cost_domain::FreshIdProvider;
 
+#[allow(clippy::derive_hash_xor_eq)]
 #[derive(Eq, Clone, Debug, Hash, PartialOrd)]
 pub(crate) enum Cost {
     Infinity,
@@ -16,7 +17,6 @@ pub(crate) enum Cost {
     Max(Vec<Cost>),
     BigO(Box<Cost>),
 }
-
 impl PartialEq for Cost {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -80,14 +80,14 @@ impl PartialEq for Cost {
     }
 }
 
-#[derive(Eq, Ord, PartialEq, Clone, Debug, Hash)]
+#[derive(Eq, PartialEq, Clone, Debug, Hash)]
 pub(crate) struct Variable {
     pub id: u32,
     pub span: Option<Span>,
 }
 
 impl Variable {
-    pub fn new(fresh_var_id_provider: FreshIdProvider, span: Option<Span>) -> Cost {
+    pub fn new_as_cost(fresh_var_id_provider: FreshIdProvider, span: Option<Span>) -> Cost {
         let current_fresh_var_id = *fresh_var_id_provider.borrow();
 
         let new_var = Variable {
@@ -124,7 +124,7 @@ impl PartialOrd for Variable {
     }
 }
 
-#[derive(Eq, Ord, PartialEq, PartialOrd, Clone, Debug, Hash)]
+#[derive(Eq, PartialEq, PartialOrd, Clone, Debug, Hash)]
 pub(crate) enum CostParameter {
     ValueOf(String),
     SizeOf(String),
@@ -510,10 +510,10 @@ impl Cost {
                         false
                     }
 
-                }).collect::<Vec<_>>();
+                });
 
                 // If elements were removed, self is bigger and we push add it to the max
-                if !removed.is_empty() {
+                if removed.count() != 0 {
                     if max.is_empty() {
                         self.clone().reduce_expr()
                     } else {
@@ -557,10 +557,10 @@ impl Cost {
                         false
                     }
 
-                }).collect::<Vec<_>>();
+                });
 
                 // If elements were removed, self is bigger and we push add it to the max
-                if !removed.is_empty() {
+                if removed.count() != 0 {
                     if max.is_empty() {
                         self.clone().reduce_expr()
                     } else {

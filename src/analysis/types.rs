@@ -63,10 +63,7 @@ impl Type {
                 let size = if let Some(size) = size.val().try_to_machine_usize(tcx) {
                     Cost::Scalar(size)
                 } else if let ConstKind::Unevaluated(uneval) = size.val() {
-                    Cost::Parameter(CostParameter::ValueOf(format!(
-                        "{}",
-                        tcx.def_path_str(uneval.def.did)
-                    )))
+                    Cost::Parameter(CostParameter::ValueOf(tcx.def_path_str(uneval.def.did)))
                 } else {
                     panic!()
                 };
