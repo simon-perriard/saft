@@ -324,29 +324,6 @@ pub(super) mod frame_support_specs {
             let path = path.as_str();
 
             match path {
-                "frame_support::BoundedVec::<T, S>::try_push" => {
-                    // call "try_push" https://paritytech.github.io/substrate/master/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.try_push
-                    // upperbound grow amortized by max size
-
-                    // extract the name of the type for readability
-                    let ty_name = callee_info.substs_ref.type_at(1).to_string();
-                    let ty_name = ty_name.split("::").last().unwrap();
-                    transfer_function
-                        .state
-                        .add_steps(Cost::BigO(Box::new(Cost::Parameter(
-                            CostParameter::ValueOf(format!("{}::get()", ty_name)),
-                        ))));
-
-                    // Update length
-                    let bounded_vec_place = callee_info.caller_args_operands.clone().unwrap()[0]
-                        .place()
-                        .unwrap();
-                    assert!(bounded_vec_place.projection.is_empty());
-                    transfer_function.state.locals_info[bounded_vec_place.local]
-                        .length_of_add_one();
-
-                    Some((*transfer_function.state).clone())
-                }
                 "frame_support::BoundedVec::<T, S>::get_mut" => {
                     transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
@@ -446,6 +423,29 @@ pub(super) mod frame_support_specs {
 
                     Some((*transfer_function.state).clone())
                 }
+                "frame_support::BoundedVec::<T, S>::try_push" => {
+                    // call "try_push" https://paritytech.github.io/substrate/master/frame_support/storage/bounded_vec/struct.BoundedVec.html#method.try_push
+                    // upperbound grow amortized by max size
+
+                    // extract the name of the type for readability
+                    let ty_name = callee_info.substs_ref.type_at(1).to_string();
+                    let ty_name = ty_name.split("::").last().unwrap();
+                    transfer_function
+                        .state
+                        .add_steps(Cost::BigO(Box::new(Cost::Parameter(
+                            CostParameter::ValueOf(format!("{}::get()", ty_name)),
+                        ))));
+
+                    // Update length
+                    let bounded_vec_place = callee_info.caller_args_operands.clone().unwrap()[0]
+                        .place()
+                        .unwrap();
+                    assert!(bounded_vec_place.projection.is_empty());
+                    transfer_function.state.locals_info[bounded_vec_place.local]
+                        .length_of_add_one();
+
+                    Some((*transfer_function.state).clone())
+                }
                 _ => None,
             }
         }
@@ -468,27 +468,6 @@ pub(super) mod frame_support_specs {
             let path = path.as_str();
 
             match path {
-                "frame_support::dispatch::UnfilteredDispatchable::dispatch_bypass_filter" => {
-                    // We try to get they variable's symbol, otherwise we fallback on the type
-                    /*let call_name = transfer_function
-                    .state.get_local_info_for_place(&callee_info.args[0].place().unwrap())
-                    .get_symbol()
-                    .unwrap_or_else(|| callee_info.substs_ref.type_at(0).to_string());*/
-                    let call_name = callee_info.substs_ref.type_at(0).to_string();
-                    transfer_function
-                        .state
-                        .add_reads(Cost::Parameter(CostParameter::ReadsOf(call_name.clone())));
-                    transfer_function
-                        .state
-                        .add_writes(Cost::Parameter(CostParameter::WritesOf(call_name.clone())));
-                    transfer_function.state.add_events(Cost::Parameter(
-                        CostParameter::SizeDepositedOf(call_name.clone()),
-                    ));
-                    transfer_function
-                        .state
-                        .add_steps(Cost::Parameter(CostParameter::StepsOf(call_name)));
-                    Some((*transfer_function.state).clone())
-                }
                 "frame_support::dispatch::Dispatchable::dispatch" => {
                     // We try to get they variable's symbol, otherwise we fallback on the type
                     /*let call_name = transfer_function
@@ -512,6 +491,27 @@ pub(super) mod frame_support_specs {
                 }
                 "frame_support::dispatch::GetDispatchInfo::get_dispatch_info" => {
                     transfer_function.state.add_step();
+                    Some((*transfer_function.state).clone())
+                }
+                "frame_support::dispatch::UnfilteredDispatchable::dispatch_bypass_filter" => {
+                    // We try to get they variable's symbol, otherwise we fallback on the type
+                    /*let call_name = transfer_function
+                    .state.get_local_info_for_place(&callee_info.args[0].place().unwrap())
+                    .get_symbol()
+                    .unwrap_or_else(|| callee_info.substs_ref.type_at(0).to_string());*/
+                    let call_name = callee_info.substs_ref.type_at(0).to_string();
+                    transfer_function
+                        .state
+                        .add_reads(Cost::Parameter(CostParameter::ReadsOf(call_name.clone())));
+                    transfer_function
+                        .state
+                        .add_writes(Cost::Parameter(CostParameter::WritesOf(call_name.clone())));
+                    transfer_function.state.add_events(Cost::Parameter(
+                        CostParameter::SizeDepositedOf(call_name.clone()),
+                    ));
+                    transfer_function
+                        .state
+                        .add_steps(Cost::Parameter(CostParameter::StepsOf(call_name)));
                     Some((*transfer_function.state).clone())
                 }
                 _ => None,
@@ -2311,10 +2311,6 @@ pub(super) mod std_specs {
                     transfer_function.state.locals_info[vec_place.local]
                         .fill_with_inner_size(transfer_function.tcx);
 
-                    Some((*transfer_function.state).clone())
-                }
-                "std::vec::Vec::<T, A>::insert::assert_failed" => {
-                    transfer_function.state.add_step();
                     Some((*transfer_function.state).clone())
                 }
                 "std::vec::Vec::<T>::new" => {

@@ -29,9 +29,9 @@ We make sure that the pallet is recompiled, otherwise we may not have access to 
 
 ### Some considerations
 
-The tool does not support recursion, loops and iterators (for now).
+The tool does not support recursion and loops (for now).
 
-The tool does not have access to all the MIR it wants, since we run it on a pallet, some concrete types that are injected by the Runtime are still generic and [monomorphization](https://rustc-dev-guide.rust-lang.org/backend/monomorph.html) cannot happen yet. This leads to the need of manual specifications, and thus imprecisions. The tool, in this proof-of-concept state, only supports the following pallets: [balances](https://github.com/paritytech/substrate/tree/master/frame/balances), [identity](https://github.com/paritytech/substrate/tree/master/frame/identity), [utility](https://github.com/paritytech/substrate/tree/master/frame/utility), [vesting](https://github.com/paritytech/substrate/tree/master/frame/vesting) and [multisig](https://github.com/paritytech/substrate/tree/master/frame/multisig). It possibly supports other pallets but the effort has been put on the previous list in particular.
+The tool does not have access to all the MIR it wants, since we run it on a pallet, some concrete types that are injected by the Runtime are still generic and [monomorphization](https://rustc-dev-guide.rust-lang.org/backend/monomorph.html) cannot happen yet. This leads to the need for manual specifications, and thus imprecisions. The tool, in this proof-of-concept state, only supports the following pallets: [balances](https://github.com/paritytech/substrate/tree/master/frame/balances), [identity](https://github.com/paritytech/substrate/tree/master/frame/identity), [utility](https://github.com/paritytech/substrate/tree/master/frame/utility), [vesting](https://github.com/paritytech/substrate/tree/master/frame/vesting) and [multisig](https://github.com/paritytech/substrate/tree/master/frame/multisig). It possibly supports other pallets but the effort has been put on the previous list in particular.
 
 You can add specifications to fill the needs for your pallet in the [specifications.rs](https://github.com/simon-perriard/saft/blob/symbex/src/analysis/specifications.rs) file.
 
