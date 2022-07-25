@@ -45,7 +45,9 @@ impl<'tcx> LocalsInfo<'tcx> {
             if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
             && self[place_to.local].has_members()
             {
-                self[place_to.local].set_member(field.index(), local_info_from);
+                if self[place_to.local].get_members().len() > field.index() {
+                    self[place_to.local].set_member(field.index(), local_info_from);
+                }
             } else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
                 // Reflect the whole reference
                 self[place_to.local].set_local_info(local_info_from);
@@ -230,8 +232,10 @@ impl<'tcx> LocalInfo<'tcx> {
                         || path == "frame_support::BoundedVec"
                         || path == "frame_support::traits::WrapperKeepOpaque"
                     {
-                        local_info = local_info
-                            .with_length_of(Variable::new(fresh_variable_provider.clone(), span));
+                        local_info = local_info.with_length_of(Variable::new_as_cost(
+                            fresh_variable_provider.clone(),
+                            span,
+                        ));
 
                         local_info.fill_with_inner_size(tcx);
                     }
@@ -243,7 +247,7 @@ impl<'tcx> LocalInfo<'tcx> {
                 let length = if let Some(length) = size.val().try_to_machine_usize(tcx) {
                     Cost::Scalar(length)
                 } else {
-                    Variable::new(fresh_variable_provider, span)
+                    Variable::new_as_cost(fresh_variable_provider, span)
                 };
                 LocalInfo {
                     length_of: Rc::new(RefCell::new(Some(length))),
@@ -637,6 +641,7 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
             // This is ok for complex types since we allow the full specialization
             // the types must have the same history (prefix)
             if self.ty[0] == other.ty[0] {
+                #[allow(clippy::comparison_chain)]
                 if self.ty.len() < other.ty.len() {
                     self.members = other.members.clone();
                     members_changed |= true;
@@ -663,6 +668,7 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
             return length_of_changed | members_changed;
         }
 
+        #[allow(clippy::if_same_then_else)]
         if self.get_ty() == other.get_ty() {
             // we have the same higher type info
             // join will depend on the fields
@@ -682,25 +688,23 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
         } else {
             //COND: self.ty.len() == other.ty.len() == 2
             // but final type is not the same
-            // Example:
+            // Example we thought about with closures:
             /*
-                fn foo<A,B>(c: bool) -> Bar
-                    where   A: Bar,
-                            B: Bar
+                fn closure_selector<F>(a: bool) -> impl FnOnce(usize)->usize
                 {
-                    let res: Bar;
 
-                    let a: A = new A;
-                    let b: B = new B;
+                    let choice;
 
-                    if c {
-                        res = a;
+                    if a {
+                        choice = |x| x+2;
                     } else {
-                        res = b;
+                        choice = |x| x+3;
                     }
 
-                    res
+                    choice
                 }
+                BUT rust will not allow it since closure will have a different type.
+                Maybe working with another trait object.
             */
 
             panic!("SOUNDNESS BREAKS: {:#?} --- {:#?}", self, other);

@@ -1,8 +1,7 @@
 use super::events_variants_domain::EventVariantsDomain;
-use regex::Regex;
 use rustc_middle::mir::{
-    visit::*, BasicBlock, Body, Local, Location, Operand, Rvalue, Statement, StatementKind,
-    Terminator, TerminatorKind,
+    visit::*, BasicBlock, Body, Local, Location, Operand, Statement, StatementKind, Terminator,
+    TerminatorKind,
 };
 use rustc_middle::ty::{TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
@@ -69,8 +68,6 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_> {
     fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {
         let Statement { source_info, kind } = statement;
 
-        let event_regex = Regex::new(r"^pallet::Event<.*\s*(,.*)*>$").unwrap();
-
         match kind {
             StatementKind::SetDiscriminant {
                 place,
@@ -78,36 +75,14 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_> {
             } => {
                 self.visit_source_info(source_info);
 
-                //if event_regex.is_match(format!("{}",self.body.local_decls[place.local].ty).as_str()) {
-                    // Set the discriminant for the local, we need it to track
-                    // the Event enum variant that will be deposited
-                    self.set_discriminant
+                // Set the discriminant for the local, we need it to track
+                // the Event enum variant that will be deposited
+                self.set_discriminant
                     .borrow_mut()
                     .insert(place.local, *variant_index);
-                //}
             }
-            /*StatementKind::Assign(box (place_to, r_value)) if let Rvalue::Use(operand) = r_value => {
-
-                match operand {
-                    Operand::Copy(place_from)
-                    | Operand::Move(place_from) => {
-
-                        let set_discriminant_map_copy = self.set_discriminant.borrow().clone();
-
-                        if let Some(variant_index) = set_discriminant_map_copy.get(&place_from.local) && event_regex.is_match(format!("{}",self.body.local_decls[place_to.local].ty).as_str()) {
-                            assert!(place_to.projection.is_empty());
-
-                            self.set_discriminant
-                            .borrow_mut()
-                            .insert(place_to.local, *variant_index);
-                        }
-                    }
-                    _ => (),
-                }
-            }*/
             _ => self.super_statement(statement, location),
         }
-        //TODO: add support for StatementKind::Assign Use
     }
 
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {

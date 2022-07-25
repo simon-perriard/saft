@@ -373,14 +373,6 @@ where
                     caller_args_operands.push((*arg).clone());
                     match arg {
                         Operand::Copy(place) | Operand::Move(place) => {
-
-                            //Panic if there is a mutable reference
-                            /*let local = body.local_decls[place.local].clone();
-                            if let TyKind::Ref(_, _, mutability) = local.ty.kind() && *mutability == rustc_middle::mir::Mutability::Mut {
-                                rustc_middle::mir::pretty::write_mir_fn(self.tcx, &body, &mut |_, _| Ok(()), &mut std::io::stdout());
-                                panic!("{:?}", (location, body.local_decls[place.local].ty.kind()));
-                            }*/
-
                             args_type_info
                                 .push(self.state.get_local_info_for_place(place).unwrap());
                         }
