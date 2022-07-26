@@ -1,4 +1,5 @@
 use super::cost_domain::{ExtendedCostAnalysisDomain, FreshIdProvider, LocalInfo};
+use super::cost_language::{Cost, CostParameter};
 use super::pallet::Pallet;
 use super::specifications::try_dispatch_to_specifications;
 use crate::analysis::events_variants_domain::EventVariantsDomain;
@@ -6,7 +7,7 @@ use rustc_middle::mir::{
     traversal::*, visit::*, BasicBlock, Body, Location, Operand, Place, Rvalue, Statement,
     StatementKind, Terminator, TerminatorKind,
 };
-use rustc_middle::ty::{subst::SubstsRef, TyCtxt, TyKind};
+use rustc_middle::ty::{subst::SubstsRef, ConstKind, TyCtxt, TyKind};
 use rustc_mir_dataflow::{Analysis, AnalysisDomain, CallReturnPlaces, Forward};
 use rustc_span::def_id::DefId;
 use std::cell::RefCell;
@@ -428,20 +429,22 @@ where
 }
 
 impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
-    fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
+    fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, _location: Location) {
         match rvalue {
-            Rvalue::BinaryOp(_, box (lhs, rhs)) | Rvalue::CheckedBinaryOp(_, box (lhs, rhs)) => {
-                self.visit_operand(lhs, location);
-                self.visit_operand(rhs, location);
-
-                self.state.add_step();
+            Rvalue::Aggregate(_, vec) => {
+                self.state.add_steps(Cost::Scalar(vec.len().try_into().unwrap()));
             }
-            Rvalue::UnaryOp(_, op) => {
-                self.visit_operand(op, location);
-
-                self.state.add_step();
+            Rvalue::Repeat(_, size) => {
+                let size = if let Some(size) = size.val().try_to_machine_usize(self.tcx) {
+                    Cost::Scalar(size)
+                } else if let ConstKind::Unevaluated(uneval) = size.val() {
+                    Cost::Parameter(CostParameter::ValueOf(self.tcx.def_path_str(uneval.def.did)))
+                } else {
+                    panic!()
+                };
+                self.state.add_steps(size);
             }
-            _ => self.super_rvalue(rvalue, location),
+            _ => self.state.add_step(),
         }
     }
 
@@ -453,13 +456,16 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 match operand {
                     Operand::Copy(place_from)
                     | Operand::Move(place_from) => {
+                        self.state.add_step();
                         self.overwrite_place_to(place_from, place_to);
                     }
                     Operand::Constant(box const_operand) => {
                         if let Some((def_id, substs_ref)) = operand.const_fn_def() {
+                            self.state.add_step();
                             // In case of constant function, update with the function type
                             self.state.set_local_info_for_place(place_to, LocalInfo::new(self.tcx.mk_fn_def(def_id, substs_ref), self.tcx, Some(const_operand.span), self.fresh_var_id.clone()));
                         } else if let Some(constant) = operand.constant() {
+                            self.state.add_step();
                             // In case of standard constant, update with its type
                             self.state.set_local_info_for_place(place_to, LocalInfo::new(constant.ty(), self.tcx, Some(const_operand.span), self.fresh_var_id.clone()));
                         } else {
@@ -469,6 +475,7 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
                 }
             }
             StatementKind::Assign(box (place_to, r_value)) if let Rvalue::Ref(_, _, place_from) = r_value => {
+                self.state.add_step();
                 // Replace references by their underlying types
                 self.overwrite_place_to(place_from, place_to);
             }
