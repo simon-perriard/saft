@@ -170,6 +170,8 @@ impl Default for Cost {
 }
 
 impl Cost {
+    // Flatten nested Max nodes and filter out
+    // duplicates
     fn flatten_max(&self) -> Vec<Self> {
         let mut flat = Vec::new();
 
@@ -191,6 +193,8 @@ impl Cost {
         flat
     }
 
+    // Recursively look for a given Cost expression in
+    // another one
     fn recursive_search(&self, looking_for: Self) -> bool {
         match self {
             Cost::Infinity => *self == looking_for,
@@ -463,6 +467,7 @@ impl Cost {
         } else if rhs.is_zero() {
             self.clone()
         } else if let Self::Max(x) = self.clone() && let Self::Max(y) = rhs.clone() {
+            // max(Max(v_1),Max(v_2)) can be optimized to max(UNION(v_1, v_2))
             let mut unique_elements = HashSet::new();
 
             for e in x.iter() {
@@ -601,6 +606,9 @@ impl Cost {
         }
     }
 
+    // This function is used to flatten nested add chains
+    // and express ScalarMul(a, x) as a times x for
+    // further optimization
     fn flatten_add_chain(&self) -> Vec<Self> {
         let mut flat = Vec::new();
 
@@ -700,14 +708,19 @@ impl std::ops::Add for Cost {
         } else if let Self::Scalar(x) = self && let Self::Scalar(y) = rhs {
             Self::Scalar(x+y)
         } else if let Self::ScalarMul(x, a) = self.clone() && *a == rhs {
+            // ((x) * a) + a => ((x+1) * a)
             Self::ScalarMul(x+1, a)
         } else if let Self::ScalarMul(x, a) = rhs.clone() && *a == self {
+            // a + ((x) * a) => ((x+1) * a)
             Self::ScalarMul(x+1, a)
-        } else if let Self::ScalarMul(x, a) = self.clone() && let Self::ScalarMul(y, b) = rhs.clone() && *a == *b{
+        } else if let Self::ScalarMul(x, a) = self.clone() && let Self::ScalarMul(y, b) = rhs.clone() && *a == *b {
+            // ((x) * a) + ((y) * a) => ((x+y) * a)
             Self::ScalarMul(x+y, a)
         } else if self == rhs {
+            // a + a => (2 * a)
             Self::ScalarMul(2, Box::new(self))
         } else if let Self::Add(x) = self.clone() && let Self::Scalar(s) = rhs {
+            // aggregate the scalars in the same add chain
             let mut vec = x;
             let scalar = vec.drain_filter(|c| matches!(c, Self::Scalar(_))).map(|x| if let Self::Scalar(x) = x {x} else {unreachable!()}).sum::<u64>();
 
@@ -718,6 +731,7 @@ impl std::ops::Add for Cost {
                 Cost::Add(vec)
             }
         } else if let Self::Scalar(s) = self.clone() && let Self::Add(x) = rhs {
+            // aggregate the scalars in the same add chain
             let mut vec = x;
             let scalar = vec.drain_filter(|c| matches!(c, Self::Scalar(_))).map(|x| if let Self::Scalar(x) = x {x} else {unreachable!()}).sum::<u64>();
 
@@ -729,11 +743,17 @@ impl std::ops::Add for Cost {
             }
         } else {
 
+            // if none of the optimizations apply above, we encapsulate self and rhs
+            // in a new add chain and we run optimizations on it
+
+            //First we flatten the chain
+
             let wrapped = Cost::Add(vec![self, rhs]);
             let wrapped = wrapped.flatten_add_chain();
 
             let mut count_common = HashMap::new();
 
+            // Next we count how many times each element appears
             for e in wrapped.iter() {
                 if count_common.contains_key(&e) {
                     let current_count: &Cost = count_common.get(&e).unwrap();
@@ -745,6 +765,7 @@ impl std::ops::Add for Cost {
 
             let mut res = Vec::new();
 
+            // Finally we aggregate the common elements together
             for (k, v) in count_common.iter() {
                 res.push(((*k).clone()).concrete_mul(v.clone()).clone());
             }
@@ -800,7 +821,6 @@ pub(crate) fn cost_to_big_o(size: Cost) -> Cost {
         return Cost::Scalar(0);
     }
 
-    // TODO: ensure this is correct
     match size.clone() {
         Cost::Infinity => Cost::Infinity,
         Cost::Scalar(_) => Cost::Scalar(1),

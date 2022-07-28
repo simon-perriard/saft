@@ -371,11 +371,6 @@ pub(super) mod frame_support_specs {
                             unreachable!();
                         };
 
-                    // Discussion with Dimitar
-                    // TODO: report-> we assume there is a finite number of input of a given upperbound on the size
-                    // TODO: report-> we assume the elements of the boundedvecs have bounded size
-                    // express the complexity of retain as a function of maximum elemts size in the vector
-
                     // Retrieve the effect of applying the closure once
                     let closure_call_simulation = CalleeInfo {
                         location: None,

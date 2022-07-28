@@ -199,6 +199,16 @@ where
         self.fn_call_analysis(callee_info, false);
     }
 
+    /// The entry point for an arbitrary function analysis from a Call terminator,
+    /// "fn_call_analysis" will dispatch the action between the manual specifications,
+    /// an additional MIR analysis, or will mark the global analysis as failed
+    /// if no specifications and no MIR can be found.
+    /// # Arguments
+    ///
+    /// `callee_info` - The function's calling context
+    /// `run_in_isolation`- false if the cost must be accounted for in the domain at the end of the analysis
+    /// if set to true, this function will simply return the computed cost, without updating the caller's
+    /// analysis domain
     pub(crate) fn fn_call_analysis(
         &mut self,
         callee_info: CalleeInfo<'tcx>,
@@ -303,6 +313,11 @@ where
         end_state.unwrap()
     }
 
+    /// Analyses a closures given a calling context extracted from
+    /// {"std::ops::FnOnce", "std::ops::Fn", "std::ops::FnMut"}.call/call_once/call_mut
+    /// # Arguments
+    ///
+    /// * `callee_info` - The closure's calling context
     pub(crate) fn analyze_closure_call(&mut self, callee_info: &CalleeInfo<'tcx>) {
         // We apply the action of {"std::ops::FnOnce", "std::ops::Fn", "std::ops::FnMut"}.call/call_once/call_mut
 
@@ -356,6 +371,7 @@ where
         self.fn_call_analysis(closure_callee_info.clone(), false);
     }
 
+    /// Encapsulates the calling context of the call at the given Location
     fn get_callee_info(&self, location: Location) -> CalleeInfo<'tcx> {
         let body = self.tcx.optimized_mir(self.def_id);
         let terminator = body.stmt_at(location).right().unwrap();
@@ -432,13 +448,16 @@ impl<'tcx> Visitor<'tcx> for TransferFunction<'tcx, '_, '_> {
     fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, _location: Location) {
         match rvalue {
             Rvalue::Aggregate(_, vec) => {
-                self.state.add_steps(Cost::Scalar(vec.len().try_into().unwrap()));
+                self.state
+                    .add_steps(Cost::Scalar(vec.len().try_into().unwrap()));
             }
             Rvalue::Repeat(_, size) => {
                 let size = if let Some(size) = size.val().try_to_machine_usize(self.tcx) {
                     Cost::Scalar(size)
                 } else if let ConstKind::Unevaluated(uneval) = size.val() {
-                    Cost::Parameter(CostParameter::ValueOf(self.tcx.def_path_str(uneval.def.did)))
+                    Cost::Parameter(CostParameter::ValueOf(
+                        self.tcx.def_path_str(uneval.def.did),
+                    ))
                 } else {
                     panic!()
                 };

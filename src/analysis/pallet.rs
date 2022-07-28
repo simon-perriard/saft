@@ -104,6 +104,7 @@ fn hir_ty_to_type(tcx: TyCtxt, hir_ty: &rustc_hir::Ty) -> Type {
     Type::from_mir_ty(tcx, rustc_typeck::hir_ty_to_ty(tcx, hir_ty))
 }
 
+// Analyses the HIR nodes to extract storage fields information into Field
 fn get_fields(tcx: TyCtxt) -> HashMap<DefId, Field> {
     let field_names = get_field_names(tcx);
     let mut fields = HashMap::new();
