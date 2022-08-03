@@ -42,12 +42,19 @@ impl<'tcx> LocalsInfo<'tcx> {
             self[place_to.local].set_local_info(local_info_from);
         } else {
             // Reflect the type of the given field of "place_from" to the given field of "place_to"
-            if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
+            if let ProjectionElem::Field(_ ,_) = place_to.projection.last().unwrap()
             && self[place_to.local].has_members()
             {
-                if self[place_to.local].get_members().len() > field.index() {
-                    self[place_to.local].set_member(field.index(), local_info_from);
+                let mut projections = Vec::new();
+
+                for proj in place_to.projection.iter().rev() {
+                    match proj {
+                        ProjectionElem::Field(field, _) => projections.push(field.index()),
+                        ProjectionElem::Downcast(_,i) => projections.push(i.index()),
+                        _ => ()
+                    }
                 }
+                self[place_to.local].set_sub_member(projections, local_info_from);
             } else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
                 // Reflect the whole reference
                 self[place_to.local].set_local_info(local_info_from);
@@ -67,10 +74,20 @@ impl<'tcx> LocalsInfo<'tcx> {
             self[place_to.local].set_length_of(local_info_from);
         } else {
             // Reflect the symbolic attributes of the given field of "place_from" to the given field of "place_to"
-            if let ProjectionElem::Field(field ,_) = place_to.projection.last().unwrap()
+            if let ProjectionElem::Field(_ ,_) = place_to.projection.last().unwrap()
             && self[place_to.local].has_members()
             {
-                self[place_to.local].members[field.index()].set_length_of(local_info_from);
+                let mut projections = Vec::new();
+
+                for proj in place_to.projection.iter().rev() {
+                    match proj {
+                        ProjectionElem::Field(field, _) => projections.push(field.index()),
+                        ProjectionElem::Downcast(_,i) => projections.push(i.index()),
+                        _ => ()
+                    }
+                }
+
+                self[place_to.local].set_sub_member_length_of(projections, local_info_from);
             } else if let ProjectionElem::Deref = place_to.projection.last().unwrap() {
                 // Reflect symbolic attributes for the whole reference
                 self[place_to.local].set_length_of(local_info_from);
@@ -352,6 +369,19 @@ impl<'tcx> LocalInfo<'tcx> {
             self.set_member(indices[0], type_info);
         } else {
             self.members[indices.pop().unwrap()].set_sub_member(indices, type_info);
+        }
+    }
+
+    pub fn set_sub_member_length_of(
+        &mut self,
+        mut indices: Vec<usize>,
+        type_info: LocalInfo<'tcx>,
+    ) {
+        assert!(!indices.is_empty());
+        if indices.len() == 1 {
+            self.set_length_of(type_info);
+        } else {
+            self.members[indices.pop().unwrap()].set_sub_member_length_of(indices, type_info);
         }
     }
 
