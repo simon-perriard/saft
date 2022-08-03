@@ -13,8 +13,11 @@ pub(crate) fn cost_analysis(
     pallet: Pallet,
     events_variants: HashMap<DefId, EventVariantsDomain>,
 ) {
+    let mut keys = pallet.dispatchables.keys().collect::<Vec<_>>();
+    keys.sort_by(|a, b| tcx.def_path_str(**a).cmp(&tcx.def_path_str(**b)));
+
     // Reads/Writes count anaylsis
-    for dispatchable_def_id in pallet.dispatchables.keys() {
+    for dispatchable_def_id in keys {
         let mir = tcx.optimized_mir(dispatchable_def_id);
 
         // Detect loops in analyzed function
