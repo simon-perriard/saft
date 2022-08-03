@@ -387,12 +387,14 @@ impl Cost {
                 .map(|x| x.is_zero())
                 .fold(false, |accum, x| accum & x),
             Self::BigO(c) => c.is_zero(),
-            Self::Log(box c) => if let Self::Scalar(x) = c {
-                assert!(*x != 0);
-                *x == 1
-            } else {
-                false
-            },
+            Self::Log(box c) => {
+                if let Self::Scalar(x) = c {
+                    assert!(*x != 0);
+                    *x == 1
+                } else {
+                    false
+                }
+            }
         }
     }
 

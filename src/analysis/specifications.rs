@@ -70,7 +70,7 @@ pub(super) mod core_specs {
         use crate::analysis::{
             cost_analysis::{CalleeInfo, TransferFunction},
             cost_domain::{ExtendedCostAnalysisDomain, LocalInfo},
-            cost_language::{cost_to_big_o, Cost, CostParameter},
+            cost_language::{cost_to_big_o, Cost},
         };
         use rustc_middle::ty::TyKind;
 
