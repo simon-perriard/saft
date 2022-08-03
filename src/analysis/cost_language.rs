@@ -16,6 +16,7 @@ pub(crate) enum Cost {
     ParameterMul(CostParameter, Box<Cost>),
     Max(Vec<Cost>),
     BigO(Box<Cost>),
+    Log(Box<Cost>),
 }
 impl PartialEq for Cost {
     fn eq(&self, other: &Self) -> bool {
@@ -133,7 +134,6 @@ pub(crate) enum CostParameter {
     SizeDepositedOf(String),
     StepsOf(String),
     LengthOf(Variable),
-    Log(String),
 }
 
 impl CostParameter {
@@ -158,7 +158,6 @@ impl fmt::Display for CostParameter {
             CostParameter::SizeDepositedOf(s) => write!(f, "SIZEDEPOSITEDOF({})", s),
             CostParameter::StepsOf(s) => write!(f, "STEPSOF({})", s),
             CostParameter::LengthOf(s) => write!(f, "LENGTHOF({:?})", s),
-            CostParameter::Log(s) => write!(f, "LOG({})", s),
         }
     }
 }
@@ -235,6 +234,7 @@ impl Cost {
                 }
             }
             Cost::BigO(c) => c.recursive_search(looking_for),
+            Cost::Log(_) => false,
         }
     }
 
@@ -363,6 +363,7 @@ impl Cost {
                 common_add_chain + new_reduced_max
             }
             Self::BigO(_) => (*self).clone(),
+            Self::Log(_) => (*self).clone(),
         }
     }
 
@@ -386,6 +387,12 @@ impl Cost {
                 .map(|x| x.is_zero())
                 .fold(false, |accum, x| accum & x),
             Self::BigO(c) => c.is_zero(),
+            Self::Log(box c) => if let Self::Scalar(x) = c {
+                assert!(*x != 0);
+                *x == 1
+            } else {
+                false
+            },
         }
     }
 
@@ -405,6 +412,7 @@ impl Cost {
                 .map(|x| x.is_zero())
                 .fold(false, |accum, x| accum | x),
             Self::BigO(c) => c.is_infinity(),
+            Self::Log(c) => c.is_infinity(),
         }
     }
 
@@ -812,6 +820,7 @@ impl fmt::Display for Cost {
                     .unwrap_or_default()
             ),
             Self::BigO(s) => write!(f, "O({})", s),
+            Self::Log(s) => write!(f, "LOG({})", s),
         }
     }
 }
@@ -824,7 +833,7 @@ pub(crate) fn cost_to_big_o(size: Cost) -> Cost {
     match size.clone() {
         Cost::Infinity => Cost::Infinity,
         Cost::Scalar(_) => Cost::Scalar(1),
-        Cost::Parameter(s) => Cost::BigO(Box::new(Cost::Parameter(s))),
+        Cost::Parameter(_) => Cost::BigO(Box::new(size)),
         Cost::Add(chain) => chain
             .iter()
             .map(|x| cost_to_big_o(x.clone()))
@@ -839,6 +848,7 @@ pub(crate) fn cost_to_big_o(size: Cost) -> Cost {
             .reduce(|accum, x| accum.max(x))
             .unwrap(),
         Cost::BigO(_) => size,
+        Cost::Log(_) => Cost::BigO(Box::new(size)),
     }
 }
 

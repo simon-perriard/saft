@@ -126,8 +126,7 @@ pub(super) mod core_specs {
                         callee_info.args_type_info[0].get_size(transfer_function.tcx),
                     );
 
-                    let binary_search_complexity =
-                        Cost::Parameter(CostParameter::Log(format!("{}", vec_big_o_size)));
+                    let binary_search_complexity = Cost::Log(Box::new(vec_big_o_size));
 
                     // Then multiply it by complexity
                     closure_analysis_result.cost_big_o_mul(binary_search_complexity);
@@ -178,8 +177,7 @@ pub(super) mod core_specs {
                         callee_info.args_type_info[0].get_size(transfer_function.tcx),
                     );
 
-                    let binary_search_complexity =
-                        Cost::Parameter(CostParameter::Log(format!("{}", vec_big_o_size)));
+                    let binary_search_complexity = Cost::Log(Box::new(vec_big_o_size));
 
                     // Then multiply it by complexity
                     closure_analysis_result.cost_big_o_mul(binary_search_complexity);
