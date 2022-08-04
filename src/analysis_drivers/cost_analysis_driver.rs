@@ -14,7 +14,7 @@ pub(crate) fn cost_analysis(
     events_variants: HashMap<DefId, EventVariantsDomain>,
 ) {
     let mut keys = pallet.dispatchables.keys().collect::<Vec<_>>();
-    keys.sort_by(|a, b| tcx.def_path_str(**a).cmp(&tcx.def_path_str(**b)));
+    keys.sort_by_key(|a| tcx.def_path_str(**a));
 
     // Reads/Writes count anaylsis
     for dispatchable_def_id in keys {

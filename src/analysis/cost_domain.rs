@@ -668,76 +668,21 @@ impl<'tcx> JoinSemiLattice for LocalInfo<'tcx> {
                 members_changed |= self_field.join(&other_field);
             }
         } else {
-            // This is ok for complex types since we allow the full specialization
-            // the types must have the same history (prefix)
-            if self.ty[0] == other.ty[0] {
-                #[allow(clippy::comparison_chain)]
-                if self.ty.len() < other.ty.len() {
-                    self.members = other.members.clone();
-                    members_changed |= true;
-                } else if self.ty.len() > other.ty.len() {
-                    //Other is less precise
-                    members_changed |= false;
-                } else {
-                    panic!(
-                        "Should be the same type:\nSELF:\n{:#?}\nOTHER\n{:#?}",
-                        self, other
-                    );
-                }
-            } else {
-                // Trait specialization
-                self.set_ty(other);
-                self.members = other.members.clone();
-                return true;
-            }
+            // Trait specialization
+            self.set_ty(other);
+            self.members = other.members.clone();
+            return true;
         }
 
-        if self == other {
-            // Same Type and members
-            // but not necessarily same attributes
-            return length_of_changed | members_changed;
-        }
-
-        #[allow(clippy::if_same_then_else)]
         if self.get_ty() == other.get_ty() {
             // we have the same higher type info
             // join will depend on the fields
-            members_changed
-        } else if self.ty.len() > other.ty.len() {
-            // we already have a more precise information
-            members_changed
-        } else if self.ty.len() < other.ty.len() {
-            // other is more informative
-            self.ty = other.ty.clone();
-            true
-        } else if self.ty.len() == 1 && other.ty.len() == 1 && self.members == other.members {
-            // This will be an uninteresting update like
-            // T --> T as ...
-            self.ty = other.ty.clone();
+            length_of_changed | members_changed
+        } else if self.ty.len() > 1 {
+            self.ty.pop();
             true
         } else {
-            //COND: self.ty.len() == other.ty.len() == 2
-            // but final type is not the same
-            // Example we thought about with closures:
-            /*
-                fn closure_selector<F>(a: bool) -> impl FnOnce(usize)->usize
-                {
-
-                    let choice;
-
-                    if a {
-                        choice = |x| x+2;
-                    } else {
-                        choice = |x| x+3;
-                    }
-
-                    choice
-                }
-                BUT rust will not allow it since closure will have a different type.
-                Maybe working with another trait object.
-            */
-
-            panic!("SOUNDNESS BREAKS: {:#?} --- {:#?}", self, other);
+            false
         }
     }
 }
